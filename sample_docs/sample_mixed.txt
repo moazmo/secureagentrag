@@ -1,0 +1,39 @@
+AI GOVERNANCE FRAMEWORK — BILINGUAL POLICY BRIEF
+سياسة حوكمة الذكاء الاصطناعي — ملخص ثنائي اللغة
+
+Document ID: GOV-AI-2025-004
+Classification / التصنيف: INTERNAL / داخلي
+Effective Date / تاريخ السريان: February 2025
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 1: DATA ROUTING PRINCIPLES / مبادئ توجيه البيانات
+
+All AI inference requests must follow the sensitivity-based routing protocol:
+
+- HIGH sensitivity data (بيانات عالية الحساسية): Local inference ONLY. Cloud processing is strictly prohibited. يجب المعالجة المحلية حصرياً.
+
+- MEDIUM sensitivity data (بيانات متوسطة الحساسية): Local inference preferred. Cloud allowed with explicit authorization. يُفضل المعالجة المحلية مع إمكانية استخدام السحابة بإذن صريح.
+
+- LOW sensitivity data (بيانات منخفضة الحساسية): Any approved provider. يُسمح باستخدام أي مزود معتمد.
+
+SECTION 2: ACCESS CONTROL / التحكم في الوصول
+
+Role-based access is enforced at the vector database level:
+يتم تطبيق التحكم في الوصول على مستوى قاعدة البيانات المتجهية:
+
+- Engineers (المهندسون): Access to technical documents within their department.
+- Managers (المديرون): Cross-department access with full audit trail. وصول متعدد الأقسام مع سجل تدقيق كامل.
+- Administrators (المسؤولون): Full system access. وصول كامل للنظام.
+
+SECTION 3: COMPLIANCE / الامتثال
+
+All interactions are logged / يتم تسجيل جميع التفاعلات:
+- Query timestamp and user identity / الطابع الزمني وهوية المستخدم
+- Documents accessed and sensitivity levels / الوثائق المطلعة ومستويات حساسيتها
+- Routing decisions and justification / قرارات التوجيه ومبرراتها
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Approved by / اعتمده: Information Security Committee / لجنة أمن المعلومات
+Next Review / المراجعة القادمة: February 2026

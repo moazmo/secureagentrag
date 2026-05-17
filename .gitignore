@@ -1,0 +1,71 @@
+# ==============================================================================
+# SecureAgentRAG .gitignore
+# ==============================================================================
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ── Virtual Environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+ENV/
+env/
+
+# ── Distribution / Packaging ─────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ── Testing ──────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ── Linting / Type Checking ──────────────────────────────────────────────────
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+
+# ── IDE ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Environment ──────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Data / Storage (local volumes) ──────────────────────────────────────────
+qdrant_storage/
+ollama_data/
+data/
+audit_logs/
+conversations/
+
+# ── Test scratch output ──────────────────────────────────────────────────────
+test_output*.txt
+test_results*.txt
+test_run_output*.txt
+test_fixes_output*.txt
+test_final_output*.txt
+test_final_summary*.txt
+
+# ── OS Files ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Jupyter / IPython ────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.log
