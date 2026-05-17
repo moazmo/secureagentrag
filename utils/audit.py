@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from config.settings import settings
 from utils.logging import get_logger
 
 _audit_log = get_logger("audit")
@@ -54,13 +55,15 @@ class AuditLogger:
         log_dir: Directory path for audit log files. Created if not exists.
     """
 
-    def __init__(self, log_dir: str = "audit_logs") -> None:
+    def __init__(self, log_dir: str | None = None) -> None:
         """Initialize the audit logger with a target log directory.
 
         Args:
             log_dir: Directory path for storing daily JSONL audit files.
+                Defaults to ``settings.audit_log_dir`` so deployments can pin
+                an absolute path via the ``SAR_AUDIT_LOG_DIR`` env var.
         """
-        self._log_dir = Path(log_dir)
+        self._log_dir = Path(log_dir if log_dir is not None else settings.audit_log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
     def log_query(

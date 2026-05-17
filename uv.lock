@@ -4383,10 +4383,11 @@ name = "secureagentrag"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiosqlite" },
     { name = "httpx" },
-    { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langgraph" },
+    { name = "langgraph-checkpoint-sqlite" },
     { name = "nest-asyncio" },
     { name = "ollama" },
     { name = "pillow" },
@@ -4406,7 +4407,6 @@ dependencies = [
 all = [
     { name = "arize-phoenix" },
     { name = "langgraph-checkpoint-postgres" },
-    { name = "langgraph-checkpoint-sqlite" },
     { name = "openinference-instrumentation-langchain" },
     { name = "openinference-instrumentation-openai" },
     { name = "opentelemetry-api" },
@@ -4442,7 +4442,6 @@ ocr = [
 ]
 persistence = [
     { name = "langgraph-checkpoint-postgres" },
-    { name = "langgraph-checkpoint-sqlite" },
     { name = "psycopg" },
 ]
 
@@ -4456,13 +4455,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "arize-phoenix", marker = "extra == 'observability'", specifier = ">=8.0.0" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "langchain-community", specifier = ">=0.3.0" },
     { name = "langchain-core", specifier = ">=0.3.0" },
     { name = "langgraph", specifier = ">=0.2.0" },
     { name = "langgraph-checkpoint-postgres", marker = "extra == 'persistence'", specifier = ">=2.0.0" },
-    { name = "langgraph-checkpoint-sqlite", marker = "extra == 'persistence'", specifier = ">=2.0.0" },
+    { name = "langgraph-checkpoint-sqlite", specifier = ">=2.0.0" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "ollama", specifier = ">=0.4.0" },
     { name = "openinference-instrumentation-langchain", marker = "extra == 'observability'", specifier = ">=0.1.0" },

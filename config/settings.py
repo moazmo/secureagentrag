@@ -75,6 +75,16 @@ class Settings(BaseSettings):
     # ── BM25 Persistence ──────────────────────────────────────────────────────────
     bm25_index_path: str = "data/bm25_index.pkl"
 
+    # ── Audit + Conversation Storage ──────────────────────────────────────────────
+    audit_log_dir: str = "audit_logs"
+    conversation_dir: str = "conversations"
+    checkpoint_db_path: str = "data/checkpoints.sqlite"
+    # Opt-in: enable persistent (SQLite/Postgres) LangGraph checkpointing.
+    # Default off because pytest-asyncio creates per-test event loops which
+    # collide with aiosqlite's loop-bound connection. For production single-
+    # process Streamlit / FastAPI deployments, set SAR_USE_PERSISTENT_CHECKPOINTER=true.
+    use_persistent_checkpointer: bool = False
+
     # ── PostgreSQL (for LangGraph checkpointing) ─────────────────────────────────
     postgres_url: str = "postgresql://sar_user:sar_password@localhost:5432/secureagentrag"
 

@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from config.settings import settings
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -81,7 +82,7 @@ class ConversationStore:
         Args:
             base_dir: Base directory for conversation files.
         """
-        self._base_dir = Path(base_dir or "conversations")
+        self._base_dir = Path(base_dir or settings.conversation_dir)
         self._base_dir.mkdir(parents=True, exist_ok=True)
         logger.info("conversation_store_initialized", path=str(self._base_dir))
 
@@ -248,14 +249,16 @@ class ConversationStore:
                     if org_id and data.get("org_id") != org_id:
                         continue
 
-                    threads.append({
-                        "thread_id": data["thread_id"],
-                        "user_id": data.get("user_id", ""),
-                        "org_id": data.get("org_id", ""),
-                        "message_count": len(data.get("messages", [])),
-                        "updated_at": data.get("updated_at", ""),
-                        "metadata": data.get("metadata", {}),
-                    })
+                    threads.append(
+                        {
+                            "thread_id": data["thread_id"],
+                            "user_id": data.get("user_id", ""),
+                            "org_id": data.get("org_id", ""),
+                            "message_count": len(data.get("messages", [])),
+                            "updated_at": data.get("updated_at", ""),
+                            "metadata": data.get("metadata", {}),
+                        }
+                    )
 
                     if len(threads) >= limit:
                         break
@@ -352,7 +355,9 @@ class ConversationStore:
             except Exception:
                 pass
 
-        logger.info("conversation_cleanup_completed", deleted=deleted_count, retention_days=retention_days)
+        logger.info(
+            "conversation_cleanup_completed", deleted=deleted_count, retention_days=retention_days
+        )
         return deleted_count
 
 
