@@ -29,10 +29,11 @@ Designed for deployment on consumer-grade hardware (8GB+ VRAM), SecureAgentRAG u
 
 | Feature | Description |
 |---------|-------------|
-| **Multi-Agent Corrective RAG** | LangGraph-orchestrated workflow with router, retriever, grader, rewriter, synthesizer, and evaluator agents. Automatic query refinement when relevance drops below threshold. |
+| **Multi-Agent Corrective RAG** | LangGraph-orchestrated workflow with router, retriever, grader, rewriter, synthesizer, and evaluator agents. Automatic query refinement when relevance drops below threshold. SQLite checkpointer persists thread state across restarts. |
 | **RBAC at Vector DB Level** | Role-based access control enforced via Qdrant metadata filters — unauthorized documents are never returned regardless of semantic similarity. |
 | **Hybrid Inference Routing** | Sensitivity-based routing ensures HIGH-sensitivity data never leaves local infrastructure. Cloud fallback available for low-sensitivity workloads. |
 | **Hybrid Search + Reranking** | Dense retrieval (BGE-M3) combined with BM25 sparse search via Reciprocal Rank Fusion, followed by cross-encoder reranking for maximum relevance. |
+| **True Token Streaming** | Synthesis tokens stream from the LLM through the pipeline to the UI — no fake post-hoc word-by-word replay. Works for Ollama, Groq, OpenAI, Anthropic. |
 | **Arabic + Multilingual Support** | BGE-M3 multilingual embeddings + PaddleOCR for bilingual document processing (English/Arabic). |
 | **Production Observability** | Structured logging (structlog), distributed tracing (Arize Phoenix/OpenTelemetry), and comprehensive audit trail with JSONL persistence. |
 | **Evaluation Pipeline** | Ragas metrics (faithfulness, relevancy, context precision/recall) + custom latency/confidence/RBAC tracking with Streamlit dashboard. |
@@ -354,11 +355,11 @@ SecureAgentRAG enforces access control at the **vector database level**, making 
 ### Running Evaluation
 
 ```bash
-# Run with ragas (requires ragas package)
+# Run with ragas (requires `uv sync --extra evaluation`)
 uv run python -m evaluation.ragas_eval
 
-# Run performance benchmarks
-uv run python benchmarks.py
+# Run performance benchmarks (requires Ollama + Qdrant + ingested docs)
+uv run python -m evaluation.benchmark
 
 # Custom metrics are collected automatically during queries
 # View in the Streamlit Evaluation dashboard
@@ -369,7 +370,7 @@ uv run python benchmarks.py
 Benchmarks measure end-to-end pipeline latency (query → response) across query types:
 
 ```bash
-# Run the benchmark suite (requires Ollama + Qdrant running)
+# Run the benchmark suite (requires Ollama + Qdrant running with docs ingested)
 uv run python -m evaluation.benchmark
 ```
 
@@ -490,20 +491,27 @@ Key design choices are documented in [DECISIONS.md](DECISIONS.md). Highlights:
 
 ## Roadmap
 
-- [x] **Streaming Responses** — Token-by-token streaming in the chat UI (all providers)
-- [x] **Advanced Chunking** — Semantic chunking with topic segmentation
-- [x] **Input Validation** — Query sanitization and dangerous pattern detection
-- [x] **Query Caching** — Redis-backed result cache for identical queries
-- [x] **Health Checks** — Service dependency monitoring with latency tracking
-- [x] **Correlation ID Logging** — Distributed request tracing across all components
-- [x] **Graceful Degradation** — BM25 fallback when embedding services are unavailable
-- [ ] **RAG Fusion** — Multiple query reformulations with parallel retrieval
-- [ ] **Multi-Modal RAG** — Image understanding and table extraction
-- [ ] **FastAPI Backend** — REST API for programmatic access
-- [ ] **Fine-Tuned Reranker** — Domain-specific cross-encoder training
-- [ ] **Multi-Tenant Deployment** — Full organization isolation with Qdrant namespaces
-- [ ] **Kubernetes Helm Chart** — Production deployment manifests
-- [ ] **Guardrails Integration** — Input/output content filtering
+Delivered:
+
+- [x] **True token streaming** — synthesis tokens stream from the LLM through `run_rag_pipeline_stream` to the Streamlit UI (Ollama, Groq, OpenAI, Anthropic)
+- [x] **Persistent checkpointing** — SQLite by default (Postgres optional) for LangGraph thread state
+- [x] **Input validation** — query sanitization and dangerous pattern detection
+- [x] **Query caching** — Redis-backed result cache for identical queries (in-memory fallback)
+- [x] **Health checks** — service dependency monitoring with latency tracking
+- [x] **Correlation ID logging** — distributed request tracing across all components
+- [x] **Graceful degradation** — BM25 fallback when embedding services are unavailable
+- [x] **Rate limiting** — token-bucket per-user with optional Redis backend
+- [x] **Audit trail** — daily JSONL with full RBAC context
+
+Planned:
+
+- [ ] **RAG fusion** — multiple query reformulations with parallel retrieval
+- [ ] **Multi-modal RAG** — image understanding and table extraction
+- [ ] **FastAPI backend** — REST API for programmatic access
+- [ ] **Fine-tuned reranker** — domain-specific cross-encoder training
+- [ ] **Multi-tenant deployment** — full organization isolation with Qdrant namespaces
+- [ ] **Kubernetes Helm chart** — production deployment manifests
+- [ ] **Guardrails integration** — input/output content filtering
 
 ---
 

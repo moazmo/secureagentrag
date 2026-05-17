@@ -19,8 +19,18 @@ Add sample documents that demonstrate:
 5. **Multi-page documents** — For testing chunking strategies
 6. **Documents with different access levels** — For testing RBAC metadata tagging
 
+## Bundled Samples
+
+| File | Purpose |
+|------|---------|
+| `sample_english.txt` | Corporate AI governance / RBAC policy (English) |
+| `sample_arabic.txt` | Privacy policy excerpt (Arabic) |
+| `sample_mixed.txt` | Bilingual document for language-detection chunking |
+| `sample_internal_report.pdf` | Multi-line PDF for the PyMuPDF text-extraction path |
+| `sample_invoice.png` | Synthesized invoice image for the PaddleOCR fallback path |
+
 ## Notes
 
 - Do **not** commit sensitive or proprietary documents
 - Keep sample files small (< 5MB each) for fast CI/CD
-- Actual sample files will be added in subsequent development tasks
+- These files are illustrative test fixtures, not real organizational data
