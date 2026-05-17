@@ -267,10 +267,21 @@ def sync_session_metrics(session_data: list[dict[str, Any]]) -> int:
                 user_id=item.get("user"),
                 model=item.get("model"),
                 security_passed=item.get("security_passed", True),
-                metadata={k: v for k, v in item.items() if k not in {
-                    "query", "confidence", "latency_ms", "query_type",
-                    "user", "model", "security_passed", "timestamp"
-                }},
+                metadata={
+                    k: v
+                    for k, v in item.items()
+                    if k
+                    not in {
+                        "query",
+                        "confidence",
+                        "latency_ms",
+                        "query_type",
+                        "user",
+                        "model",
+                        "security_passed",
+                        "timestamp",
+                    }
+                },
             )
             count += 1
         except Exception as exc:

@@ -15,7 +15,9 @@ logger = get_logger(__name__)
 def render_evaluation_page() -> None:
     """Render the evaluation dashboard with metrics, charts, and tables."""
     st.title("📈 Evaluation Dashboard")
-    st.caption("Track RAG pipeline performance, confidence scores, latency metrics, and service health.")
+    st.caption(
+        "Track RAG pipeline performance, confidence scores, latency metrics, and service health."
+    )
 
     # ── Service Health ───────────────────────────────────────────────────────
     _render_health_checks()
@@ -83,7 +85,9 @@ def _render_ragas_scores() -> None:
     ragas_scores = st.session_state.get("ragas_scores", [])
 
     if not ragas_scores:
-        st.info("No Ragas scores yet. Ragas evaluation runs automatically after each query when the package is installed.")
+        st.info(
+            "No Ragas scores yet. Ragas evaluation runs automatically after each query when the package is installed."
+        )
         return
 
     st.subheader("🎯 Ragas Quality Scores")

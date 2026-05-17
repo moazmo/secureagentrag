@@ -298,9 +298,7 @@ class HybridSearcher:
                 user_context=user_context,
                 top_k=top_k * 2,
             )
-            dense_ranking = [
-                (str(point.id), point.score) for point in dense_results
-            ]
+            dense_ranking = [(str(point.id), point.score) for point in dense_results]
         except Exception as exc:
             embeddings_failed = True
             logger.warning(
@@ -321,9 +319,7 @@ class HybridSearcher:
         bm25_ranking: list[tuple[str, float]] = []
         if use_bm25 and self._bm25 is not None and self._bm25.is_built():
             try:
-                bm25_ranking = self._bm25.search(
-                    query, top_k=top_k * 2, rbac_filter=None
-                )
+                bm25_ranking = self._bm25.search(query, top_k=top_k * 2, rbac_filter=None)
                 rankings.append(bm25_ranking)
             except Exception as exc:
                 logger.warning("bm25_search_failed", error=str(exc), query_len=len(query))
@@ -365,9 +361,7 @@ class HybridSearcher:
             allowed_doc_ids = dense_doc_ids.copy()
 
             # For BM25-only results, fetch from Qdrant and apply RBAC
-            bm25_only_ids = [
-                doc_id for doc_id, _ in bm25_ranking if doc_id not in dense_doc_ids
-            ]
+            bm25_only_ids = [doc_id for doc_id, _ in bm25_ranking if doc_id not in dense_doc_ids]
             if bm25_only_ids:
                 try:
                     rbac_filter = self._qdrant.build_rbac_filter(user_context)

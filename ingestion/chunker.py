@@ -88,7 +88,9 @@ class TextChunker:
         self._chunk_size = chunk_size if chunk_size is not None else settings.chunk_size
         self._chunk_overlap = chunk_overlap if chunk_overlap is not None else settings.chunk_overlap
         self._separators = separators if separators is not None else ["\n\n", "\n", ". ", " ", ""]
-        self._arabic_separators = arabic_separators if arabic_separators is not None else _ARABIC_SEPARATORS
+        self._arabic_separators = (
+            arabic_separators if arabic_separators is not None else _ARABIC_SEPARATORS
+        )
 
         # Input validation
         if self._chunk_size <= 0:
@@ -152,7 +154,9 @@ class TextChunker:
         """
         return self._arabic_separators if use_arabic else self._separators
 
-    def _recursive_split(self, text: str, separator_idx: int, use_arabic: bool = False) -> list[str]:
+    def _recursive_split(
+        self, text: str, separator_idx: int, use_arabic: bool = False
+    ) -> list[str]:
         """Recursively split text using separators at the given index.
 
         Args:
@@ -193,7 +197,9 @@ class TextChunker:
                 # Check if the split itself is too large
                 if len(split) > self._chunk_size:
                     # Recursively split with next separator
-                    sub_chunks = self._recursive_split(split, separator_idx + 1, use_arabic=use_arabic)
+                    sub_chunks = self._recursive_split(
+                        split, separator_idx + 1, use_arabic=use_arabic
+                    )
                     chunks.extend(sub_chunks)
                     current_chunk = ""
                 else:

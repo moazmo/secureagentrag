@@ -73,6 +73,7 @@ def _render_document_manager() -> None:
     # Fetch documents for the user's org
     try:
         from qdrant_client import models
+
         filter_ = models.Filter(
             must=[
                 models.FieldCondition(
@@ -164,7 +165,9 @@ def _update_document_batch(
             updated += 1
 
     if updated:
-        st.success(f"Updated {updated} chunks for {records[0].payload.get('source_file', 'document')}")
+        st.success(
+            f"Updated {updated} chunks for {records[0].payload.get('source_file', 'document')}"
+        )
         st.rerun()
     else:
         st.error("Failed to update document metadata.")

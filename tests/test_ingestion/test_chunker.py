@@ -197,7 +197,7 @@ class TestArabicChunking:
         assert len(result) > 0
         # All chunks should contain Arabic text
         for chunk in result:
-            assert any("\u0600" <= c <= "\u06FF" for c in chunk)
+            assert any("\u0600" <= c <= "\u06ff" for c in chunk)
 
     def test_arabic_chunk_preserves_words(self) -> None:
         """Arabic chunks should not split words in the middle."""
@@ -226,7 +226,7 @@ class TestArabicChunking:
         for chunk_text, meta in result:
             assert meta["page_number"] == 1
             assert meta["source_file"] == "arabic_doc.pdf"
-            assert any("\u0600" <= c <= "\u06FF" for c in chunk_text)
+            assert any("\u0600" <= c <= "\u06ff" for c in chunk_text)
 
     def test_mixed_arabic_english_chunking(self) -> None:
         """Should handle mixed Arabic-English text gracefully."""
@@ -240,7 +240,7 @@ class TestArabicChunking:
         assert len(result) > 0
         # At least one chunk should have both scripts
         has_mixed = any(
-            any("\u0600" <= c <= "\u06FF" for c in chunk) and any(c.isascii() for c in chunk)
+            any("\u0600" <= c <= "\u06ff" for c in chunk) and any(c.isascii() for c in chunk)
             for chunk in result
         )
         assert has_mixed, "Expected at least one mixed-script chunk"

@@ -127,7 +127,7 @@ async def run_benchmarks(runs_per_type: int = 3) -> dict:
             "ERROR: No documents found in Qdrant. Please ingest documents first:\n"
             "  uv run python -m app.main  # Use the Upload tab to add documents\n"
             "Or use sample documents:\n"
-            "  uv run python -c \"from tests.conftest import *; ...\""
+            '  uv run python -c "from tests.conftest import *; ..."'
         )
         return {"error": "No documents ingested"}
 
@@ -163,7 +163,9 @@ async def run_benchmarks(runs_per_type: int = 3) -> dict:
             "median_ms": round(statistics.median(latencies), 1),
             "min_ms": round(min(latencies), 1),
             "max_ms": round(max(latencies), 1),
-            "p90_ms": round(latencies[int(len(latencies) * 0.9)] if len(latencies) > 1 else latencies[0], 1),
+            "p90_ms": round(
+                latencies[int(len(latencies) * 0.9)] if len(latencies) > 1 else latencies[0], 1
+            ),
             "stddev_ms": round(statistics.stdev(latencies) if len(latencies) > 1 else 0.0, 1),
             "avg_relevance_ratio": round(
                 statistics.mean([r["relevance_ratio"] for r in successful]), 3
@@ -206,7 +208,9 @@ def _print_results(report: dict) -> None:
     print(f"Embedding: {report['configuration']['embedding_model']}")
     print()
 
-    print(f"{'Type':<10} {'Count':>6} {'Mean':>10} {'Median':>10} {'P90':>10} {'Min':>10} {'Max':>10} {'StdDev':>8}")
+    print(
+        f"{'Type':<10} {'Count':>6} {'Mean':>10} {'Median':>10} {'P90':>10} {'Min':>10} {'Max':>10} {'StdDev':>8}"
+    )
     print("-" * 76)
 
     for query_type, stats in report["summary"].items():

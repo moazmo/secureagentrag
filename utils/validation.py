@@ -21,7 +21,10 @@ MAX_QUERY_WORDS: int = 500
 # Dangerous characters/patterns to flag
 _DANGEROUS_PATTERNS: list[re.Pattern] = [
     # SQL injection attempts
-    re.compile(r"(\b(union|select|insert|update|delete|drop|create|alter)\b.*\b(from|into|table|database)\b)", re.IGNORECASE),
+    re.compile(
+        r"(\b(union|select|insert|update|delete|drop|create|alter)\b.*\b(from|into|table|database)\b)",
+        re.IGNORECASE,
+    ),
     # Command injection
     re.compile(r"[;&|`$]\s*\w+", re.IGNORECASE),
     # Path traversal
@@ -33,7 +36,9 @@ _DANGEROUS_PATTERNS: list[re.Pattern] = [
 ]
 
 # Allowed characters for basic sanitization
-_SAFE_QUERY_PATTERN = re.compile(r"^[\w\s\-.,;:!?'\"()[\]{}@#$%&*+/=<>|~^`\u0600-\u06FF]+$", re.UNICODE)
+_SAFE_QUERY_PATTERN = re.compile(
+    r"^[\w\s\-.,;:!?'\"()[\]{}@#$%&*+/=<>|~^`\u0600-\u06FF]+$", re.UNICODE
+)
 
 
 @dataclass

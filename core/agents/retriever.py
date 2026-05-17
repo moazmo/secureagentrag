@@ -259,9 +259,7 @@ async def _grade_single_document(query: str, doc: DocumentGrade) -> DocumentGrad
         DocumentGrade with 'relevant' field populated.
     """
     prompt = _get_grading_prompt(query, doc["text"])
-    response = await call_llm_async(
-        prompt, system_prompt="You are a document relevance grader."
-    )
+    response = await call_llm_async(prompt, system_prompt="You are a document relevance grader.")
     is_relevant = response.strip().lower().startswith("yes")
     graded_doc: DocumentGrade = {
         **doc,
@@ -293,9 +291,7 @@ async def _grade_documents_batch(query: str, documents: list[DocumentGrade]) -> 
 
     # Batch grading for multiple documents
     prompt = _get_batch_grading_prompt(query, documents)
-    response = await call_llm_async(
-        prompt, system_prompt="You are a document relevance grader."
-    )
+    response = await call_llm_async(prompt, system_prompt="You are a document relevance grader.")
 
     relevance_flags = _parse_batch_grading(response, len(documents))
 
@@ -306,9 +302,7 @@ async def _grade_documents_batch(query: str, documents: list[DocumentGrade]) -> 
             expected=len(documents),
             falling_back="individual_grading",
         )
-        return await asyncio.gather(
-            *[_grade_single_document(query, doc) for doc in documents]
-        )
+        return await asyncio.gather(*[_grade_single_document(query, doc) for doc in documents])
 
     graded: list[DocumentGrade] = []
     for doc, is_relevant in zip(documents, relevance_flags, strict=False):

@@ -55,7 +55,9 @@ class TestEndToEndPipeline:
         responses = [
             LLMResponse(text="simple", provider="ollama", model="test"),  # route
             LLMResponse(text="safe", provider="ollama", model="test"),  # security
-            LLMResponse(text="DOC 1: yes\nDOC 2: yes", provider="ollama", model="test"),  # batch grade
+            LLMResponse(
+                text="DOC 1: yes\nDOC 2: yes", provider="ollama", model="test"
+            ),  # batch grade
             LLMResponse(
                 text="This is a test answer with citation [[1]].",
                 provider="ollama",
@@ -90,9 +92,7 @@ class TestEndToEndPipeline:
         mock_result2.score = 0.8
         mock_result2.metadata = {"source_file": "test.pdf", "page_number": 2}
 
-        mock_searcher.search = AsyncMock(
-            return_value=[mock_result1, mock_result2]
-        )
+        mock_searcher.search = AsyncMock(return_value=[mock_result1, mock_result2])
         mock_get_searcher.return_value = mock_searcher
 
         mock_reranker = MagicMock()
@@ -166,11 +166,15 @@ class TestEndToEndPipeline:
         responses = [
             LLMResponse(text="complex", provider="ollama", model="test"),  # route
             LLMResponse(text="safe", provider="ollama", model="test"),  # security
-            LLMResponse(text="DOC 1: no\nDOC 2: no", provider="ollama", model="test"),  # batch grade (first)
+            LLMResponse(
+                text="DOC 1: no\nDOC 2: no", provider="ollama", model="test"
+            ),  # batch grade (first)
             LLMResponse(
                 text="improved query about documents", provider="ollama", model="test"
             ),  # rewrite
-            LLMResponse(text="DOC 1: yes\nDOC 2: yes", provider="ollama", model="test"),  # batch grade (second)
+            LLMResponse(
+                text="DOC 1: yes\nDOC 2: yes", provider="ollama", model="test"
+            ),  # batch grade (second)
             LLMResponse(
                 text="This is the final answer.", provider="ollama", model="test"
             ),  # synthesize

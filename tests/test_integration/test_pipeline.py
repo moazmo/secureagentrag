@@ -70,7 +70,11 @@ async def test_async_synthesizer_uses_inference_router(mock_user_context: UserCo
                 "text": "Context text",
                 "score": 0.9,
                 "relevant": True,
-                "metadata": {"source_file": "test.pdf", "page_number": 1, "sensitivity_level": "high"},
+                "metadata": {
+                    "source_file": "test.pdf",
+                    "page_number": 1,
+                    "sensitivity_level": "high",
+                },
             }
         ]
         result = await synthesize_answer(state)
@@ -112,7 +116,13 @@ async def test_async_grader_uses_inference_router(mock_user_context: UserContext
         mock_call.return_value = "yes"
         state = create_initial_state("test", mock_user_context)
         state["documents"] = [
-            {"doc_id": "d1", "text": "Relevant text", "score": 0.9, "relevant": False, "metadata": {}}
+            {
+                "doc_id": "d1",
+                "text": "Relevant text",
+                "score": 0.9,
+                "relevant": False,
+                "metadata": {},
+            }
         ]
         result = await grade_documents(state)
 

@@ -257,9 +257,7 @@ async def rewrite_query(state: GraphState) -> dict:
     logger.info("rewriting_query", current_query_len=len(current_query))
 
     prompt = _get_rewrite_prompt(current_query, failed_summary)
-    response = await call_llm_async(
-        prompt, system_prompt="You are a query rewriting assistant."
-    )
+    response = await call_llm_async(prompt, system_prompt="You are a query rewriting assistant.")
 
     rewritten = response.strip() if response.strip() else current_query
     retry_count = state.get("retry_count", 0) + 1

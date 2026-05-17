@@ -62,8 +62,14 @@ def _check_query_safety(query: str, user_context: dict) -> tuple[bool, str]:
 
 # Jailbreak and prompt injection patterns for fast-path blocking
 _JAILBREAK_PATTERNS: list[re.Pattern] = [
-    re.compile(r"\b(ignore previous instructions|disregard all prior|forget your training)\b", re.IGNORECASE),
-    re.compile(r"\b(you are now|pretend to be|act as|roleplay as)\b.*\b(ai|assistant|bot|model)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(ignore previous instructions|disregard all prior|forget your training)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(you are now|pretend to be|act as|roleplay as)\b.*\b(ai|assistant|bot|model)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(DAN|jailbreak|mode:developer|developer mode)\b", re.IGNORECASE),
     re.compile(r"\b(system prompt|internal instructions|hidden instructions)\b", re.IGNORECASE),
 ]

@@ -198,7 +198,9 @@ class Reranker:
             pairs = [(query, text) for text in texts]
             scores = self._model.predict(pairs)
 
-            scored_texts = [(text, float(score)) for text, score in zip(texts, scores, strict=False)]
+            scored_texts = [
+                (text, float(score)) for text, score in zip(texts, scores, strict=False)
+            ]
             scored_texts.sort(key=lambda x: x[1], reverse=True)
 
             return scored_texts[:top_k] if top_k else scored_texts
