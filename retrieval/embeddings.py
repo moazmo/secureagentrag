@@ -236,10 +236,8 @@ class EmbeddingService:
             Embedding vector from local model.
         """
         embedder = _get_local_embedder()
-        # sentence-transformers is synchronous; run in executor to not block
-        import asyncio
-
-        loop = asyncio.get_event_loop()
+        # sentence-transformers is synchronous; offload to default executor.
+        loop = asyncio.get_running_loop()
         embedding = await loop.run_in_executor(None, embedder.encode, text)
         result = embedding.tolist()
         if key:
@@ -390,8 +388,6 @@ class EmbeddingService:
             List of embedding vectors for the batch.
         """
         embedder = _get_local_embedder()
-        import asyncio
-
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(None, embedder.encode, texts)
         return [emb.tolist() for emb in embeddings]

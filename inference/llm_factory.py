@@ -108,22 +108,36 @@ def clear_llm_cache() -> None:
     """Clear the LLM client cache.
 
     Call this when configuration changes (e.g., API keys rotated) to
-    force recreation of clients on next use.
+    force recreation of clients on next use. Closes existing httpx clients
+    on whichever event loop is currently running; if there is no loop, opens
+    a short-lived one via ``asyncio.run``.
     """
+    import asyncio
+
     global _client_cache
     count = len(_client_cache)
-    for client in _client_cache.values():
-        if hasattr(client, "close"):
-            import asyncio
 
+    async def _close_all() -> None:
+        await asyncio.gather(
+            *(client.close() for client in _client_cache.values() if hasattr(client, "close")),
+            return_exceptions=True,
+        )
+
+    if _client_cache:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            # Already inside an async context — schedule and forget.
+            _ = loop.create_task(_close_all())
+        else:
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    _ = loop.create_task(client.close())  # noqa: RUF006
-                else:
-                    loop.run_until_complete(client.close())
-            except Exception:
-                pass
+                asyncio.run(_close_all())
+            except Exception as exc:
+                logger.warning("llm_client_close_failed", error=str(exc))
+
     _client_cache.clear()
     logger.info("llm_client_cache_cleared", count=count)
 

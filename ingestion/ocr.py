@@ -50,7 +50,7 @@ class OCRProcessor:
             # PaddleOCR accepts 'lang' as a single string; use first language
             # For multilingual support, 'en' handles Latin scripts and 'ar' for Arabic
             self._ocr = PaddleOCR(
-                use_angle_cls=True,
+                use_textline_orientation=True,
                 use_gpu=True,
                 lang=self._languages[0] if self._languages else "en",
                 show_log=False,
@@ -66,7 +66,7 @@ class OCRProcessor:
             # Retry with GPU disabled
             try:
                 self._ocr = PaddleOCR(
-                    use_angle_cls=True,
+                    use_textline_orientation=True,
                     use_gpu=False,
                     lang=self._languages[0] if self._languages else "en",
                     show_log=False,
