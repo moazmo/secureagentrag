@@ -6,14 +6,33 @@ import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from core.agents.router import call_llm_async
+from core.agents.router import call_llm_async, call_llm_stream
 from core.state import Citation, GraphState  # noqa: TC001
 from utils.logging import get_logger
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     from core.state import DocumentGrade
 
 logger = get_logger(__name__)
+
+
+def _max_sensitivity(docs_to_use: list[DocumentGrade]) -> str:
+    """Determine highest sensitivity level among the documents used.
+
+    Args:
+        docs_to_use: Documents that will be fed as synthesis context.
+
+    Returns:
+        "high" | "medium" | "low".
+    """
+    levels = [doc.get("metadata", {}).get("sensitivity_level", "low") for doc in docs_to_use]
+    if "high" in levels:
+        return "high"
+    if "medium" in levels:
+        return "medium"
+    return "low"
 
 
 def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitivity: str) -> str:
@@ -138,11 +157,7 @@ def _compute_synthesis_confidence(
     coverage_component = len(citations) / max(len(documents), 1)
 
     # Weighted combination
-    confidence = (
-        relevance_component * 0.40
-        + density_component * 0.30
-        + coverage_component * 0.30
-    )
+    confidence = relevance_component * 0.40 + density_component * 0.30 + coverage_component * 0.30
     return round(max(0.0, min(1.0, confidence)), 3)
 
 
@@ -216,17 +231,7 @@ async def synthesize_answer(state: GraphState) -> dict:
             ],
         }
 
-    # Determine highest sensitivity level among used documents
-    sensitivity_levels = []
-    for doc in docs_to_use:
-        sl = doc.get("metadata", {}).get("sensitivity_level", "low")
-        sensitivity_levels.append(sl)
-
-    max_sensitivity = "low"
-    if "high" in sensitivity_levels:
-        max_sensitivity = "high"
-    elif "medium" in sensitivity_levels:
-        max_sensitivity = "medium"
+    max_sensitivity = _max_sensitivity(docs_to_use)
 
     # Build prompt and call LLM with inference routing
     prompt = _build_synthesis_prompt(query, docs_to_use, max_sensitivity)
@@ -272,4 +277,104 @@ async def synthesize_answer(state: GraphState) -> dict:
                 "timestamp": datetime.now(UTC).isoformat(),
             }
         ],
+    }
+
+
+async def synthesize_answer_stream(state: GraphState) -> AsyncGenerator[dict, None]:
+    """Streaming variant of synthesize_answer.
+
+    Yields events as the LLM generates tokens, then a final event with
+    parsed citations, disclaimers and preliminary confidence.
+
+    Event shapes:
+        {"type": "token", "text": str}
+        {"type": "final", "generation": str, "citations": [...],
+         "confidence_score": float, "audit_entry": {...}}
+
+    Args:
+        state: Current graph state with relevant_documents (or documents fallback)
+            and query / rewritten_query.
+
+    Yields:
+        Event dicts as described above.
+    """
+    query = state.get("rewritten_query") or state["query"]
+    relevant_documents = state.get("relevant_documents", [])
+    all_documents = state.get("documents", [])
+    docs_to_use = relevant_documents if relevant_documents else all_documents
+
+    logger.info("synthesizing_answer_stream", doc_count=len(docs_to_use))
+
+    if not docs_to_use:
+        generation = (
+            "I was unable to find relevant documents to answer your question. "
+            "Please try rephrasing your query or check that the relevant "
+            "documents have been ingested."
+        )
+        yield {"type": "token", "text": generation}
+        yield {
+            "type": "final",
+            "generation": generation,
+            "citations": [],
+            "confidence_score": 0.0,
+            "audit_entry": {
+                "node": "synthesizer",
+                "action": "synthesize_answer_stream",
+                "doc_count": 0,
+                "generation_len": len(generation),
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        }
+        return
+
+    max_sensitivity = _max_sensitivity(docs_to_use)
+    prompt = _build_synthesis_prompt(query, docs_to_use, max_sensitivity)
+
+    collected: list[str] = []
+    async for token in call_llm_stream(
+        prompt,
+        system_prompt="You are an expert research assistant that always cites sources.",
+        sensitivity_level=max_sensitivity,
+    ):
+        collected.append(token)
+        yield {"type": "token", "text": token}
+
+    raw_response = "".join(collected).strip()
+    if not raw_response:
+        raw_response = "Unable to generate a response. Please try again."
+        yield {"type": "token", "text": raw_response}
+
+    citations = _extract_citations(raw_response, docs_to_use)
+    generation = _add_disclaimers(raw_response, max_sensitivity)
+
+    # Emit disclaimer suffix as a final token so UI sees full text
+    disclaimer_suffix = generation[len(raw_response) :]
+    if disclaimer_suffix:
+        yield {"type": "token", "text": disclaimer_suffix}
+
+    confidence_score = _compute_synthesis_confidence(docs_to_use, citations, generation)
+
+    logger.info(
+        "answer_synthesized_stream",
+        generation_len=len(generation),
+        citation_count=len(citations),
+        sensitivity=max_sensitivity,
+        preliminary_confidence=confidence_score,
+    )
+
+    yield {
+        "type": "final",
+        "generation": generation,
+        "citations": citations,
+        "confidence_score": confidence_score,
+        "audit_entry": {
+            "node": "synthesizer",
+            "action": "synthesize_answer_stream",
+            "doc_count": len(docs_to_use),
+            "citation_count": len(citations),
+            "sensitivity": max_sensitivity,
+            "generation_len": len(generation),
+            "preliminary_confidence": confidence_score,
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
     }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING
 
@@ -13,12 +14,14 @@ from core.agents.evaluator import evaluate_response
 from core.agents.retriever import grade_documents, retrieve_documents, should_retry
 from core.agents.router import rewrite_query, route_query
 from core.agents.security import check_security, security_gate
-from core.agents.synthesizer import synthesize_answer
+from core.agents.synthesizer import synthesize_answer, synthesize_answer_stream
 from core.state import GraphState
 from utils.logging import get_logger
 from utils.observability import trace_graph_execution
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     from ingestion.metadata import UserContext
 
 logger = get_logger(__name__)
@@ -39,6 +42,14 @@ def _get_checkpointer():
     """
     global _checkpointer
     if _checkpointer is not None:
+        return _checkpointer
+
+    # Persistent checkpointing is opt-in. Default to MemorySaver so the
+    # graph compiles without external deps and pytest-asyncio's per-test
+    # event loops don't collide with aiosqlite's loop-bound connection.
+    if not settings.use_persistent_checkpointer:
+        _checkpointer = MemorySaver()
+        logger.info("memory_checkpointer_initialized", reason="persistence_opt_in_disabled")
         return _checkpointer
 
     # Try Postgres first
@@ -63,22 +74,50 @@ def _get_checkpointer():
         except Exception as exc:
             logger.error("postgres_checkpointer_failed", error=str(exc))
 
-    # Try SQLite for persistent local checkpointing (no external DB needed)
+    # Try SQLite for persistent local checkpointing (no external DB needed).
+    # AsyncSqliteSaver wraps an aiosqlite.Connection bound to the event loop
+    # that opens it — so we only construct it from a fresh sync context
+    # (application startup). If we are already inside a running loop (tests,
+    # nest_asyncio contexts), we fall back to MemorySaver to avoid cross-loop
+    # binding bugs; production code paths build the graph at startup before
+    # any event loop is created.
     try:
         import pathlib
 
-        from langgraph.checkpoint.sqlite import SqliteSaver
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-        db_path = pathlib.Path("data/checkpoints.sqlite")
+        try:
+            asyncio.get_running_loop()
+            inside_loop = True
+        except RuntimeError:
+            inside_loop = False
+
+        if inside_loop:
+            raise RuntimeError(
+                "graph compiled inside a running event loop — using in-memory "
+                "checkpointer to avoid cross-loop SQLite binding"
+            )
+
+        db_path = pathlib.Path(settings.checkpoint_db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        _checkpointer = SqliteSaver.from_conn_string(str(db_path))
+
+        async def _open_async_saver() -> AsyncSqliteSaver:
+            conn = await aiosqlite.connect(str(db_path), check_same_thread=False)
+            saver = AsyncSqliteSaver(conn)
+            await saver.setup()
+            return saver
+
+        _checkpointer = asyncio.run(_open_async_saver())
         logger.info("sqlite_checkpointer_initialized", path=str(db_path))
         return _checkpointer
     except ImportError:
         logger.warning(
             "sqlite_checkpointer_not_available",
-            hint="pip install langgraph-checkpoint-sqlite",
+            hint="pip install langgraph-checkpoint-sqlite aiosqlite",
         )
+    except RuntimeError as exc:
+        logger.info("sqlite_checkpointer_skipped", reason=str(exc))
     except Exception as exc:
         logger.error("sqlite_checkpointer_failed", error=str(exc))
 
@@ -225,9 +264,7 @@ async def run_rag_pipeline(
 
     # Extract executed nodes from audit trail
     nodes_executed = [
-        entry["node"]
-        for entry in final_state.get("audit_trail", [])
-        if "node" in entry
+        entry["node"] for entry in final_state.get("audit_trail", []) if "node" in entry
     ]
 
     trace_graph_execution(
@@ -247,3 +284,131 @@ async def run_rag_pipeline(
     )
 
     return final_state
+
+
+def _apply_audit(state: dict, entries: list[dict] | None) -> None:
+    """Append audit entries to mutable state['audit_trail'] in place."""
+    if not entries:
+        return
+    state.setdefault("audit_trail", []).extend(entries)
+
+
+def _merge_update(state: dict, update: dict) -> None:
+    """Merge a node's partial update into state.
+
+    Mirrors LangGraph's reducer semantics: audit_trail is appended,
+    every other field is overwritten.
+    """
+    if not update:
+        return
+    audit_extra = update.pop("audit_trail", None)
+    state.update(update)
+    if audit_extra:
+        _apply_audit(state, audit_extra)
+
+
+async def run_rag_pipeline_stream(
+    query: str,
+    user_context: UserContext,
+    thread_id: str = "default",
+) -> AsyncGenerator[dict, None]:
+    """Execute the full RAG pipeline with real token-by-token streaming of the
+    synthesized answer.
+
+    Runs all non-synthesis nodes (router, security, retriever, grader,
+    optional rewrite loop), then streams synthesizer tokens to the caller,
+    then runs the evaluator on the collected text.
+
+    Event types yielded:
+        {"type": "phase", "name": str, "state": dict}    -- after each non-synth node
+        {"type": "blocked", "message": str, "state": dict}
+        {"type": "token", "text": str}                    -- synthesis token
+        {"type": "final", "state": dict, "latency_ms": float}
+
+    Args:
+        query: Natural language query.
+        user_context: Authenticated user context for RBAC.
+        thread_id: Thread identifier for audit/log correlation.
+
+    Yields:
+        Event dicts as described above.
+    """
+    logger.info(
+        "running_rag_pipeline_stream",
+        query_len=len(query),
+        user_id=user_context.user_id,
+        thread_id=thread_id,
+    )
+    start_time = time.perf_counter()
+
+    state: dict = create_initial_state(query, user_context)
+
+    # 1. Router
+    _merge_update(state, await route_query(state))
+    yield {"type": "phase", "name": "router", "state": dict(state)}
+
+    # 2. Security
+    _merge_update(state, await check_security(state))
+    yield {"type": "phase", "name": "security", "state": dict(state)}
+
+    if security_gate(state) == "blocked":
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        yield {
+            "type": "blocked",
+            "message": state.get("security_message", "Blocked by security policy."),
+            "state": dict(state),
+            "latency_ms": elapsed_ms,
+        }
+        return
+
+    # 3. Retrieve + grade + (optional rewrite loop)
+    while True:
+        _merge_update(state, await retrieve_documents(state))
+        yield {"type": "phase", "name": "retriever", "state": dict(state)}
+
+        _merge_update(state, await grade_documents(state))
+        yield {"type": "phase", "name": "grader", "state": dict(state)}
+
+        if should_retry(state) == "generate":
+            break
+
+        _merge_update(state, await rewrite_query(state))
+        yield {"type": "phase", "name": "rewriter", "state": dict(state)}
+
+    # 4. Streaming synthesis
+    final_synth_event: dict | None = None
+    async for event in synthesize_answer_stream(state):
+        if event["type"] == "token":
+            yield {"type": "token", "text": event["text"]}
+        elif event["type"] == "final":
+            final_synth_event = event
+
+    if final_synth_event:
+        state["generation"] = final_synth_event["generation"]
+        state["citations"] = final_synth_event["citations"]
+        state["confidence_score"] = final_synth_event["confidence_score"]
+        _apply_audit(state, [final_synth_event["audit_entry"]])
+
+    # 5. Evaluator (runs on collected text, not streamed)
+    _merge_update(state, await evaluate_response(state))
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+    nodes_executed = [entry["node"] for entry in state.get("audit_trail", []) if "node" in entry]
+    trace_graph_execution(
+        query=query,
+        nodes_executed=nodes_executed,
+        total_latency_ms=elapsed_ms,
+        final_confidence=state.get("confidence_score", 0.0),
+        retries=state.get("retry_count", 0),
+    )
+
+    logger.info(
+        "rag_pipeline_stream_completed",
+        confidence_score=state.get("confidence_score", 0.0),
+        needs_review=state.get("needs_human_review", False),
+        generation_len=len(state.get("generation", "")),
+        latency_ms=elapsed_ms,
+    )
+
+    yield {"type": "final", "state": dict(state), "latency_ms": elapsed_ms}

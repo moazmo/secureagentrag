@@ -13,7 +13,7 @@ from app.components.chat_message import (
     render_security_blocked,
 )
 from app.components.sidebar import get_current_user_context
-from core.graph import run_rag_pipeline
+from core.graph import run_rag_pipeline, run_rag_pipeline_stream
 from evaluation.ragas_eval import EvalSample, RagasEvaluator
 from utils.async_helpers import run_async
 from utils.conversation_store import ConversationMessage, conversation_store
@@ -182,7 +182,10 @@ def _render_thread_sidebar() -> None:
         )
 
         if threads:
-            thread_options = {t["thread_id"]: f"Thread {t['thread_id'][:8]}... ({t['message_count']} msgs)" for t in threads}
+            thread_options = {
+                t["thread_id"]: f"Thread {t['thread_id'][:8]}... ({t['message_count']} msgs)"
+                for t in threads
+            }
             thread_options["new"] = "+ Start New Thread"
 
             current = st.session_state.get("active_thread_id", "new")
@@ -190,7 +193,9 @@ def _render_thread_sidebar() -> None:
                 "Active Thread",
                 options=list(thread_options.keys()),
                 format_func=lambda x: thread_options[x],
-                index=list(thread_options.keys()).index(current) if current in thread_options else 0,
+                index=list(thread_options.keys()).index(current)
+                if current in thread_options
+                else 0,
                 key="thread_selector",
             )
 
@@ -217,9 +222,11 @@ def _render_thread_sidebar() -> None:
                     st.rerun()
 
             # Delete thread button
-            if selected != "new" and st.button(
-                "🗑️ Delete Thread", type="secondary", use_container_width=True
-            ) and conversation_store.delete_thread(selected):
+            if (
+                selected != "new"
+                and st.button("🗑️ Delete Thread", type="secondary", use_container_width=True)
+                and conversation_store.delete_thread(selected)
+            ):
                 st.session_state.active_thread_id = None
                 st.session_state.chat_history = []
                 st.rerun()
@@ -261,32 +268,13 @@ def _persist_message(role: str, content: str, metadata: dict | None = None) -> N
     )
 
 
-async def _stream_tokens_from_text(text: str, chunk_size: int = 4):
-    """Simulate streaming by yielding chunks of text.
-
-    Used when the graph has already synthesized the answer and we just
-    want to present it with a streaming effect in the UI.
-
-    Args:
-        text: The full text to stream.
-        chunk_size: Number of words per chunk.
-
-    Yields:
-        Text chunks simulating token streaming.
-    """
-    words = text.split(" ")
-    for i in range(0, len(words), chunk_size):
-        chunk = " ".join(words[i : i + chunk_size])
-        yield chunk + " "
-
-
 def _process_query_streaming(query: str) -> None:
-    """Process a user query with streaming display of the synthesized answer.
+    """Process a user query with TRUE token-by-token streaming.
 
-    Runs the full RAG pipeline (including synthesis), then streams the
-    already-generated answer token-by-token in the UI. This avoids the
-    double-synthesis problem — the graph generates the answer once, and
-    we just present it with a streaming effect.
+    Uses ``run_rag_pipeline_stream`` to execute router, security, retriever,
+    grader (and optional rewrite loop), then streams synthesis tokens
+    directly from the LLM to the Streamlit UI as they arrive, then runs
+    the evaluator on the collected text.
 
     Args:
         query: The user's natural language question.
@@ -295,80 +283,85 @@ def _process_query_streaming(query: str) -> None:
     user_context = get_current_user_context()
     thread_id = st.session_state.get("thread_id", str(uuid.uuid4()))
 
+    placeholder = st.empty()
+    citations_placeholder = st.empty()
+
+    collected_text: list[str] = []
+    final_state: dict | None = None
+    blocked_message: str | None = None
+
+    async def _consume() -> None:
+        nonlocal final_state, blocked_message
+        async for event in run_rag_pipeline_stream(
+            query=query,
+            user_context=user_context,
+            thread_id=thread_id,
+        ):
+            etype = event["type"]
+            if etype == "phase":
+                # Could surface phase to a status widget; kept silent for clean UX
+                pass
+            elif etype == "blocked":
+                blocked_message = event["message"]
+                return
+            elif etype == "token":
+                collected_text.append(event["text"])
+                placeholder.markdown("".join(collected_text))
+            elif etype == "final":
+                final_state = event["state"]
+
     try:
-        # Run the FULL RAG pipeline (router, security, retriever, grader, synthesizer, evaluator)
-        final_state = run_async(
-            run_rag_pipeline(
-                query=query,
-                user_context=user_context,
-                thread_id=thread_id,
-            )
-        )
+        run_async(_consume())
 
         latency_ms = (time.time() - start_time) * 1000
 
-        security_passed = final_state.get("security_passed", False)
-        security_message = final_state.get("security_message", "")
+        if blocked_message is not None:
+            render_security_blocked(blocked_message)
+            st.session_state.chat_history.append({"role": "blocked", "content": blocked_message})
+            _persist_message("blocked", blocked_message)
+            _log_audit_entry(
+                action="query_blocked",
+                query=query,
+                details=blocked_message,
+                latency_ms=latency_ms,
+            )
+            return
+
+        if final_state is None:
+            err = "Streaming pipeline did not produce a final state."
+            logger.error("chat_streaming_no_final_state", query_len=len(query))
+            st.error(err)
+            return
+
+        generation = final_state.get("generation", "")
+        citations = final_state.get("citations", [])
         confidence = final_state.get("confidence_score", 0.0)
         needs_human_review = final_state.get("needs_human_review", False)
         evaluation_notes = final_state.get("evaluation_notes", "")
         query_type = final_state.get("query_type", "unknown")
-        generation = final_state.get("generation", "")
-        citations = final_state.get("citations", [])
+        security_passed = final_state.get("security_passed", False)
 
-        if not security_passed and not generation:
-            render_security_blocked(
-                security_message or "Your query was blocked by security policy."
-            )
-            st.session_state.chat_history.append(
-                {
-                    "role": "blocked",
-                    "content": security_message or "Query blocked by security policy.",
-                }
-            )
-            return
-
-        if not generation:
-            generation = (
-                "I was unable to find relevant documents to answer your question. "
-                "Please try rephrasing your query or check that the relevant "
-                "documents have been ingested."
-            )
-            st.markdown(generation)
-            st.session_state.chat_history.append(
-                {
-                    "role": "assistant",
-                    "content": generation,
-                    "citations": [],
-                    "confidence": 0.0,
-                    "routing_info": None,
-                }
-            )
-            return
+        # Ensure final placeholder shows the disclaimer-augmented text
+        if generation and generation != "".join(collected_text):
+            placeholder.markdown(generation)
 
         if needs_human_review:
             st.warning(
-                f"⚠️ **Low Confidence Response** — Human review recommended\n\n"
-                f"{evaluation_notes}",
+                f"⚠️ **Low Confidence Response** — Human review recommended\n\n{evaluation_notes}",
                 icon="⚠️",
             )
 
-        # Stream the ALREADY-SYNTHESIZED answer with a typing effect
-        st.write_stream(
-            run_async(_stream_tokens_from_text(generation, chunk_size=3))
-        )
-
-        # Display citations below the streamed response
         if citations:
-            st.markdown("\n\n**Sources:**")
-            for i, cite in enumerate(citations, 1):
-                st.markdown(
-                    f"{i}. *{cite['source_file']}* (p. {cite['page_number']}) — "
-                    f"score: {cite['relevance_score']:.2f}"
-                )
+            with citations_placeholder.container():
+                st.markdown("**Sources:**")
+                for i, cite in enumerate(citations, 1):
+                    st.markdown(
+                        f"{i}. *{cite['source_file']}* (p. {cite['page_number']}) — "
+                        f"score: {cite['relevance_score']:.2f}"
+                    )
 
         routing_info = {
-            "provider": "ollama",
+            "provider": "ollama" if st.session_state.inference_mode == "local" else "cloud",
             "model": st.session_state.selected_model,
             "forced_local": query_type == "sensitive",
         }
@@ -406,12 +399,10 @@ def _process_query_streaming(query: str) -> None:
             security_passed=security_passed,
         )
 
-        # Run Ragas evaluation asynchronously (non-blocking)
         _run_ragas_evaluation(query, generation, citations)
 
-        # Cache the result for future identical queries
         set_cached_result(
-            user_id=user_context.get("user_id", "unknown"),
+            user_id=user_context.user_id,
             query=query,
             result={
                 "generation": generation,
@@ -536,7 +527,7 @@ def _process_query(query: str) -> None:
 
             # Cache the result for future identical queries
             set_cached_result(
-                user_id=user_context.get("user_id", "unknown"),
+                user_id=user_context.user_id,
                 query=query,
                 result={
                     "generation": generation,
@@ -642,15 +633,17 @@ def _run_ragas_evaluation(
         if "ragas_scores" not in st.session_state:
             st.session_state.ragas_scores = []
 
-        st.session_state.ragas_scores.append({
-            "timestamp": datetime.now(UTC).isoformat(),
-            "query": query[:80],
-            "faithfulness": result.faithfulness,
-            "answer_relevancy": result.answer_relevancy,
-            "context_precision": result.context_precision,
-            "overall_score": result.overall_score,
-            "latency_ms": result.latency_ms,
-        })
+        st.session_state.ragas_scores.append(
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "query": query[:80],
+                "faithfulness": result.faithfulness,
+                "answer_relevancy": result.answer_relevancy,
+                "context_precision": result.context_precision,
+                "overall_score": result.overall_score,
+                "latency_ms": result.latency_ms,
+            }
+        )
 
         logger.info(
             "ragas_evaluation_completed",
