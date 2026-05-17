@@ -59,9 +59,7 @@ def _compute_citation_coverage(generation: str, citations: list[Citation]) -> fl
     return min(1.0, sentence_coverage)
 
 
-def _compute_evidence_strength(
-    citations: list[Citation], documents: list[DocumentGrade]
-) -> float:
+def _compute_evidence_strength(citations: list[Citation], documents: list[DocumentGrade]) -> float:
     """Compute average relevance score of cited documents.
 
     Higher relevance scores in the retrieved documents suggest stronger
@@ -87,10 +85,11 @@ def _compute_evidence_strength(
     return min(1.0, max(0.0, (avg_score - 0.3) / 0.6))
 
 
-def _get_hallucination_check_prompt(
-    query: str, answer: str, context: str
-) -> str:
+def _get_hallucination_check_prompt(query: str, answer: str, context: str) -> str:
     """Build prompt for hallucination detection.
+
+    Uses a strict structured output (CLAIM markers) so the parser does not
+    have to guess between preamble and actual unsupported claims.
 
     Args:
         query: User query.
@@ -101,16 +100,18 @@ def _get_hallucination_check_prompt(
         Formatted prompt string.
     """
     return (
-        "You are a fact-checking assistant. Your task is to identify claims in the "
+        "You are a strict fact-checking assistant. Identify claims in the "
         "generated answer that are NOT supported by the provided context.\n\n"
-        "Instructions:\n"
-        "1. Read the context carefully.\n"
-        "2. Read the generated answer.\n"
-        "3. List any claims in the answer that cannot be verified from the context.\n"
-        "4. If the answer contains no unsupported claims, respond with 'NONE'.\n\n"
+        "STRICT OUTPUT FORMAT (no preamble, no explanation):\n"
+        "- If every claim is supported, output exactly:\n"
+        "    NONE\n"
+        "- Otherwise output one line per unsupported claim, each prefixed with\n"
+        "  the marker 'CLAIM:' (no other lines, no numbering):\n"
+        "    CLAIM: <short description of the unsupported claim>\n"
+        "    CLAIM: <next unsupported claim>\n\n"
         f"Context:\n{context[:1500]}\n\n"
         f"Generated Answer:\n{answer[:800]}\n\n"
-        "Unsupported claims (one per line, or 'NONE' if all claims are supported):"
+        "Output:"
     )
 
 
@@ -162,18 +163,35 @@ def _parse_score(response: str) -> float:
 def _count_hallucinations(response: str) -> int:
     """Count number of hallucinated claims from LLM response.
 
+    Parser is strict: only lines starting with ``CLAIM:`` are counted.
+    Free-text preamble, reasoning, and reasoning-mode ``<think>`` blocks
+    are ignored so chatty models do not produce false-positive hallucination
+    counts. ``NONE`` (case-insensitive, anywhere on its own line) shortcuts
+    to zero.
+
     Args:
-        response: LLM response listing unsupported claims.
+        response: LLM response (structured per ``_get_hallucination_check_prompt``).
 
     Returns:
-        Number of unsupported claims (0 if response is 'NONE').
+        Number of unsupported claims (0 if no CLAIM lines found).
     """
-    cleaned = response.strip().upper()
-    if cleaned == "NONE" or cleaned.startswith("NONE"):
+    if not response or not response.strip():
         return 0
-    # Count non-empty lines
-    lines = [line.strip() for line in response.split("\n") if line.strip()]
-    return len(lines)
+
+    # Strip reasoning-model think blocks (e.g., Qwen3 thinking mode).
+    no_think = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL | re.IGNORECASE)
+
+    # Explicit NONE shortcut.
+    for line in no_think.splitlines():
+        stripped = line.strip().rstrip(".").upper()
+        if stripped == "NONE":
+            return 0
+
+    # Count CLAIM: lines (the strict format requested in the prompt).
+    claim_lines = [
+        line for line in no_think.splitlines() if re.match(r"^\s*CLAIM\s*:", line, re.IGNORECASE)
+    ]
+    return len(claim_lines)
 
 
 async def evaluate_response(state: GraphState) -> dict:
@@ -214,16 +232,12 @@ async def evaluate_response(state: GraphState) -> dict:
     evidence_strength = _compute_evidence_strength(citations, docs_to_use)
 
     # ── Metric 3 & 4: Hallucination Check + Completeness (batched LLM) ──────
-    context_str = "\n---\n".join(
-        doc.get("text", "")[:300] for doc in docs_to_use[:5]
-    )
+    context_str = "\n---\n".join(doc.get("text", "")[:300] for doc in docs_to_use[:5])
 
     # Run hallucination and completeness checks in parallel
     import asyncio
 
-    hallucination_prompt = _get_hallucination_check_prompt(
-        query, generation, context_str
-    )
+    hallucination_prompt = _get_hallucination_check_prompt(query, generation, context_str)
     completeness_prompt = _get_completeness_prompt(query, generation)
 
     hallucination_task = call_llm_async(
@@ -273,8 +287,7 @@ async def evaluate_response(state: GraphState) -> dict:
         )
     if citation_coverage < 0.5:
         notes_parts.append(
-            f"📎 Low citation coverage ({citation_coverage:.0%}). "
-            "Many claims lack source backing."
+            f"📎 Low citation coverage ({citation_coverage:.0%}). Many claims lack source backing."
         )
     if completeness_score < 0.5:
         notes_parts.append(
@@ -289,15 +302,12 @@ async def evaluate_response(state: GraphState) -> dict:
         )
     elif confidence_score >= 0.6:
         evaluation_notes = (
-            f"Info: Moderate confidence ({confidence_score:.0%}). "
-            + " ".join(notes_parts)
+            f"Info: Moderate confidence ({confidence_score:.0%}). " + " ".join(notes_parts)
             if notes_parts
             else "Answer appears reasonable with adequate support."
         )
     else:
-        base_note = (
-            f"⚠️ Low confidence ({confidence_score:.0%}). Human review recommended."
-        )
+        base_note = f"⚠️ Low confidence ({confidence_score:.0%}). Human review recommended."
         evaluation_notes = base_note + " " + " ".join(notes_parts) if notes_parts else base_note
 
     logger.info(
@@ -329,6 +339,3 @@ async def evaluate_response(state: GraphState) -> dict:
             }
         ],
     }
-
-
-
