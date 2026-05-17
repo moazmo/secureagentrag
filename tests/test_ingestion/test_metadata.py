@@ -112,7 +112,7 @@ class TestDocumentMetadata:
         assert payload["user_id"] == "user1"
         assert payload["org_id"] == "org1"
         assert payload["sensitivity_level"] == "medium"
-        assert payload["sensitivity_int"] == 2
+        assert payload["sensitivity_level_int"] == 2
         assert payload["roles"] == ["editor", "viewer"]
         assert payload["source_file"] == "doc.pdf"
         assert payload["page_number"] == 2
@@ -131,7 +131,7 @@ class TestDocumentMetadata:
         payload = meta.to_qdrant_payload()
 
         assert isinstance(payload["sensitivity_level"], str)
-        assert isinstance(payload["sensitivity_int"], int)
+        assert isinstance(payload["sensitivity_level_int"], int)
         assert isinstance(payload["roles"], list)
         assert isinstance(payload["ingested_at"], str)
 

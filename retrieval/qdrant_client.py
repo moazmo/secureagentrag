@@ -158,7 +158,8 @@ class QdrantManager:
                 **metadata,
             }
 
-            # Ensure sensitivity_level_int is present for RBAC range filtering
+            # Defensive: ensure sensitivity_level_int present even if caller
+            # passed metadata not produced by DocumentMetadata.to_qdrant_payload.
             if "sensitivity_level_int" not in payload:
                 sl = payload.get("sensitivity_level")
                 if sl is not None:

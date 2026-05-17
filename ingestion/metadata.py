@@ -56,9 +56,7 @@ class DocumentMetadata(BaseModel):
     source_file: str
     page_number: int = 0
     chunk_index: int = 0
-    ingested_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC).replace(tzinfo=None)
-    )
+    ingested_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
     file_type: str = ""
     language: str | None = None
 
@@ -75,7 +73,7 @@ class DocumentMetadata(BaseModel):
             "user_id": self.user_id,
             "org_id": self.org_id,
             "sensitivity_level": self.sensitivity_level.value,
-            "sensitivity_int": sensitivity_to_int(self.sensitivity_level),
+            "sensitivity_level_int": sensitivity_to_int(self.sensitivity_level),
             "roles": self.roles,
             "source_file": self.source_file,
             "page_number": self.page_number,
