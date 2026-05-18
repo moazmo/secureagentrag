@@ -207,6 +207,7 @@ class EmbeddingService:
         payload = {
             "model": self._model,
             "input": text,
+            "keep_alive": settings.ollama_keep_alive,
         }
 
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -346,6 +347,7 @@ class EmbeddingService:
         payload = {
             "model": self._model,
             "input": texts,
+            "keep_alive": settings.ollama_keep_alive,
         }
 
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -365,7 +367,11 @@ class EmbeddingService:
         )
         results: list[list[float]] = []
         for text in texts:
-            single_payload = {"model": self._model, "input": text}
+            single_payload = {
+                "model": self._model,
+                "input": text,
+                "keep_alive": settings.ollama_keep_alive,
+            }
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(url, json=single_payload)
                 resp.raise_for_status()

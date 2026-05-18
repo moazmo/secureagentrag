@@ -84,6 +84,7 @@ class OllamaClient:
                 "temperature": temperature,
                 "num_predict": max_tokens,
             },
+            "keep_alive": settings.ollama_keep_alive,
         }
         if system_prompt:
             payload["system"] = system_prompt
@@ -136,6 +137,7 @@ class OllamaClient:
                 "temperature": temperature,
                 "num_predict": max_tokens,
             },
+            "keep_alive": settings.ollama_keep_alive,
         }
 
         start = time.perf_counter()
@@ -184,6 +186,7 @@ class OllamaClient:
             "options": {
                 "temperature": temperature,
             },
+            "keep_alive": settings.ollama_keep_alive,
         }
         if system_prompt:
             payload["system"] = system_prompt
@@ -222,6 +225,7 @@ class OllamaClient:
             "options": {
                 "temperature": temperature,
             },
+            "keep_alive": settings.ollama_keep_alive,
         }
 
         async with self._client.stream("POST", "/api/chat", json=payload) as resp:

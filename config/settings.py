@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     embedding_dim: int = 1024
     embedding_backend: str = "ollama"  # "ollama" or "local" (sentence-transformers)
     local_embedding_model: str = "BAAI/bge-m3"
+    # How long Ollama keeps models resident in VRAM between requests.
+    # On consumer hardware the LLM (qwen3:8b ~5.5GB) and embedding (bge-m3 ~1.2GB)
+    # need to swap if VRAM is tight. Long keep-alive avoids ~5-10s reload per swap.
+    ollama_keep_alive: str = "30m"
 
     # ── Chunking ─────────────────────────────────────────────────────────────────
     chunk_size: int = 1000
@@ -46,6 +50,13 @@ class Settings(BaseSettings):
     top_k: int = 10
     rerank_top_k: int = 5
     relevance_threshold: float = 0.7
+    # The reranker (BAAI/bge-reranker-v2-m3 cross-encoder) downloads ~600MB
+    # from HuggingFace the first time it is used. Disabled by default so the
+    # first query does not silently hang on the download. Enable explicitly
+    # after pre-downloading the model (uv run python -c
+    # "from sentence_transformers import CrossEncoder;
+    #  CrossEncoder('BAAI/bge-reranker-v2-m3')").
+    enable_reranker: bool = False
 
     # ── Inference Providers ──────────────────────────────────────────────────────
     default_provider: str = "ollama"

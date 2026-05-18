@@ -200,7 +200,7 @@ def _render_thread_sidebar() -> None:
             )
 
             if selected == "new":
-                if st.button("Create New Thread", use_container_width=True):
+                if st.button("Create New Thread", width="stretch"):
                     st.session_state.active_thread_id = str(uuid.uuid4())
                     st.session_state.chat_history = []
                     st.rerun()
@@ -224,7 +224,7 @@ def _render_thread_sidebar() -> None:
             # Delete thread button
             if (
                 selected != "new"
-                and st.button("🗑️ Delete Thread", type="secondary", use_container_width=True)
+                and st.button("🗑️ Delete Thread", type="secondary", width="stretch")
                 and conversation_store.delete_thread(selected)
             ):
                 st.session_state.active_thread_id = None
@@ -232,7 +232,7 @@ def _render_thread_sidebar() -> None:
                 st.rerun()
         else:
             st.info("No saved conversations yet.")
-            if st.button("Start New Thread", use_container_width=True):
+            if st.button("Start New Thread", width="stretch"):
                 st.session_state.active_thread_id = str(uuid.uuid4())
                 st.session_state.chat_history = []
                 st.rerun()
@@ -283,15 +283,24 @@ def _process_query_streaming(query: str) -> None:
     user_context = get_current_user_context()
     thread_id = st.session_state.get("thread_id", str(uuid.uuid4()))
 
+    status_widget = st.status("Starting pipeline…", expanded=False)
     placeholder = st.empty()
     citations_placeholder = st.empty()
 
     collected_text: list[str] = []
     final_state: dict | None = None
     blocked_message: str | None = None
+    phase_labels = {
+        "router": "🧭 Classifying query",
+        "security": "🛡️ Security check",
+        "retriever": "🔍 Retrieving documents",
+        "grader": "🎯 Grading relevance",
+        "rewriter": "✏️ Rewriting query (corrective loop)",
+    }
 
     async def _consume() -> None:
         nonlocal final_state, blocked_message
+        first_token_seen = False
         async for event in run_rag_pipeline_stream(
             query=query,
             user_context=user_context,
@@ -299,16 +308,21 @@ def _process_query_streaming(query: str) -> None:
         ):
             etype = event["type"]
             if etype == "phase":
-                # Could surface phase to a status widget; kept silent for clean UX
-                pass
+                label = phase_labels.get(event["name"], event["name"])
+                status_widget.update(label=label, state="running")
             elif etype == "blocked":
                 blocked_message = event["message"]
+                status_widget.update(label="🚫 Blocked by security gate", state="error")
                 return
             elif etype == "token":
+                if not first_token_seen:
+                    status_widget.update(label="💬 Generating answer…", state="running")
+                    first_token_seen = True
                 collected_text.append(event["text"])
                 placeholder.markdown("".join(collected_text))
             elif etype == "final":
                 final_state = event["state"]
+                status_widget.update(label="✅ Done", state="complete")
 
     try:
         run_async(_consume())
