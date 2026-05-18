@@ -58,6 +58,11 @@ test_fixes_output*.txt
 test_final_output*.txt
 test_final_summary*.txt
 
+# ── Personal / private notes (not for public repo) ───────────────────────────
+INTERVIEW_DEFENSE.md
+NOTES.md
+TODO.md
+
 # ── OS Files ─────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
