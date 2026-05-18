@@ -205,10 +205,12 @@ class QdrantManager:
         """
         try:
             info = self._client.get_collection(self._collection_name)
+            # vectors_count was removed from CollectionInfo in qdrant-client >= 1.10;
+            # use getattr so this stays forward-compatible.
             return {
                 "name": self._collection_name,
                 "points_count": info.points_count,
-                "vectors_count": info.vectors_count,
+                "vectors_count": getattr(info, "vectors_count", info.points_count),
                 "status": info.status.value if info.status else None,
             }
         except Exception as exc:
@@ -286,13 +288,16 @@ class QdrantManager:
         rbac_filter = self.build_rbac_filter(user_context)
 
         try:
-            results = self._client.search(
+            # qdrant-client >= 1.13 replaced .search() with .query_points()
+            # which returns a QueryResponse wrapping a list of ScoredPoint.
+            response = self._client.query_points(
                 collection_name=self._collection_name,
-                query_vector=query_embedding,
+                query=query_embedding,
                 query_filter=rbac_filter,
                 limit=k,
                 score_threshold=score_threshold,
             )
+            results = response.points
             logger.info(
                 "search_with_rbac_completed",
                 collection=self._collection_name,
@@ -348,12 +353,13 @@ class QdrantManager:
         k = top_k if top_k is not None else settings.top_k
 
         try:
-            results = self._client.search(
+            response = self._client.query_points(
                 collection_name=self._collection_name,
-                query_vector=query_embedding,
+                query=query_embedding,
                 limit=k,
                 score_threshold=score_threshold,
             )
+            results = response.points
             logger.info(
                 "search_without_rbac_completed",
                 collection=self._collection_name,

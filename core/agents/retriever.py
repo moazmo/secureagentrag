@@ -16,11 +16,14 @@ from utils.observability import trace_retrieval
 
 logger = get_logger(__name__)
 
-# Module-level lazy singletons
+# Module-level lazy singletons.
+# RLock (reentrant) is required because _get_hybrid_searcher holds the lock
+# while calling _get_bm25_index, which acquires the same lock recursively.
+# A plain Lock would deadlock the calling thread on first invocation.
 _hybrid_searcher = None
 _reranker = None
 _bm25_index = None
-_init_lock = threading.Lock()
+_init_lock = threading.RLock()
 
 
 def _get_bm25_index():
@@ -199,14 +202,17 @@ async def retrieve_documents(state: GraphState) -> dict:
             top_k=settings.top_k,
         )
 
-        # Optionally rerank
-        reranker = _get_reranker()
-        if reranker.is_available() and search_results:
-            search_results = reranker.rerank(
-                query=query,
-                documents=search_results,
-                top_k=settings.rerank_top_k,
-            )
+        # Optionally rerank. Gated behind settings.enable_reranker because
+        # the first call downloads a ~600MB cross-encoder from HuggingFace
+        # with no progress feedback — easily mistaken for a hang.
+        if settings.enable_reranker and search_results:
+            reranker = _get_reranker()
+            if reranker.is_available():
+                search_results = reranker.rerank(
+                    query=query,
+                    documents=search_results,
+                    top_k=settings.rerank_top_k,
+                )
 
         # Convert SearchResults to DocumentGrade objects
         documents: list[DocumentGrade] = []

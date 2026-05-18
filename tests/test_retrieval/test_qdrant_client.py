@@ -132,8 +132,10 @@ class TestSearchWithRbac:
     """Tests for QdrantManager.search_with_rbac()."""
 
     def test_search_calls_client_with_filter(self, qdrant_manager, user_context_admin):
-        """search_with_rbac calls client.search with RBAC filter."""
-        qdrant_manager.client.search.return_value = []
+        """search_with_rbac calls client.query_points with RBAC filter."""
+        from types import SimpleNamespace
+
+        qdrant_manager.client.query_points.return_value = SimpleNamespace(points=[])
 
         results = qdrant_manager.search_with_rbac(
             query_embedding=[0.1] * 1024,
@@ -141,15 +143,15 @@ class TestSearchWithRbac:
             top_k=5,
         )
 
-        qdrant_manager.client.search.assert_called_once()
-        call_kwargs = qdrant_manager.client.search.call_args
+        qdrant_manager.client.query_points.assert_called_once()
+        call_kwargs = qdrant_manager.client.query_points.call_args
         assert call_kwargs.kwargs["limit"] == 5
         assert call_kwargs.kwargs["query_filter"] is not None
         assert results == []
 
     def test_search_returns_empty_on_error(self, qdrant_manager, user_context_admin):
         """search_with_rbac returns empty list on exception."""
-        qdrant_manager.client.search.side_effect = Exception("Connection failed")
+        qdrant_manager.client.query_points.side_effect = Exception("Connection failed")
 
         results = qdrant_manager.search_with_rbac(
             query_embedding=[0.1] * 1024,
@@ -163,8 +165,10 @@ class TestSearchWithoutRbac:
     """Tests for QdrantManager.search_without_rbac()."""
 
     def test_search_calls_client_without_filter(self, qdrant_manager, user_context_admin):
-        """search_without_rbac calls client.search without filter when admin."""
-        qdrant_manager.client.search.return_value = []
+        """search_without_rbac calls client.query_points without filter when admin."""
+        from types import SimpleNamespace
+
+        qdrant_manager.client.query_points.return_value = SimpleNamespace(points=[])
 
         results = qdrant_manager.search_without_rbac(
             query_embedding=[0.1] * 1024,
@@ -172,7 +176,7 @@ class TestSearchWithoutRbac:
             admin_context=user_context_admin,
         )
 
-        call_kwargs = qdrant_manager.client.search.call_args
+        call_kwargs = qdrant_manager.client.query_points.call_args
         assert call_kwargs.kwargs["limit"] == 10
         assert "query_filter" not in call_kwargs.kwargs
         assert results == []
@@ -196,7 +200,7 @@ class TestSearchWithoutRbac:
 
     def test_search_returns_empty_on_error(self, qdrant_manager, user_context_admin):
         """search_without_rbac returns empty list on exception."""
-        qdrant_manager.client.search.side_effect = Exception("Timeout")
+        qdrant_manager.client.query_points.side_effect = Exception("Timeout")
 
         results = qdrant_manager.search_without_rbac(
             query_embedding=[0.1] * 1024,
