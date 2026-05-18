@@ -63,19 +63,29 @@ def _render_health_checks() -> None:
     cols = st.columns(len(report.services))
     for col, svc in zip(cols, report.services, strict=False):
         with col:
-            icon = "✅" if svc.healthy else "❌"
+            optional = getattr(svc, "optional", False)
+            if svc.healthy:
+                icon = "✅"
+                value = "Healthy"
+            elif optional:
+                icon = "⚪"
+                value = "Optional"
+            else:
+                icon = "❌"
+                value = "Unhealthy"
             st.metric(
                 label=f"{icon} {svc.name.upper()}",
-                value="Healthy" if svc.healthy else "Unhealthy",
+                value=value,
                 delta=f"{svc.latency_ms:.0f}ms" if svc.latency_ms > 0 else None,
                 delta_color="off",
             )
             if svc.message:
-                st.caption(svc.message[:80])
+                st.caption(svc.message[:120])
 
     if not report.overall_healthy:
         st.error(
-            "⚠️ Some services are unhealthy. Check your Docker Compose setup and environment variables.",
+            "⚠️ A required service is unreachable (Qdrant or Ollama). "
+            "Check that Docker Compose and Ollama are running.",
             icon="⚠️",
         )
 
@@ -222,7 +232,7 @@ def _render_model_comparison(df: pd.DataFrame) -> None:
     comparison["min_latency_ms"] = comparison["min_latency_ms"].apply(lambda x: f"{x:.0f}")
     comparison["max_latency_ms"] = comparison["max_latency_ms"].apply(lambda x: f"{x:.0f}")
 
-    st.dataframe(comparison, use_container_width=True)
+    st.dataframe(comparison, width="stretch")
 
 
 def _render_recent_evaluations(df: pd.DataFrame) -> None:
@@ -237,4 +247,4 @@ def _render_recent_evaluations(df: pd.DataFrame) -> None:
     available_cols = [c for c in display_cols if c in df.columns]
 
     recent = df[available_cols].sort_values("timestamp", ascending=False).head(20)
-    st.dataframe(recent, use_container_width=True, hide_index=True)
+    st.dataframe(recent, width="stretch", hide_index=True)

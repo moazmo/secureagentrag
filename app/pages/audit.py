@@ -50,7 +50,7 @@ def render_audit_page() -> None:
 
     st.dataframe(
         filtered_df[available_cols].sort_values("timestamp", ascending=False),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -143,5 +143,5 @@ def _render_export(df: pd.DataFrame) -> None:
             data=csv_data,
             file_name=f"audit_log_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )

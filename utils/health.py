@@ -23,13 +23,22 @@ logger = get_logger(__name__)
 
 @dataclass
 class HealthStatus:
-    """Health status for a single service."""
+    """Health status for a single service.
+
+    Attributes:
+        name: Service identifier (qdrant / ollama / postgres / redis).
+        healthy: True if reachable and responding.
+        optional: True if this service is not required for core operation.
+            Optional services that are unreachable should not flip
+            ``overall_healthy`` to False — they downgrade gracefully.
+    """
 
     name: str
     healthy: bool
     latency_ms: float = 0.0
     message: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    optional: bool = False
 
 
 @dataclass
@@ -158,18 +167,28 @@ async def _check_ollama(timeout: float = 5.0) -> HealthStatus:
 
 
 async def _check_postgres(timeout: float = 5.0) -> HealthStatus:
-    """Check PostgreSQL connectivity."""
+    """Check PostgreSQL connectivity.
+
+    Postgres is an OPTIONAL backend for LangGraph checkpointing — only used
+    when ``SAR_USE_PERSISTENT_CHECKPOINTER=true`` AND ``SAR_POSTGRES_URL`` is
+    reachable. Otherwise the system falls back to SQLite (if persistent) or
+    MemorySaver. Status is always marked optional so an unreachable Postgres
+    does not flip overall_healthy.
+    """
     cached = _get_cached_status("postgres")
     if cached:
         return cached
 
     start = time.perf_counter()
-    if not settings.postgres_url:
+    use_persistent = settings.use_persistent_checkpointer
+
+    if not use_persistent or not settings.postgres_url:
         status = HealthStatus(
             name="postgres",
             healthy=True,
             latency_ms=0.0,
-            message="Not configured (using in-memory checkpoints).",
+            message="Optional — persistent checkpointing disabled.",
+            optional=True,
         )
         _set_cached_status(status)
         return status
@@ -189,6 +208,7 @@ async def _check_postgres(timeout: float = 5.0) -> HealthStatus:
             healthy=True,
             latency_ms=latency_ms,
             message="Connected and responding.",
+            optional=True,
         )
         _set_cached_status(status)
         return status
@@ -197,7 +217,8 @@ async def _check_postgres(timeout: float = 5.0) -> HealthStatus:
             name="postgres",
             healthy=True,
             latency_ms=0.0,
-            message="psycopg not installed (checkpoints use MemorySaver).",
+            message="Optional — psycopg not installed; SQLite/MemorySaver in use.",
+            optional=True,
         )
         _set_cached_status(status)
         return status
@@ -207,25 +228,36 @@ async def _check_postgres(timeout: float = 5.0) -> HealthStatus:
             name="postgres",
             healthy=False,
             latency_ms=latency_ms,
-            message=f"Connection failed: {exc!s}",
+            message=f"Optional — connection failed: {exc!s}",
+            optional=True,
         )
         _set_cached_status(status)
         return status
 
 
 async def _check_redis(timeout: float = 5.0) -> HealthStatus:
-    """Check Redis connectivity."""
+    """Check Redis connectivity.
+
+    Redis is OPTIONAL — only used for distributed rate limiting and query
+    cache when ``SAR_USE_REDIS_RATE_LIMITER=true`` (or the query cache is
+    explicitly Redis-backed). Otherwise the system uses in-memory fallbacks.
+    Status is always marked optional so an unreachable Redis does not flip
+    overall_healthy.
+    """
     cached = _get_cached_status("redis")
     if cached:
         return cached
 
     start = time.perf_counter()
-    if not settings.redis_url:
+    use_redis = settings.use_redis_rate_limiter
+
+    if not use_redis or not settings.redis_url:
         status = HealthStatus(
             name="redis",
             healthy=True,
             latency_ms=0.0,
-            message="Not configured (using in-memory rate limiting).",
+            message="Optional — Redis features disabled (in-memory fallback in use).",
+            optional=True,
         )
         _set_cached_status(status)
         return status
@@ -243,6 +275,7 @@ async def _check_redis(timeout: float = 5.0) -> HealthStatus:
             latency_ms=latency_ms,
             message=f"Connected. Redis v{info.get('redis_version', 'unknown')}.",
             metadata={"redis_version": info.get("redis_version", "unknown")},
+            optional=True,
         )
         _set_cached_status(status)
         return status
@@ -251,7 +284,8 @@ async def _check_redis(timeout: float = 5.0) -> HealthStatus:
             name="redis",
             healthy=True,
             latency_ms=0.0,
-            message="redis-py not installed (using in-memory fallbacks).",
+            message="Optional — redis-py not installed; in-memory fallback in use.",
+            optional=True,
         )
         _set_cached_status(status)
         return status
@@ -261,7 +295,8 @@ async def _check_redis(timeout: float = 5.0) -> HealthStatus:
             name="redis",
             healthy=False,
             latency_ms=latency_ms,
-            message=f"Connection failed: {exc!s}",
+            message=f"Optional — connection failed: {exc!s}",
+            optional=True,
         )
         _set_cached_status(status)
         return status
@@ -312,5 +347,6 @@ async def run_health_checks(
         else:
             processed.append(svc)
 
-    overall = all(s.healthy for s in processed)
+    # Optional services that are unreachable do not flip overall_healthy.
+    overall = all(s.healthy for s in processed if not s.optional)
     return HealthReport(overall_healthy=overall, services=processed)

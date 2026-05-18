@@ -125,14 +125,14 @@ def _render_document_manager() -> None:
                     default=first_payload.get("roles", ["viewer"]),
                     key=f"roles_{source_file}",
                 )
-                if st.button("Update", key=f"upd_{source_file}", use_container_width=True):
+                if st.button("Update", key=f"upd_{source_file}", width="stretch"):
                     _update_document_batch(recs, new_sensitivity, new_roles, qdrant)
 
             with cols[2]:
                 if st.button(
                     "🗑️ Delete",
                     key=f"del_{source_file}",
-                    use_container_width=True,
+                    width="stretch",
                     type="secondary",
                 ):
                     _delete_document_batch(recs, source_file, qdrant)
@@ -247,7 +247,7 @@ def _render_upload_form() -> None:
                 help="Comma-separated tags for document categorization.",
             )
 
-            submitted = st.form_submit_button("🚀 Ingest Document", use_container_width=True)
+            submitted = st.form_submit_button("🚀 Ingest Document", width="stretch")
 
             if submitted:
                 _process_upload(
@@ -432,4 +432,4 @@ def _render_recent_uploads() -> None:
         "user",
     ]
     available_cols = [c for c in display_cols if c in df.columns]
-    st.dataframe(df[available_cols], use_container_width=True, hide_index=True)
+    st.dataframe(df[available_cols], width="stretch", hide_index=True)
