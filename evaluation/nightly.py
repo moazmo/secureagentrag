@@ -21,6 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from core.graph import run_rag_pipeline
+from ingestion.metadata import UserContext
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -55,9 +57,6 @@ def _load_baseline() -> dict[str, float]:
 
 async def _run_golden_set(items: list[dict[str, Any]]) -> dict[str, Any]:
     """Run each golden question through the pipeline and collect responses."""
-    from core.graph import run_rag_pipeline
-    from ingestion.metadata import UserContext
-
     responses: list[dict[str, Any]] = []
     for item in items:
         try:

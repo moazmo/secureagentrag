@@ -58,6 +58,9 @@ test_fixes_output*.txt
 test_final_output*.txt
 test_final_summary*.txt
 
+# ── Evaluation runtime artifacts ─────────────────────────────────────────────
+evaluation/results/
+
 # ── Personal / private notes (not for public repo) ───────────────────────────
 INTERVIEW_DEFENSE.md
 NOTES.md
