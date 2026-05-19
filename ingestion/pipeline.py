@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from config.settings import settings
 from ingestion.chunker import TextChunker
+from ingestion.contextual import generate_chunk_contexts, merge_chunks
 from ingestion.loaders import LoadedDocument, load_document
 from ingestion.metadata import DocumentMetadata, IngestRequest
 from ingestion.ocr import OCRProcessor
@@ -212,9 +214,31 @@ class IngestionPipeline:
             )
             metadatas.append(doc_metadata.to_qdrant_payload())
 
+        # Step 5b: (optional) Anthropic-style Contextual Retrieval — prepend
+        # an LLM-generated context summary to each chunk *for embedding only*.
+        # The chunk text shown to users (and stored in payload) is unchanged.
+        embed_inputs = chunk_texts
+        if settings.contextual_retrieval_enabled and chunk_texts:
+            try:
+                full_doc = "\n".join(d.text for d in documents)
+                contexts = await generate_chunk_contexts(
+                    full_doc,
+                    chunk_texts,
+                    prefer_cloud=False,
+                )
+                embed_inputs = merge_chunks(chunk_texts, contexts)
+                logger.info(
+                    "contextual_retrieval_applied",
+                    file=file_path,
+                    augmented=sum(1 for c in contexts if c),
+                )
+            except Exception as exc:
+                logger.warning("contextual_retrieval_failed", error=str(exc))
+                embed_inputs = chunk_texts
+
         # Step 6: Generate embeddings
         try:
-            embeddings = await self._embeddings.embed_batch(chunk_texts)
+            embeddings = await self._embeddings.embed_batch(embed_inputs)
         except Exception as exc:
             logger.error("ingestion_embedding_failed", file=file_path, error=str(exc))
             return IngestionResult(
@@ -249,8 +273,11 @@ class IngestionPipeline:
         # in place.
         if self._bm25 is not None and point_ids:
             try:
+                # Index the same augmented text we embedded so BM25 + dense
+                # see the same surface form (Anthropic recommends parity for
+                # contextual retrieval — context tokens help BM25 too).
                 self._bm25.add_documents(
-                    documents=chunk_texts,
+                    documents=embed_inputs,
                     doc_ids=point_ids,
                 )
                 logger.info("bm25_index_updated", chunks=len(point_ids))

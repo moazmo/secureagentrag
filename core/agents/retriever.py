@@ -280,6 +280,19 @@ async def retrieve_documents(state: GraphState) -> dict:
 
     user_context = UserContext(**user_context_dict)
 
+    # HyDE (opt-in): embed a hypothetical answer alongside the query so the
+    # dense vector lands in document-space. Skipped for ``out_of_scope`` and
+    # ``simple`` queries where the cheap regex query would already match.
+    search_query = query
+    if settings.hyde_enabled and state.get("query_type") in ("complex", ""):
+        from retrieval.hyde import generate_hyde_passage
+
+        search_query = await generate_hyde_passage(
+            query,
+            sensitivity_level=state.get("query_sensitivity", "low"),
+            prefer_cloud=state.get("prefer_cloud", False),
+        )
+
     start = time.perf_counter()
     try:
         searcher = _get_hybrid_searcher()
@@ -287,7 +300,7 @@ async def retrieve_documents(state: GraphState) -> dict:
         # RAG Fusion: parallel search across multiple query reformulations.
         if settings.rag_fusion_enabled and settings.rag_fusion_n_queries > 1:
             queries = await _generate_fusion_queries(
-                query,
+                search_query,
                 settings.rag_fusion_n_queries,
                 prefer_cloud=state.get("prefer_cloud", False),
             )
@@ -304,7 +317,7 @@ async def retrieve_documents(state: GraphState) -> dict:
             search_results = _rrf_fuse_results(ranking_lists)[: settings.top_k]
         else:
             search_results = await searcher.search(
-                query=query,
+                query=search_query,
                 user_context=user_context,
                 top_k=settings.top_k,
             )

@@ -109,6 +109,45 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     use_redis_rate_limiter: bool = False
 
+    # ── PII Redaction ────────────────────────────────────────────────────────────
+    # Scrub email, phone, SSN, credit-card, IBAN, IP address before persisting
+    # to audit log / query cache. Defense against accidental PII leakage into
+    # secondary stores. Regex-based by default; if Microsoft Presidio is
+    # installed it is used automatically for higher recall.
+    pii_redaction_enabled: bool = True
+
+    # ── Prompt-Injection Guardrails ──────────────────────────────────────────────
+    # Run a regex + heuristic check on the user query before retrieval. Blocks
+    # obvious jailbreak / system-prompt-override attempts. Logged via the audit
+    # logger as ``security_block`` events.
+    guardrails_enabled: bool = True
+
+    # ── Contextual Retrieval (Anthropic 2024 technique) ──────────────────────────
+    # Prepend a short LLM-generated context summary to each chunk before
+    # embedding. Adds 1 cheap LLM call per chunk at ingestion time but
+    # measurably improves retrieval recall (Anthropic reported ~35-49%
+    # failure reduction). Local Qwen3-8B is fine for the summary.
+    contextual_retrieval_enabled: bool = False
+
+    # ── HyDE (Hypothetical Document Embeddings) ──────────────────────────────────
+    # Generate a hypothetical answer to the query, embed *that* instead of the
+    # raw query. Boosts recall when query vocabulary differs from doc
+    # vocabulary (questions vs declarative sentences). Adds one LLM call per
+    # query — skip for simple keyword lookups; enable for complex questions.
+    hyde_enabled: bool = False
+
+    # ── Pricing for cost dashboard (USD per 1M tokens) ───────────────────────────
+    # Used by evaluation/cost.py to convert recorded usage into $/query.
+    price_groq_input_per_1m: float = 0.59
+    price_groq_output_per_1m: float = 0.79
+    price_openai_input_per_1m: float = 2.50
+    price_openai_output_per_1m: float = 10.00
+    price_anthropic_input_per_1m: float = 3.00
+    price_anthropic_output_per_1m: float = 15.00
+    # Local inference: estimated electricity cost only (consumer hardware).
+    # 200W GPU @ $0.15/kWh ≈ $0.03/hour ≈ $0.000008/sec
+    price_local_per_second: float = 0.000008
+
 
 # Singleton instance — import this throughout the application
 settings = Settings()
