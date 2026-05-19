@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.models import (
@@ -266,12 +267,50 @@ class QdrantManager:
         ]
         return models.Filter(must=must_conditions)
 
+    def build_combined_filter(
+        self,
+        user_context: UserContext,
+        extra_conditions: list[dict[str, Any]] | None = None,
+    ) -> models.Filter:
+        """Build a Qdrant filter combining RBAC with self-query conditions.
+
+        Args:
+            user_context: Authenticated user context for RBAC.
+            extra_conditions: List of condition dicts from
+                ``self_query.build_qdrant_filter_conditions``.
+
+        Returns:
+            A Qdrant Filter with RBAC must-conditions plus any extra conditions.
+        """
+        rbac = self.build_rbac_filter(user_context)
+        if not extra_conditions:
+            return rbac
+
+        combined_must = list(rbac.must or [])
+        for cond in extra_conditions:
+            if "match" in cond:
+                combined_must.append(
+                    models.FieldCondition(
+                        key=cond["key"],
+                        match=cond["match"],
+                    )
+                )
+            elif "range" in cond:
+                combined_must.append(
+                    models.FieldCondition(
+                        key=cond["key"],
+                        range=cond["range"],
+                    )
+                )
+        return models.Filter(must=combined_must)
+
     def search_with_rbac(
         self,
         query_embedding: list[float],
         user_context: UserContext,
         top_k: int | None = None,
         score_threshold: float | None = None,
+        extra_filter: models.Filter | None = None,
     ) -> list[models.ScoredPoint]:
         """Search the collection with RBAC filter applied.
 
@@ -285,7 +324,7 @@ class QdrantManager:
             List of scored points matching the query with RBAC constraints.
         """
         k = top_k if top_k is not None else settings.top_k
-        rbac_filter = self.build_rbac_filter(user_context)
+        rbac_filter = extra_filter or self.build_rbac_filter(user_context)
 
         try:
             # qdrant-client >= 1.13 replaced .search() with .query_points()

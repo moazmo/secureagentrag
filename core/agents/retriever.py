@@ -293,10 +293,26 @@ async def retrieve_documents(state: GraphState) -> dict:
             prefer_cloud=state.get("prefer_cloud", False),
         )
 
+    searcher = _get_hybrid_searcher()
+
+    # Self-query (opt-in): extract structured metadata filters from the query
+    # and merge them with the RBAC filter for pre-filtered retrieval.
+    extra_filter = None
+    if settings.self_query_enabled:
+        from retrieval.self_query import build_qdrant_filter_conditions, extract_self_query_filters
+
+        sq_filters = await extract_self_query_filters(
+            query,
+            sensitivity_level=state.get("query_sensitivity", "low"),
+            prefer_cloud=state.get("prefer_cloud", False),
+        )
+        if sq_filters:
+            conditions = build_qdrant_filter_conditions(sq_filters)
+            extra_filter = searcher._qdrant.build_combined_filter(user_context, conditions)
+            logger.info("self_query_applied", filters=list(sq_filters.keys()))
+
     start = time.perf_counter()
     try:
-        searcher = _get_hybrid_searcher()
-
         # RAG Fusion: parallel search across multiple query reformulations.
         if settings.rag_fusion_enabled and settings.rag_fusion_n_queries > 1:
             queries = await _generate_fusion_queries(
@@ -309,7 +325,12 @@ async def retrieve_documents(state: GraphState) -> dict:
 
             ranking_lists = await _asyncio.gather(
                 *(
-                    searcher.search(query=q, user_context=user_context, top_k=settings.top_k)
+                    searcher.search(
+                        query=q,
+                        user_context=user_context,
+                        top_k=settings.top_k,
+                        extra_filter=extra_filter,
+                    )
                     for q in queries
                 ),
                 return_exceptions=False,
@@ -320,6 +341,7 @@ async def retrieve_documents(state: GraphState) -> dict:
                 query=search_query,
                 user_context=user_context,
                 top_k=settings.top_k,
+                extra_filter=extra_filter,
             )
 
         # Optionally rerank. Gated behind settings.enable_reranker because

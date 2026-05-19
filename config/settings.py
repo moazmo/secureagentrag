@@ -136,6 +136,13 @@ class Settings(BaseSettings):
     vlm_ocr_enabled: bool = False
     vlm_ocr_model: str = "qwen2.5-vl"
 
+    # ── Self-Query Retrieval ─────────────────────────────────────────────────────
+    # Extract structured metadata filters (source_file, date_range,
+    # sensitivity_level, roles) from the natural language query using a small
+    # local LLM prompt. The filters are merged with the RBAC filter and passed
+    # to Qdrant, scoping retrieval before embedding search runs.
+    self_query_enabled: bool = False
+
     # ── HyDE (Hypothetical Document Embeddings) ──────────────────────────────────
     # Generate a hypothetical answer to the query, embed *that* instead of the
     # raw query. Boosts recall when query vocabulary differs from doc

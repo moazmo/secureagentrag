@@ -315,6 +315,7 @@ class HybridSearcher:
         user_context: UserContext,
         top_k: int = 10,
         use_bm25: bool = True,
+        extra_filter: Any = None,
     ) -> list[SearchResult]:
         """Perform hybrid search combining dense and sparse retrieval with RBAC.
 
@@ -342,6 +343,7 @@ class HybridSearcher:
                 query_embedding=query_embedding,
                 user_context=user_context,
                 top_k=top_k * 2,
+                extra_filter=extra_filter,
             )
             dense_ranking = [(str(point.id), point.score) for point in dense_results]
         except Exception as exc:
