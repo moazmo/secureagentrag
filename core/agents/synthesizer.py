@@ -63,38 +63,53 @@ def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitiv
         )
 
     return (
-        "You are an expert assistant. Answer the user's question based ONLY on the "
-        "provided context. You MUST cite your sources using [[1]], [[2]], etc. markers "
-        "corresponding to the numbered sources below. Use double brackets for citations.\n\n"
-        "If the context does not contain enough information to answer, say so clearly.\n\n"
+        "You are an expert research assistant. Answer the user's question using "
+        "ONLY the provided context. Follow these citation rules strictly:\n\n"
+        "CITATION RULES:\n"
+        "1. Every factual statement MUST end with a citation marker `[N]` where "
+        "N is the source number from the Context list below.\n"
+        "2. If two sources support a claim, cite both: `... [1][3]`.\n"
+        "3. Do NOT use double brackets, footnotes, or any other format. Just `[N]`.\n"
+        "4. Do NOT write a 'Sources:' or 'References:' section at the end — the "
+        "system extracts citations automatically from inline markers.\n"
+        "5. If the context lacks information to answer fully, say so explicitly "
+        "rather than inventing details.\n\n"
+        "STYLE:\n"
+        "- Be concise but complete. Cover every part of the question.\n"
+        "- Use short paragraphs or bullet points for readability.\n"
+        "- Do not preface the answer with phrases like 'Based on the context'.\n"
+        "- Do not include `<think>` or reasoning trace blocks in the output.\n\n"
         f"Context:\n{context_str}\n\n"
         f"Question: {query}\n"
         f"{sensitivity_instruction}\n\n"
-        "Provide a comprehensive answer with citations:"
+        "Answer (with inline `[N]` citations on every factual claim):"
     )
 
 
 def _extract_citations(response: str, documents: list[DocumentGrade]) -> list[Citation]:
     """Extract citation references from the LLM response.
 
-    Parses citation markers of the form [[N]] from the response text and maps
-    them back to source documents. Uses double-bracket format [[N]] to avoid
-    conflicts with markdown links [text](url) and numbered lists.
+    Parses `[N]` citation markers (the format the synthesizer is prompted to
+    produce) and the legacy `[[N]]` form. Skips markdown link syntax `[text](url)`
+    by requiring the bracket to NOT be followed by `(`. Strips reasoning-mode
+    `<think>...</think>` blocks before extraction so think-stream citations
+    do not leak into the output.
 
     Args:
-        response: The generated response text with [[N]] citation markers.
+        response: The generated response text.
         documents: The list of documents used as context.
 
     Returns:
-        List of Citation TypedDicts with source information.
+        List of Citation TypedDicts with source information, in citation order.
     """
-    # Match [[N]] format — distinct from markdown links [text](url)
-    citation_refs = re.findall(r"\[\[(\d+)\]\]", response)
+    # Drop reasoning blocks before extraction.
+    cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL | re.IGNORECASE)
 
-    # Fallback: also check for legacy [N] format (but be more strict)
-    if not citation_refs:
-        # Only match [N] when not followed by '(' (excluding markdown links)
-        citation_refs = re.findall(r"\[(\d+)\](?!\s*\()", response)
+    # Match `[[N]]` (legacy) first, then `[N]` (current canonical form).
+    # `(?!\s*\()` excludes markdown link syntax `[text](url)`.
+    citation_refs = re.findall(r"\[\[(\d+)\]\]|\[(\d+)\](?!\s*\()", cleaned)
+    # Each tuple has one populated group; take whichever is non-empty.
+    citation_refs = [a or b for a, b in citation_refs]
 
     seen_indices: set[int] = set()
     citations: list[Citation] = []
