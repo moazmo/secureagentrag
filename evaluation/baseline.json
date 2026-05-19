@@ -1,0 +1,6 @@
+{
+  "faithfulness": 0.85,
+  "context_precision": 0.80,
+  "answer_relevancy": 0.80,
+  "_note": "Rolling baseline updated when the nightly eval matches or beats prior values; regression triggers if a new score drops 5pp below this."
+}

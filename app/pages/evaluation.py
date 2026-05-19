@@ -49,8 +49,62 @@ def render_evaluation_page() -> None:
     _render_model_comparison(df)
     st.divider()
 
+    # ── Cost Dashboard ───────────────────────────────────────────────────────
+    _render_cost_dashboard(df)
+    st.divider()
+
     # ── Recent Evaluations Table ─────────────────────────────────────────────
     _render_recent_evaluations(df)
+
+
+def _render_cost_dashboard(df: pd.DataFrame) -> None:
+    """Render per-query cost breakdown — cloud $$ vs local kWh-equivalent."""
+    from evaluation.cost import estimate_query_cost
+
+    st.subheader("💰 Cost Dashboard")
+    st.caption(
+        "Cloud calls priced from configured per-token rates. Local Ollama calls "
+        "priced as the electricity needed to run them on consumer GPU hardware."
+    )
+
+    if df.empty:
+        st.info("No queries yet.")
+        return
+
+    rows = []
+    for _, row in df.iterrows():
+        provider = row.get("synth_provider", "") or row.get("provider", "")
+        usage = row.get("synth_usage", {}) or {}
+        latency_ms = row.get("synth_latency_ms", row.get("latency_ms", 0.0)) or 0.0
+        est = estimate_query_cost(provider, usage, latency_ms)
+        rows.append(
+            {
+                "provider": est["provider"],
+                "mode": est["mode"],
+                "input_tok": est["input_tokens"],
+                "output_tok": est["output_tokens"],
+                "cost_usd": est["cost_usd"],
+            }
+        )
+
+    if not rows:
+        st.info("No cost data yet.")
+        return
+
+    cost_df = pd.DataFrame(rows)
+    total = cost_df["cost_usd"].sum()
+    cloud_calls = (cost_df["mode"] == "cloud").sum()
+    local_calls = (cost_df["mode"] == "local").sum()
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Total spend", f"${total:.4f}")
+    with c2:
+        st.metric("Cloud calls", int(cloud_calls))
+    with c3:
+        st.metric("Local calls", int(local_calls))
+
+    st.dataframe(cost_df.tail(20), use_container_width=True)
 
 
 def _render_health_checks() -> None:
