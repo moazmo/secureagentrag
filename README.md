@@ -39,6 +39,13 @@ Designed for deployment on consumer-grade hardware (8GB+ VRAM), SecureAgentRAG u
 | **Evaluation Pipeline** | Ragas metrics (faithfulness, relevancy, context precision/recall) + custom latency/confidence/RBAC tracking with Streamlit dashboard. |
 | **Privacy-First Architecture** | All data stays local by default. Cloud providers are opt-in fallbacks, never the default path for sensitive data. |
 | **VRAM-Optimized** | Runs on 8GB GPUs with quantized models. Designed for consumer hardware without sacrificing capability. |
+| **Prompt-Injection Guardrails** | Dedicated graph node blocks jailbreak / system-prompt-override attempts before they spend embedding or LLM budget. Output also scanned for system-prompt leakage. |
+| **Tamper-Evident Audit Chain** | SHA-256 hash chain across all audit entries. `scripts/verify_audit_chain.py` detects edits, insertions, or deletions. |
+| **PII Redaction** | Email, phone, SSN, credit-card (Luhn-validated), IBAN, IP, and API keys are scrubbed before audit log + query cache persistence. Live in-flight state untouched. |
+| **Contextual Retrieval & HyDE** | Opt-in Anthropic-style contextual chunks and hypothetical-document embeddings for measurable recall gains on complex queries. |
+| **MCP Server + FastAPI** | First-class IDE integration (Claude Desktop / Code / Cursor) and REST API — both share the same `QueryResponse` Pydantic schema. |
+| **Cost Dashboard** | $/query for Groq / OpenAI / Anthropic + electricity-equivalent for local. Makes the privacy-vs-spend trade-off legible at a glance. |
+| **CI Eval Gating** | Nightly Ragas evaluation against a golden Q/A set; > 5 pp regression on faithfulness or context_precision opens an issue. |
 
 ---
 
@@ -481,11 +488,18 @@ Key design choices are documented in [DECISIONS.md](DECISIONS.md). Highlights:
 | ADR-003 | LangGraph over LangChain agents | First-class cycles, conditional edges, state management |
 | ADR-004 | Qwen3-8B default | Multilingual, 8GB VRAM, Apache 2.0, strong reasoning |
 | ADR-005 | RBAC at vector DB level | Defense-in-depth; impossible to bypass via app bugs |
-| ADR-006 | Streamlit-only (no FastAPI) | Faster development, rich UI, lower complexity |
+| ADR-006 | Streamlit-first (FastAPI optional) | Faster development, rich UI, lower complexity |
 | ADR-007 | Custom chunker | No LangChain dependency for text splitting |
 | ADR-008 | Hybrid search with RRF | Combines semantic + lexical for better recall |
 | ADR-009 | Conditional imports | Optional deps (PaddleOCR, ragas) don't break core |
 | ADR-010 | Sensitivity-based routing | Privacy enforcement through inference provider selection |
+| ADR-011 | Tamper-evident audit chain | SHA-256 prev_hash makes log edits / deletes detectable |
+| ADR-012 | Prompt-injection guardrails node | Block jailbreaks before they spend embedding / LLM budget |
+| ADR-013 | Contextual Retrieval (Anthropic) | Prepend LLM context to each chunk → 35-49% recall lift |
+| ADR-014 | HyDE for hard queries | Hypothetical answer lands in doc-space, improves dense recall |
+| ADR-015 | MCP + FastAPI surfaces | IDE agents (MCP) + external services (REST) share schemas |
+| ADR-016 | PII redaction before persistence | Audit / cache never see raw PII; live state untouched |
+| ADR-017 | Cost model for local vs cloud | Dashboard makes the privacy / spend trade-off legible |
 
 ---
 
@@ -495,23 +509,32 @@ Delivered:
 
 - [x] **True token streaming** — synthesis tokens stream from the LLM through `run_rag_pipeline_stream` to the Streamlit UI (Ollama, Groq, OpenAI, Anthropic)
 - [x] **Persistent checkpointing** — SQLite by default (Postgres optional) for LangGraph thread state
-- [x] **Input validation** — query sanitization and dangerous pattern detection
+- [x] **Input validation + prompt-injection guardrails** — regex-based gate before retrieval
 - [x] **Query caching** — Redis-backed result cache for identical queries (in-memory fallback)
 - [x] **Health checks** — service dependency monitoring with latency tracking
 - [x] **Correlation ID logging** — distributed request tracing across all components
 - [x] **Graceful degradation** — BM25 fallback when embedding services are unavailable
 - [x] **Rate limiting** — token-bucket per-user with optional Redis backend
-- [x] **Audit trail** — daily JSONL with full RBAC context
+- [x] **Audit trail with SHA-256 hash chain** — tamper-evident; verify with `scripts/verify_audit_chain.py`
+- [x] **RAG fusion** — multiple query reformulations with parallel RRF
+- [x] **Contextual Retrieval** — Anthropic-style LLM context prepended per chunk (opt-in)
+- [x] **HyDE** — hypothetical-answer embeddings for complex queries (opt-in)
+- [x] **PII redaction** — emails/phones/SSN/CC scrubbed before audit + cache persistence
+- [x] **FastAPI REST surface** — `/query`, `/ingest`, `/audit`, `/audit/verify`, `/healthz`, `/readyz`
+- [x] **MCP server** — `retrieve` and `query` tools for Claude Desktop / Code / Cursor
+- [x] **Cost dashboard** — per-query $ for cloud calls, kWh-equivalent for local
+- [x] **CI eval gating** — nightly Ragas run on golden set, regression > 5pp opens an issue
+- [x] **Structured response schema** — Pydantic `QueryResponse` shared by FastAPI + MCP
 
 Planned:
 
-- [ ] **RAG fusion** — multiple query reformulations with parallel retrieval
-- [ ] **Multi-modal RAG** — image understanding and table extraction
-- [ ] **FastAPI backend** — REST API for programmatic access
+- [ ] **Multi-modal RAG** — image understanding and table extraction (Qwen-VL)
+- [ ] **JSON-mode synth** — function-calling for citations instead of regex parse
+- [ ] **Self-query** — extract structured filters from natural language
 - [ ] **Fine-tuned reranker** — domain-specific cross-encoder training
 - [ ] **Multi-tenant deployment** — full organization isolation with Qdrant namespaces
 - [ ] **Kubernetes Helm chart** — production deployment manifests
-- [ ] **Guardrails integration** — input/output content filtering
+- [ ] **LLamaGuard / NeMo Guardrails** — escalation path on top of regex gate
 
 ---
 

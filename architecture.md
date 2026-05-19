@@ -18,12 +18,18 @@ graph TB
     subgraph Core Orchestration
         Graph[LangGraph State Machine]
         Router[Query Router Agent]
+        Guardrails[Prompt-Injection Guardrails Agent]
         Security[Security Gate Agent]
-        Retriever[Retrieval Agent]
+        Retriever[Retrieval Agent + HyDE + RAG-Fusion]
         Grader[Document Grader Agent]
         Rewriter[Query Rewriter Agent]
         Synth[Synthesizer Agent]
         Eval[Evaluator Agent]
+    end
+
+    subgraph External Surfaces
+        FastAPI[FastAPI REST :8080]
+        MCP[MCP stdio server]
     end
 
     subgraph Retrieval Layer
@@ -54,6 +60,7 @@ graph TB
         Loader[Multi-Format Loader PDF/DOCX/IMG]
         OCR[PaddleOCR Engine]
         Chunker[Text Chunker]
+        ContextualGen[Contextual Retrieval Generator]
         MetaTagger[Metadata Tagger RBAC]
         EmbedBatch[Batch Embedder]
     end
@@ -70,8 +77,11 @@ graph TB
     Auth --> Graph
 
     Graph --> Router
-    Router --> Security
+    Router --> Guardrails
+    Guardrails --> Security
     Security --> Retriever
+    FastAPI -.-> Graph
+    MCP -.-> Graph
     Retriever --> Grader
     Grader --> Rewriter
     Grader --> Synth
@@ -100,7 +110,8 @@ graph TB
 
     Loader --> OCR
     OCR --> Chunker
-    Chunker --> MetaTagger
+    Chunker --> ContextualGen
+    ContextualGen --> MetaTagger
     MetaTagger --> EmbedBatch
     EmbedBatch --> Qdrant
 
@@ -139,11 +150,14 @@ Detailed LangGraph state machine showing all nodes, conditional edges, and the c
 
 ```mermaid
 graph TB
-    START([START]) --> RouterNode[router: Classify Query Intent]
+    START([START]) --> RouterNode[router: Classify Query Intent + Query Sensitivity]
 
-    RouterNode --> SecurityNode[security: RBAC + Sensitivity Check]
+    RouterNode --> GuardrailsNode[guardrails: Prompt-Injection Check]
 
-    SecurityNode -->|security_gate: proceed| RetrieverNode[retriever: Hybrid Search + RBAC Filter]
+    GuardrailsNode -->|guardrails_gate: blocked| END_INJ([END - Injection Blocked])
+    GuardrailsNode -->|guardrails_gate: proceed| SecurityNode[security: RBAC + Sensitivity Check]
+
+    SecurityNode -->|security_gate: proceed| RetrieverNode[retriever: HyDE? + RAG-Fusion? + Hybrid Search + RBAC Filter]
     SecurityNode -->|security_gate: blocked| END_BLOCKED([END - Access Denied])
 
     RetrieverNode --> GraderNode[grader: Grade Document Relevance]

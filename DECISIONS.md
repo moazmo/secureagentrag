@@ -239,3 +239,206 @@ Implement an `InferenceRouter` that inspects the sensitivity level of retrieved 
 - (-) Sensitivity classification must be accurate (garbage in → wrong routing)
 - (-) Cloud API keys stored in environment — requires secure secret management
 - (-) Cost implications when cloud providers are enabled (usage-based billing)
+
+---
+
+## ADR-011: Tamper-Evident Audit Log (SHA-256 Hash Chain)
+
+**Date:** 2026-05-19
+**Status:** Accepted
+
+**Context:**
+Audit JSONL files were append-only but trivially mutable — anyone with disk
+access could edit a prior entry to whitewash a security incident with no
+record. For an "enterprise governance" pitch this is a gap. Three options
+considered: signed entries (per-entry HMAC), Merkle tree, and hash chain.
+
+**Decision:**
+Each audit entry stores ``prev_hash`` (SHA-256 of the prior entry's hash)
+and ``entry_hash`` (SHA-256 of its own canonical JSON minus the hash field
+itself). A ``verify_chain()`` method and ``scripts/verify_audit_chain.py``
+CLI walk the chain and detect any modification, insertion, or deletion.
+
+**Consequences:**
+- (+) Any in-place edit, re-ordering, or deletion is detected at verify time
+- (+) Genesis-block style — first ever entry pins ``prev_hash="GENESIS"``
+- (+) Verification works offline; no external timestamping service needed
+- (+) Writers are serialised by an in-process RLock so concurrent appends
+  cannot collide on the same ``prev_hash``
+- (-) Multi-process writers must coordinate through a single writer or
+  migrate to a transactional store (Postgres)
+- (-) Removing an entry retroactively requires rewriting all subsequent
+  hashes — by design
+
+---
+
+## ADR-012: Prompt-Injection Guardrails Node
+
+**Date:** 2026-05-19
+**Status:** Accepted
+
+**Context:**
+The security/RBAC node only validated that the user could access the
+relevant document set. It did not catch attempts to override the system
+prompt ("ignore previous instructions", "<system>...</system>",
+``<|im_start|>system``) or extract internal state.
+
+**Decision:**
+Insert a new ``guardrails`` node between ``router`` and ``security``.
+Regex-based pattern matching (9 classes: chat-template injection, system
+tag, ignore/disregard instructions, prompt extraction, jailbreak persona,
+role override, explicit bypass, privilege escalation, empty / overlong).
+Blocks return early via a conditional edge — the request never spends
+embedding or LLM budget.
+
+**Consequences:**
+- (+) Catches obvious prompt-injection without an extra LLM call
+- (+) Blocked attempts are written to the audit log as ``security_block``
+- (+) Order matters — patterns are listed most-specific first so high-
+  signal markers (chat templates) win over broader matches
+- (-) Regex misses semantic-only attacks (e.g. social-engineered context)
+- (-) A future ``guardrails_strict`` mode could chain a Llama-Guard
+  classifier on top — left as a hook
+
+---
+
+## ADR-013: Contextual Retrieval (Anthropic 2024)
+
+**Date:** 2026-05-19
+**Status:** Accepted (opt-in via ``SAR_CONTEXTUAL_RETRIEVAL_ENABLED``)
+
+**Context:**
+On long documents, BGE-M3 embeddings for short chunks are ambiguous
+because the chunk loses its surrounding context. Anthropic reported a
+35-49% reduction in retrieval failures by prepending a short LLM-generated
+context summary to each chunk *before embedding*.
+
+**Decision:**
+Add an opt-in step in ``ingestion/pipeline.py``: for every chunk, call the
+LLM with the full document + chunk and ask for a 1-3 sentence context. The
+augmented text (``"Context: ...\n\nchunk"``) is what goes through embedding
+and BM25 — the chunk text shown to users is unchanged. Generation is
+parallelised via a bounded ``asyncio.Semaphore``.
+
+**Consequences:**
+- (+) Measurable recall gain on under-specified queries
+- (+) BM25 + dense both benefit from the same augmented surface form
+- (+) Display text unchanged — UX is unaffected
+- (-) One LLM call per chunk at ingestion (cheap with local Qwen3-8B but
+  not free on big corpora). Mitigated by parallelism and a per-prompt
+  document truncation cap.
+- (-) Storage doubles per chunk if both raw and augmented are kept (we
+  store only the augmented version's embedding; raw text in payload)
+
+---
+
+## ADR-014: HyDE (Hypothetical Document Embeddings)
+
+**Date:** 2026-05-19
+**Status:** Accepted (opt-in via ``SAR_HYDE_ENABLED``)
+
+**Context:**
+Question-style queries (BGE-M3 input on "What are the four NIST AI RMF
+functions?") sit in question-space, while the corpus passages sit in
+statement-space. The dense vector for the query often does not align
+neatly with the vector for the answering passage.
+
+**Decision:**
+When enabled, the retriever calls the LLM to write a short factual
+passage that would answer the query, then concatenates that with the
+original query and embeds *that*. The concatenation keeps BM25 happy
+(original keywords still present) while the dense vector lands in
+document-space.
+
+**Consequences:**
+- (+) Boosts recall on complex / vocabulary-mismatched queries
+- (+) Gracefully falls back to the raw query on any LLM failure
+- (-) Adds ~1-3s of LLM latency per query — skipped for ``simple`` /
+  ``out_of_scope`` query types
+- (-) The hypothetical answer can hallucinate; we only embed it, never
+  show it, but garbage-in could still bias retrieval
+
+---
+
+## ADR-015: MCP + FastAPI Surfaces
+
+**Date:** 2026-05-19
+**Status:** Accepted
+
+**Context:**
+Streamlit alone could not satisfy two important consumption patterns:
+(1) IDE-side agents (Claude Desktop, Claude Code, Cursor) want an MCP
+endpoint; (2) programmatic / mobile / external services want a stable
+REST contract.
+
+**Decision:**
+Add ``interfaces/mcp_server.py`` (FastMCP stdio transport) and
+``interfaces/api.py`` (FastAPI). Both share the same ``QueryResponse``
+Pydantic model defined in ``core/schemas.py`` so clients see one shape
+regardless of transport. Auth on FastAPI is a stateless base64-bearer
+that decodes to a ``UserContext`` — a hook left for Keycloak/Auth0 in
+production.
+
+**Consequences:**
+- (+) IDE agents can call ``retrieve`` and ``query`` over MCP — the
+  platform becomes an agent-callable tool
+- (+) REST API enables external integration / mobile clients
+- (+) Single Pydantic contract via ``QueryResponse.from_state(state)``
+- (-) Two extra surfaces to test
+- (-) Bearer-token decode is dev-grade; production must layer JWT
+  validation in ``_resolve_user``
+
+---
+
+## ADR-016: PII Redaction Before Persistence
+
+**Date:** 2026-05-19
+**Status:** Accepted
+
+**Context:**
+The audit log and query cache previously stored raw query text and
+document snippets. A query like "look up John Doe's SSN 123-45-6789"
+would leak that PII into JSONL on disk and into Redis if enabled.
+
+**Decision:**
+A new ``utils/pii.py`` module scrubs strings just before they leave the
+in-memory pipeline. Regex patterns cover email, phone, SSN, credit card
+(Luhn-validated), IBAN, IPv4, URL-with-creds and API keys. If Microsoft
+Presidio is installed (optional ``[pii]`` extra), it runs on top for
+NER-based PII (names, locations, organisations).
+
+**Consequences:**
+- (+) Disk and Redis never see plaintext PII
+- (+) Live in-flight state still has raw text so the model answers well —
+  redaction is only at the storage boundary
+- (+) The audit *hash chain* hashes the redacted JSON, so verification
+  works on the redacted entry, not the pre-redacted one
+- (-) Regex false-positives are possible (e.g. card-shaped phone numbers
+  caught by Luhn). Mitigated by order: URL/email/SSN/CC/IBAN/IP/key first
+- (-) Presidio is a heavy optional dep; not enabled by default
+
+---
+
+## ADR-017: Cost Model for Mixed Local / Cloud Inference
+
+**Date:** 2026-05-19
+**Status:** Accepted
+
+**Context:**
+The dashboard previously showed only latency — no view of $/query. With
+cloud routing now first-class, ops needs to see (a) cloud spend by
+provider and (b) the local-equivalent compute cost to make the privacy
+trade-off legible.
+
+**Decision:**
+Per-1M-token prices for Groq / OpenAI / Anthropic live in
+``config/settings.py``. Local inference is priced as
+``latency_seconds × $/sec`` derived from typical consumer GPU draw
+(200W × $0.15/kWh ≈ $0.000008/sec). ``evaluation/cost.py`` exposes
+``estimate_query_cost`` consumed by the Streamlit dashboard.
+
+**Consequences:**
+- (+) Cost dashboard answers "what's cheaper per query, local or cloud?"
+- (+) Prices are config — easy to adjust as provider prices change
+- (-) Local cost is an estimate; real measurement would need power
+  metering integration
