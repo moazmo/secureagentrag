@@ -173,11 +173,94 @@ def _parse_batch_grading(response: str, num_docs: int) -> list[bool] | None:
     return results
 
 
+def _rrf_fuse_results(rankings: list[list], k: int = 60) -> list:
+    """Reciprocal-Rank-Fuse multiple lists of SearchResult.
+
+    Each list is treated as an independent retrieval ranking. The same
+    doc may appear in multiple lists at different ranks; we sum the RRF
+    contributions and re-sort. Deduplication is by `id`.
+
+    Args:
+        rankings: List of ranked SearchResult lists.
+        k: RRF constant (60 is the canonical default).
+
+    Returns:
+        Single deduplicated, fused list ordered by descending RRF score.
+    """
+    fused_scores: dict[str, float] = {}
+    doc_map: dict[str, object] = {}
+    for ranking in rankings:
+        for rank, result in enumerate(ranking, start=1):
+            doc_id = result.id
+            fused_scores[doc_id] = fused_scores.get(doc_id, 0.0) + 1.0 / (k + rank)
+            if doc_id not in doc_map:
+                doc_map[doc_id] = result
+    sorted_ids = sorted(fused_scores, key=lambda i: fused_scores[i], reverse=True)
+    fused: list = []
+    for doc_id in sorted_ids:
+        result = doc_map[doc_id]
+        fused_result = result.model_copy(update={"score": fused_scores[doc_id]})
+        fused.append(fused_result)
+    return fused
+
+
+async def _generate_fusion_queries(original: str, n: int) -> list[str]:
+    """Ask the LLM for N-1 reformulations of the original query (RAG Fusion).
+
+    The original query is always included as one of the N. Reformulations
+    are designed to surface chunks that the original might miss because of
+    vocabulary mismatch or under-specification.
+
+    Args:
+        original: User's original query.
+        n: Total queries desired (N-1 will be generated).
+
+    Returns:
+        List of query strings (length up to N, original always first).
+    """
+    if n <= 1:
+        return [original]
+    prompt = (
+        f"Generate {n - 1} alternative phrasings of the user's question. Each "
+        "rewrite should preserve the original meaning but vary the vocabulary, "
+        "specificity, or angle so that it would retrieve different but still "
+        "relevant document chunks. Do NOT answer the question.\n\n"
+        "STRICT FORMAT: one rewritten query per line, no numbering, no bullets, "
+        "no preamble, no explanation. No `<think>` blocks.\n\n"
+        f"Original question: {original}\n\n"
+        "Rewrites:"
+    )
+    try:
+        response = await call_llm_async(
+            prompt,
+            system_prompt="You are a search query rewriter.",
+            sensitivity_level="low",  # Reformulation never sees doc content.
+        )
+        # Strip <think>...</think> blocks if the LLM ran in reasoning mode.
+        cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL | re.IGNORECASE)
+        lines = [
+            line.strip().lstrip("-*0123456789. ").strip()
+            for line in cleaned.splitlines()
+            if line.strip()
+        ]
+        rewrites = [line for line in lines if line and line.lower() != original.lower()]
+        rewrites = rewrites[: n - 1]
+        return [original, *rewrites] if rewrites else [original]
+    except Exception as exc:
+        logger.warning("fusion_query_generation_failed", error=str(exc))
+        return [original]
+
+
 async def retrieve_documents(state: GraphState) -> dict:
     """Retrieve documents using hybrid search with RBAC filtering.
 
-    Uses the rewritten_query if available, otherwise falls back to the original query.
-    Optionally reranks results for improved precision.
+    When ``settings.rag_fusion_enabled`` is True, generates
+    ``settings.rag_fusion_n_queries`` query reformulations, retrieves each
+    in parallel, and Reciprocal-Rank-Fuses the results. This boosts recall
+    on vocabulary-mismatched or under-specified queries at the cost of one
+    extra LLM call + (N-1) extra Qdrant searches.
+
+    Optionally reranks the final fused list for precision.
 
     Args:
         state: Current graph state.
@@ -190,17 +273,32 @@ async def retrieve_documents(state: GraphState) -> dict:
 
     logger.info("retrieving_documents", query_len=len(query))
 
-    # Reconstruct UserContext from dict
     user_context = UserContext(**user_context_dict)
 
     start = time.perf_counter()
     try:
         searcher = _get_hybrid_searcher()
-        search_results = await searcher.search(
-            query=query,
-            user_context=user_context,
-            top_k=settings.top_k,
-        )
+
+        # RAG Fusion: parallel search across multiple query reformulations.
+        if settings.rag_fusion_enabled and settings.rag_fusion_n_queries > 1:
+            queries = await _generate_fusion_queries(query, settings.rag_fusion_n_queries)
+            logger.info("rag_fusion_queries", count=len(queries), queries=queries)
+            import asyncio as _asyncio
+
+            ranking_lists = await _asyncio.gather(
+                *(
+                    searcher.search(query=q, user_context=user_context, top_k=settings.top_k)
+                    for q in queries
+                ),
+                return_exceptions=False,
+            )
+            search_results = _rrf_fuse_results(ranking_lists)[: settings.top_k]
+        else:
+            search_results = await searcher.search(
+                query=query,
+                user_context=user_context,
+                top_k=settings.top_k,
+            )
 
         # Optionally rerank. Gated behind settings.enable_reranker because
         # the first call downloads a ~600MB cross-encoder from HuggingFace

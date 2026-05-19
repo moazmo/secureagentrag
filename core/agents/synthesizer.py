@@ -6,7 +6,7 @@ import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from core.agents.router import call_llm_async, call_llm_stream
+from core.agents.router import call_llm_stream, call_llm_with_decision
 from core.state import Citation, GraphState  # noqa: TC001
 from utils.logging import get_logger
 
@@ -16,6 +16,18 @@ if TYPE_CHECKING:
     from core.state import DocumentGrade
 
 logger = get_logger(__name__)
+
+
+_SENSITIVITY_RANK = {"low": 1, "medium": 2, "high": 3}
+
+
+def _max_label(*labels: str) -> str:
+    """Return the highest sensitivity label across the inputs."""
+    rank = max((_SENSITIVITY_RANK.get(lbl, 1) for lbl in labels), default=1)
+    for label, value in _SENSITIVITY_RANK.items():
+        if value == rank:
+            return label
+    return "low"
 
 
 def _max_sensitivity(docs_to_use: list[DocumentGrade]) -> str:
@@ -28,11 +40,7 @@ def _max_sensitivity(docs_to_use: list[DocumentGrade]) -> str:
         "high" | "medium" | "low".
     """
     levels = [doc.get("metadata", {}).get("sensitivity_level", "low") for doc in docs_to_use]
-    if "high" in levels:
-        return "high"
-    if "medium" in levels:
-        return "medium"
-    return "low"
+    return _max_label(*levels) if levels else "low"
 
 
 def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitivity: str) -> str:
@@ -246,15 +254,23 @@ async def synthesize_answer(state: GraphState) -> dict:
             ],
         }
 
-    max_sensitivity = _max_sensitivity(docs_to_use)
+    doc_sensitivity = _max_sensitivity(docs_to_use)
+    query_sensitivity = state.get("query_sensitivity", "low")
+    max_sensitivity = _max_label(doc_sensitivity, query_sensitivity)
+    prefer_cloud = state.get("prefer_cloud", False)
 
-    # Build prompt and call LLM with inference routing
+    # Build prompt and call LLM with inference routing. prefer_cloud only
+    # takes effect for LOW/MEDIUM sensitivity — HIGH always routes local.
+    # max_sensitivity is the higher of (doc sensitivity, query sensitivity)
+    # so a sensitive QUERY against low-tagged docs still routes local.
     prompt = _build_synthesis_prompt(query, docs_to_use, max_sensitivity)
-    response = await call_llm_async(
+    response_text, decision, llm_response = await call_llm_with_decision(
         prompt,
         system_prompt="You are an expert research assistant that always cites sources.",
         sensitivity_level=max_sensitivity,
+        prefer_cloud=prefer_cloud,
     )
+    response = response_text
 
     if not response.strip():
         response = "Unable to generate a response. Please try again."
@@ -280,6 +296,10 @@ async def synthesize_answer(state: GraphState) -> dict:
         "generation": generation,
         "citations": citations,
         "confidence_score": confidence_score,
+        "synth_provider": decision.provider if decision else "unknown",
+        "synth_model": decision.model if decision else "unknown",
+        "synth_usage": dict(llm_response.usage) if llm_response else {},
+        "synth_latency_ms": (llm_response.latency_ms if llm_response else 0.0),
         "audit_trail": [
             {
                 "node": "synthesizer",
@@ -289,6 +309,12 @@ async def synthesize_answer(state: GraphState) -> dict:
                 "sensitivity": max_sensitivity,
                 "generation_len": len(generation),
                 "preliminary_confidence": confidence_score,
+                "provider": decision.provider if decision else "unknown",
+                "model": decision.model if decision else "unknown",
+                "forced_local": decision.forced_local if decision else False,
+                "routing_reason": decision.reason if decision else "",
+                "tokens": dict(llm_response.usage) if llm_response else {},
+                "latency_ms": (llm_response.latency_ms if llm_response else 0.0),
                 "timestamp": datetime.now(UTC).isoformat(),
             }
         ],
@@ -342,17 +368,33 @@ async def synthesize_answer_stream(state: GraphState) -> AsyncGenerator[dict, No
         }
         return
 
-    max_sensitivity = _max_sensitivity(docs_to_use)
+    doc_sensitivity = _max_sensitivity(docs_to_use)
+    query_sensitivity = state.get("query_sensitivity", "low")
+    max_sensitivity = _max_label(doc_sensitivity, query_sensitivity)
+    prefer_cloud = state.get("prefer_cloud", False)
     prompt = _build_synthesis_prompt(query, docs_to_use, max_sensitivity)
 
+    # Resolve the routing decision up-front so the audit trail can record
+    # provider/model even on the streaming path. The router is cheap to
+    # construct and `.route()` is pure (no network).
+    from inference.router import InferenceRouter
+
+    _router = InferenceRouter()
+    stream_decision = _router.route(sensitivity_level=max_sensitivity, prefer_cloud=prefer_cloud)
+
+    import time as _time
+
+    stream_t0 = _time.perf_counter()
     collected: list[str] = []
     async for token in call_llm_stream(
         prompt,
         system_prompt="You are an expert research assistant that always cites sources.",
         sensitivity_level=max_sensitivity,
+        prefer_cloud=prefer_cloud,
     ):
         collected.append(token)
         yield {"type": "token", "text": token}
+    stream_latency_ms = (_time.perf_counter() - stream_t0) * 1000
 
     raw_response = "".join(collected).strip()
     if not raw_response:
@@ -382,6 +424,10 @@ async def synthesize_answer_stream(state: GraphState) -> AsyncGenerator[dict, No
         "generation": generation,
         "citations": citations,
         "confidence_score": confidence_score,
+        "synth_provider": stream_decision.provider,
+        "synth_model": stream_decision.model,
+        "synth_latency_ms": stream_latency_ms,
+        "synth_usage": {},
         "audit_entry": {
             "node": "synthesizer",
             "action": "synthesize_answer_stream",
@@ -390,6 +436,11 @@ async def synthesize_answer_stream(state: GraphState) -> AsyncGenerator[dict, No
             "sensitivity": max_sensitivity,
             "generation_len": len(generation),
             "preliminary_confidence": confidence_score,
+            "provider": stream_decision.provider,
+            "model": stream_decision.model,
+            "forced_local": stream_decision.forced_local,
+            "routing_reason": stream_decision.reason,
+            "latency_ms": stream_latency_ms,
             "timestamp": datetime.now(UTC).isoformat(),
         },
     }

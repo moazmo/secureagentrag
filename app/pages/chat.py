@@ -298,6 +298,8 @@ def _process_query_streaming(query: str) -> None:
         "rewriter": "✏️ Rewriting query (corrective loop)",
     }
 
+    prefer_cloud = st.session_state.get("inference_mode") == "cloud"
+
     async def _consume() -> None:
         nonlocal final_state, blocked_message
         first_token_seen = False
@@ -305,6 +307,7 @@ def _process_query_streaming(query: str) -> None:
             query=query,
             user_context=user_context,
             thread_id=thread_id,
+            prefer_cloud=prefer_cloud,
         ):
             etype = event["type"]
             if etype == "phase":
@@ -365,10 +368,14 @@ def _process_query_streaming(query: str) -> None:
                 icon="⚠️",
             )
 
-        # Render the confidence badge + sources block inline in the streaming
-        # path so the score is visible right after generation finishes (the
-        # historical chat_history renderer also shows it on rerun, but the
-        # user shouldn't have to refresh to see it).
+        # Render confidence + provenance + sources inline in the streaming
+        # path so all metadata is visible right after generation finishes.
+        provider = final_state.get("synth_provider", "ollama")
+        model = final_state.get("synth_model", st.session_state.selected_model)
+        synth_latency = final_state.get("synth_latency_ms", 0.0)
+        usage = final_state.get("synth_usage") or {}
+        total_tokens = usage.get("total_tokens", 0)
+
         with citations_placeholder.container():
             if confidence >= 0.8:
                 color, icon = "#22c55e", "🟢"
@@ -376,11 +383,16 @@ def _process_query_streaming(query: str) -> None:
                 color, icon = "#eab308", "🟡"
             else:
                 color, icon = "#ef4444", "🔴"
+            prov_badge = f"☁️ {provider}" if provider != "ollama" else f"🏠 {provider}"
             st.markdown(
-                f"<div style='display:inline-flex;align-items:center;gap:6px;"
-                f"padding:4px 10px;border-radius:12px;background:{color}22;"
-                f"color:{color};font-weight:600;'>{icon} Confidence: "
-                f"{confidence:.0%}</div>",
+                f"<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;'>"
+                f"<span style='padding:4px 10px;border-radius:12px;background:{color}22;"
+                f"color:{color};font-weight:600;'>{icon} Confidence: {confidence:.0%}</span>"
+                f"<span style='padding:4px 10px;border-radius:12px;background:#3b82f622;"
+                f"color:#3b82f6;font-weight:500;'>{prov_badge} · {model}</span>"
+                f"<span style='padding:4px 10px;border-radius:12px;background:#8b5cf622;"
+                f"color:#8b5cf6;font-weight:500;'>⚡ {synth_latency / 1000:.1f}s synth"
+                f"{f' · {total_tokens} tok' if total_tokens else ''}</span></div>",
                 unsafe_allow_html=True,
             )
             if citations:
@@ -392,9 +404,11 @@ def _process_query_streaming(query: str) -> None:
                     )
 
         routing_info = {
-            "provider": "ollama" if st.session_state.inference_mode == "local" else "cloud",
-            "model": st.session_state.selected_model,
-            "forced_local": query_type == "sensitive",
+            "provider": provider,
+            "model": model,
+            "forced_local": provider == "ollama" and st.session_state.inference_mode == "cloud",
+            "latency_ms": synth_latency,
+            "tokens": total_tokens,
         }
 
         st.session_state.chat_history.append(
@@ -428,6 +442,10 @@ def _process_query_streaming(query: str) -> None:
             latency_ms=latency_ms,
             query_type=query_type,
             security_passed=security_passed,
+            provider=provider,
+            model=model,
+            synth_latency_ms=synth_latency,
+            tokens=total_tokens,
         )
 
         _run_ragas_evaluation(query, generation, citations)
@@ -467,12 +485,15 @@ def _process_query(query: str) -> None:
     user_context = get_current_user_context()
     thread_id = st.session_state.get("thread_id", str(uuid.uuid4()))
 
+    prefer_cloud = st.session_state.get("inference_mode") == "cloud"
+
     try:
         final_state = run_async(
             run_rag_pipeline(
                 query=query,
                 user_context=user_context,
                 thread_id=thread_id,
+                prefer_cloud=prefer_cloud,
             )
         )
 
@@ -575,6 +596,10 @@ def _process_query(query: str) -> None:
             latency_ms=latency_ms,
             query_type=query_type,
             security_passed=security_passed,
+            provider=final_state.get("synth_provider"),
+            model=final_state.get("synth_model"),
+            synth_latency_ms=final_state.get("synth_latency_ms"),
+            tokens=(final_state.get("synth_usage") or {}).get("total_tokens", 0),
         )
 
         # Run Ragas evaluation asynchronously (non-blocking)
@@ -691,6 +716,10 @@ def _store_evaluation_data(
     latency_ms: float,
     query_type: str,
     security_passed: bool,
+    provider: str | None = None,
+    model: str | None = None,
+    synth_latency_ms: float | None = None,
+    tokens: int | None = None,
 ) -> None:
     """Store query evaluation data for the evaluation dashboard.
 
@@ -700,22 +729,34 @@ def _store_evaluation_data(
     Args:
         query: The user query.
         confidence: Confidence score.
-        latency_ms: Processing latency in milliseconds.
+        latency_ms: End-to-end processing latency in milliseconds.
         query_type: Type of query (simple, complex, etc.).
         security_passed: Whether security check passed.
+        provider: Actual provider used by the synthesizer.
+        model: Actual model used by the synthesizer.
+        synth_latency_ms: Synth-only latency (excludes router/security/retrieval).
+        tokens: Total token usage from the synth call.
     """
     if "evaluation_data" not in st.session_state:
         st.session_state.evaluation_data = []
+
+    actual_model = model or st.session_state.selected_model
+    actual_provider = provider or (
+        "ollama" if st.session_state.inference_mode == "local" else "cloud"
+    )
 
     entry = {
         "timestamp": datetime.now(UTC).isoformat(),
         "query": query[:80],
         "confidence": confidence,
         "latency_ms": round(latency_ms, 1),
+        "synth_latency_ms": round(synth_latency_ms or 0.0, 1),
+        "tokens": tokens or 0,
         "query_type": query_type,
         "security_passed": security_passed,
         "user": st.session_state.current_user.get("display_name", "unknown"),
-        "model": st.session_state.selected_model,
+        "provider": actual_provider,
+        "model": actual_model,
         "mode": st.session_state.inference_mode,
     }
 
@@ -729,9 +770,14 @@ def _store_evaluation_data(
             latency_ms=latency_ms,
             query_type=query_type,
             user_id=st.session_state.current_user.get("display_name", "unknown"),
-            model=st.session_state.selected_model,
+            model=actual_model,
             security_passed=security_passed,
-            metadata={"mode": st.session_state.inference_mode},
+            metadata={
+                "mode": st.session_state.inference_mode,
+                "provider": actual_provider,
+                "synth_latency_ms": synth_latency_ms,
+                "tokens": tokens,
+            },
         )
     except Exception as exc:
         logger.debug("metric_persistence_failed", error=str(exc))

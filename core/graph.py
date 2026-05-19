@@ -194,14 +194,23 @@ def build_rag_graph() -> StateGraph:
     return compiled
 
 
-def create_initial_state(query: str, user_context: UserContext) -> GraphState:
+def create_initial_state(
+    query: str,
+    user_context: UserContext,
+    prefer_cloud: bool = False,
+    override_provider: str = "",
+) -> GraphState:
     """Create the proper initial state dict for graph invocation.
-
-    Serializes UserContext to dict and initializes all required state fields.
 
     Args:
         query: The user's natural language query.
         user_context: Authenticated user context for RBAC.
+        prefer_cloud: Whether the caller is willing to route LOW/MEDIUM
+            sensitivity work to cloud providers. HIGH sensitivity always
+            stays local regardless.
+        override_provider: Explicit provider override ("ollama" / "groq" /
+            "openai" / "anthropic"). Bypasses the sensitivity routing —
+            intended for admin/debug. Empty string means no override.
 
     Returns:
         GraphState dict ready to pass to graph.invoke() or graph.ainvoke().
@@ -209,8 +218,11 @@ def create_initial_state(query: str, user_context: UserContext) -> GraphState:
     return {
         "query": query,
         "user_context": user_context.model_dump(),
+        "prefer_cloud": prefer_cloud,
+        "override_provider": override_provider,
         "query_type": "",
         "rewritten_query": "",
+        "query_sensitivity": "low",
         "security_passed": False,
         "security_message": "",
         "documents": [],
@@ -221,6 +233,10 @@ def create_initial_state(query: str, user_context: UserContext) -> GraphState:
         "generation": "",
         "citations": [],
         "confidence_score": 0.0,
+        "synth_provider": "",
+        "synth_model": "",
+        "synth_usage": {},
+        "synth_latency_ms": 0.0,
         "needs_human_review": False,
         "evaluation_notes": "",
         "audit_trail": [],
@@ -231,6 +247,8 @@ async def run_rag_pipeline(
     query: str,
     user_context: UserContext,
     thread_id: str = "default",
+    prefer_cloud: bool = False,
+    override_provider: str = "",
 ) -> GraphState:
     """Execute the full RAG pipeline and return the final state.
 
@@ -254,7 +272,9 @@ async def run_rag_pipeline(
 
     start_time = time.perf_counter()
     graph = build_rag_graph()
-    initial_state = create_initial_state(query, user_context)
+    initial_state = create_initial_state(
+        query, user_context, prefer_cloud=prefer_cloud, override_provider=override_provider
+    )
 
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -311,6 +331,8 @@ async def run_rag_pipeline_stream(
     query: str,
     user_context: UserContext,
     thread_id: str = "default",
+    prefer_cloud: bool = False,
+    override_provider: str = "",
 ) -> AsyncGenerator[dict, None]:
     """Execute the full RAG pipeline with real token-by-token streaming of the
     synthesized answer.
@@ -341,7 +363,9 @@ async def run_rag_pipeline_stream(
     )
     start_time = time.perf_counter()
 
-    state: dict = create_initial_state(query, user_context)
+    state: dict = create_initial_state(
+        query, user_context, prefer_cloud=prefer_cloud, override_provider=override_provider
+    )
 
     # 1. Router
     _merge_update(state, await route_query(state))
@@ -387,6 +411,10 @@ async def run_rag_pipeline_stream(
         state["generation"] = final_synth_event["generation"]
         state["citations"] = final_synth_event["citations"]
         state["confidence_score"] = final_synth_event["confidence_score"]
+        state["synth_provider"] = final_synth_event.get("synth_provider", "")
+        state["synth_model"] = final_synth_event.get("synth_model", "")
+        state["synth_usage"] = final_synth_event.get("synth_usage", {})
+        state["synth_latency_ms"] = final_synth_event.get("synth_latency_ms", 0.0)
         _apply_audit(state, [final_synth_event["audit_entry"]])
 
     # 5. Evaluator (runs on collected text, not streamed)

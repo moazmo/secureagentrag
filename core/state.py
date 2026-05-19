@@ -51,9 +51,14 @@ class GraphState(TypedDict):
     query: str
     user_context: dict  # UserContext serialized as dict
 
+    # Inference routing preferences (set by UI / API caller)
+    prefer_cloud: bool  # True when caller opts into cloud providers for LOW/MEDIUM
+    override_provider: str  # "" or one of "ollama" / "groq" / "openai" / "anthropic"
+
     # Router
     query_type: str  # "simple", "complex", "out_of_scope"
     rewritten_query: str
+    query_sensitivity: str  # "low" | "medium" | "high" — inferred from the query itself
 
     # Security
     security_passed: bool
@@ -74,6 +79,11 @@ class GraphState(TypedDict):
     generation: str
     citations: list[Citation]
     confidence_score: float
+    # Provenance of the synthesizer LLM call (set by synthesize_answer/_stream).
+    synth_provider: str  # "ollama" | "groq" | "openai" | "anthropic"
+    synth_model: str
+    synth_usage: dict  # {prompt_tokens, completion_tokens, total_tokens}
+    synth_latency_ms: float
 
     # Evaluation
     needs_human_review: bool

@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     top_k: int = 10
     rerank_top_k: int = 5
     relevance_threshold: float = 0.7
+    # RAG Fusion: generate N query reformulations, retrieve in parallel,
+    # fuse the ranked lists via RRF. Boosts recall on under-specified
+    # queries. Cost: N-1 extra LLM calls + N parallel Qdrant searches.
+    # Set to 1 to disable.
+    rag_fusion_n_queries: int = 3
+    rag_fusion_enabled: bool = True
     # The reranker (BAAI/bge-reranker-v2-m3 cross-encoder) downloads ~600MB
     # from HuggingFace the first time it is used. Disabled by default so the
     # first query does not silently hang on the download. Enable explicitly

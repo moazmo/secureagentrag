@@ -182,20 +182,59 @@ class InferenceRouter:
             forced_local=decision.forced_local,
         )
 
-        client = get_llm(provider=decision.provider, model=decision.model)
-        try:
-            import time
+        import time
 
-            start = time.perf_counter()
+        start = time.perf_counter()
+        try:
+            client = get_llm(provider=decision.provider, model=decision.model)
             response = await client.generate(prompt=prompt, system_prompt=system_prompt, **kwargs)
             elapsed_ms = (time.perf_counter() - start) * 1000
             response.latency_ms = elapsed_ms
             return response, decision
-        finally:
-            # Clients are cached in llm_factory — do NOT close them here.
-            # Closing would destroy connection pools and force reconnection
-            # on every request. Use clear_llm_cache() only when config changes.
-            pass
+        except Exception as exc:
+            # Cloud-fallback when local Ollama is unreachable AND sensitivity
+            # allows it (NOT HIGH and NOT forced_local). Tries the configured
+            # cloud_provider; if that's also unreachable, re-raises original.
+            allow_failover = (
+                decision.provider == "ollama"
+                and not decision.forced_local
+                and self.cloud_provider
+                and self._is_provider_configured(self.cloud_provider)
+                and self._normalised_sensitivity(sensitivity_level) != SensitivityLevel.HIGH
+            )
+            if not allow_failover:
+                raise
+            logger.warning(
+                "local_inference_failed_falling_back_to_cloud",
+                cloud_provider=self.cloud_provider,
+                error=str(exc),
+            )
+            fallback_model = self._get_model_for_provider(self.cloud_provider)
+            fallback_decision = RoutingDecision(
+                provider=self.cloud_provider,
+                model=fallback_model,
+                reason=(f"Local inference failed ({exc!s}); falling back to {self.cloud_provider}"),
+                forced_local=False,
+            )
+            fallback_client = get_llm(
+                provider=fallback_decision.provider, model=fallback_decision.model
+            )
+            start = time.perf_counter()
+            response = await fallback_client.generate(
+                prompt=prompt, system_prompt=system_prompt, **kwargs
+            )
+            response.latency_ms = (time.perf_counter() - start) * 1000
+            return response, fallback_decision
+
+    @staticmethod
+    def _normalised_sensitivity(level: SensitivityLevel | str) -> SensitivityLevel:
+        """Coerce a sensitivity input into the enum so comparisons work."""
+        if isinstance(level, str):
+            try:
+                return SensitivityLevel(level.lower())
+            except ValueError:
+                return SensitivityLevel.LOW
+        return level
 
     async def chat_with_routing(
         self,

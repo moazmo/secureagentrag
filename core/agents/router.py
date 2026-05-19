@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,68 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Keyword groups for fast-path query sensitivity classification.
+# These are the kinds of queries that should NEVER leave local infrastructure
+# regardless of `prefer_cloud`. The synthesizer takes max(query_sensitivity,
+# doc_sensitivity) so a sensitive query on low-classified docs still locks
+# inference to local.
+_HIGH_SENSITIVITY_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(
+        r"\b(ssn|social\s*security|passport|driver'?s?\s*licen[cs]e|tax\s*id)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(salary|compensation|payroll|bonus|stock\s*grant|equity\s*grant)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(password|api[\s_-]?key|secret|token|credential|private[\s_-]?key)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(medical|health|diagnosis|prescription|hipaa|patient|phi\b)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(credit\s*card|bank\s*account|routing\s*number|iban|swift)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(trade\s*secret|m&a|acquisition|merger|insider|earnings\s*call)\b",
+        re.IGNORECASE,
+    ),
+]
+_MEDIUM_SENSITIVITY_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\b(confidential|internal\s*only|restricted|proprietary)\b", re.IGNORECASE),
+    re.compile(r"\b(employee|hr|hiring|firing|performance\s*review)\b", re.IGNORECASE),
+    re.compile(r"\b(customer\s*data|user\s*data|pii|personal\s*data)\b", re.IGNORECASE),
+]
+
+
+def classify_query_sensitivity(query: str) -> str:
+    """Classify a query's data-sensitivity tier from its text alone.
+
+    Pure-regex (no LLM call) for predictable latency. Used to force local
+    inference for queries that touch sensitive topics even when the
+    retrieved documents are tagged low-sensitivity. Returns one of
+    "high" / "medium" / "low".
+
+    Args:
+        query: User's raw query text.
+
+    Returns:
+        Sensitivity label string.
+    """
+    if not query:
+        return "low"
+    for pat in _HIGH_SENSITIVITY_PATTERNS:
+        if pat.search(query):
+            return "high"
+    for pat in _MEDIUM_SENSITIVITY_PATTERNS:
+        if pat.search(query):
+            return "medium"
+    return "low"
+
 
 async def call_llm_async(
     prompt: str,
@@ -23,8 +86,10 @@ async def call_llm_async(
 ) -> str:
     """Call LLM asynchronously with inference routing.
 
-    Routes through InferenceRouter so sensitivity-based provider selection
-    and cloud fallback actually work in the pipeline.
+    Backwards-compatible wrapper returning just the text. Most call sites
+    don't need the routing decision and use this variant. Synth uses
+    ``call_llm_with_decision`` instead so it can record provider/model
+    in the audit trail.
 
     Args:
         prompt: The user/instruction prompt.
@@ -34,6 +99,26 @@ async def call_llm_async(
 
     Returns:
         The generated text response, or empty string on failure.
+    """
+    text, _decision, _response = await call_llm_with_decision(
+        prompt=prompt,
+        system_prompt=system_prompt,
+        sensitivity_level=sensitivity_level,
+        prefer_cloud=prefer_cloud,
+    )
+    return text
+
+
+async def call_llm_with_decision(
+    prompt: str,
+    system_prompt: str = "",
+    sensitivity_level: str = "low",
+    prefer_cloud: bool = False,
+):
+    """Like ``call_llm_async`` but returns (text, RoutingDecision, LLMResponse).
+
+    Useful when the caller needs to surface which provider/model was actually
+    used (e.g. to write provenance into the audit trail).
     """
     from inference.router import InferenceRouter
 
@@ -59,10 +144,10 @@ async def call_llm_async(
             latency_ms=response.latency_ms,
             tokens=response.usage,
         )
-        return response.text
+        return response.text, decision, response
     except Exception as exc:
         logger.error("call_llm_async_failed", error=str(exc))
-        return ""
+        return "", None, None
 
 
 async def call_llm_stream(
@@ -178,15 +263,22 @@ async def route_query(state: GraphState) -> dict:
     # Set routing parameters based on query type
     routing_config = _get_routing_config(query_type)
 
+    # Query-level sensitivity classification — independent of doc tagging.
+    # Synthesizer will take max() of this and document sensitivity so a
+    # sensitive query never escapes to cloud even on low-tagged docs.
+    query_sensitivity = classify_query_sensitivity(query)
+
     logger.info(
         "query_routed",
         query_type=query_type,
         max_retries=routing_config["max_retries"],
         top_k=routing_config["top_k"],
+        query_sensitivity=query_sensitivity,
     )
 
     return {
         "query_type": query_type,
+        "query_sensitivity": query_sensitivity,
         "rewritten_query": query,  # First pass: no rewrite
         "max_retries": routing_config["max_retries"],
         "audit_trail": [
