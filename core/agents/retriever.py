@@ -204,7 +204,7 @@ def _rrf_fuse_results(rankings: list[list], k: int = 60) -> list:
     return fused
 
 
-async def _generate_fusion_queries(original: str, n: int) -> list[str]:
+async def _generate_fusion_queries(original: str, n: int, prefer_cloud: bool = False) -> list[str]:
     """Ask the LLM for N-1 reformulations of the original query (RAG Fusion).
 
     The original query is always included as one of the N. Reformulations
@@ -214,6 +214,10 @@ async def _generate_fusion_queries(original: str, n: int) -> list[str]:
     Args:
         original: User's original query.
         n: Total queries desired (N-1 will be generated).
+        prefer_cloud: Whether to route the reformulation LLM call to the
+            configured cloud provider (still subject to the sensitivity gate
+            — fusion sees only the query string, never doc content, so it
+            is safe to route to cloud at LOW sensitivity).
 
     Returns:
         List of query strings (length up to N, original always first).
@@ -235,6 +239,7 @@ async def _generate_fusion_queries(original: str, n: int) -> list[str]:
             prompt,
             system_prompt="You are a search query rewriter.",
             sensitivity_level="low",  # Reformulation never sees doc content.
+            prefer_cloud=prefer_cloud,
         )
         # Strip <think>...</think> blocks if the LLM ran in reasoning mode.
         cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL | re.IGNORECASE)
@@ -281,7 +286,11 @@ async def retrieve_documents(state: GraphState) -> dict:
 
         # RAG Fusion: parallel search across multiple query reformulations.
         if settings.rag_fusion_enabled and settings.rag_fusion_n_queries > 1:
-            queries = await _generate_fusion_queries(query, settings.rag_fusion_n_queries)
+            queries = await _generate_fusion_queries(
+                query,
+                settings.rag_fusion_n_queries,
+                prefer_cloud=state.get("prefer_cloud", False),
+            )
             logger.info("rag_fusion_queries", count=len(queries), queries=queries)
             import asyncio as _asyncio
 
@@ -352,18 +361,26 @@ async def retrieve_documents(state: GraphState) -> dict:
     }
 
 
-async def _grade_single_document(query: str, doc: DocumentGrade) -> DocumentGrade:
+async def _grade_single_document(
+    query: str, doc: DocumentGrade, prefer_cloud: bool = False
+) -> DocumentGrade:
     """Grade a single document for relevance (fallback for batch failures).
 
     Args:
         query: The user's query.
         doc: Document to grade.
+        prefer_cloud: Whether to route the grading LLM call to cloud
+            (subject to sensitivity gate via the inference router).
 
     Returns:
         DocumentGrade with 'relevant' field populated.
     """
     prompt = _get_grading_prompt(query, doc["text"])
-    response = await call_llm_async(prompt, system_prompt="You are a document relevance grader.")
+    response = await call_llm_async(
+        prompt,
+        system_prompt="You are a document relevance grader.",
+        prefer_cloud=prefer_cloud,
+    )
     is_relevant = response.strip().lower().startswith("yes")
     graded_doc: DocumentGrade = {
         **doc,
@@ -372,7 +389,9 @@ async def _grade_single_document(query: str, doc: DocumentGrade) -> DocumentGrad
     return graded_doc
 
 
-async def _grade_documents_batch(query: str, documents: list[DocumentGrade]) -> list[DocumentGrade]:
+async def _grade_documents_batch(
+    query: str, documents: list[DocumentGrade], prefer_cloud: bool = False
+) -> list[DocumentGrade]:
     """Grade all documents in a single LLM call for efficiency.
 
     Falls back to individual grading if batch parsing fails.
@@ -380,6 +399,7 @@ async def _grade_documents_batch(query: str, documents: list[DocumentGrade]) -> 
     Args:
         query: The user's query.
         documents: Documents to grade.
+        prefer_cloud: Whether to route the grading LLM call to cloud.
 
     Returns:
         List of DocumentGrade with 'relevant' field populated.
@@ -391,11 +411,15 @@ async def _grade_documents_batch(query: str, documents: list[DocumentGrade]) -> 
 
     if len(documents) == 1:
         # Single document — use simple prompt
-        return [await _grade_single_document(query, documents[0])]
+        return [await _grade_single_document(query, documents[0], prefer_cloud=prefer_cloud)]
 
     # Batch grading for multiple documents
     prompt = _get_batch_grading_prompt(query, documents)
-    response = await call_llm_async(prompt, system_prompt="You are a document relevance grader.")
+    response = await call_llm_async(
+        prompt,
+        system_prompt="You are a document relevance grader.",
+        prefer_cloud=prefer_cloud,
+    )
 
     relevance_flags = _parse_batch_grading(response, len(documents))
 
@@ -406,7 +430,9 @@ async def _grade_documents_batch(query: str, documents: list[DocumentGrade]) -> 
             expected=len(documents),
             falling_back="individual_grading",
         )
-        return await asyncio.gather(*[_grade_single_document(query, doc) for doc in documents])
+        return await asyncio.gather(
+            *[_grade_single_document(query, doc, prefer_cloud=prefer_cloud) for doc in documents]
+        )
 
     graded: list[DocumentGrade] = []
     for doc, is_relevant in zip(documents, relevance_flags, strict=False):
@@ -455,7 +481,9 @@ async def grade_documents(state: GraphState) -> dict:
         }
 
     # Use batch grading for efficiency (single LLM call)
-    graded_documents = await _grade_documents_batch(query, documents)
+    graded_documents = await _grade_documents_batch(
+        query, documents, prefer_cloud=state.get("prefer_cloud", False)
+    )
 
     relevant_documents = [doc for doc in graded_documents if doc["relevant"]]
     total = len(graded_documents)

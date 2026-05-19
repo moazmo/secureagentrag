@@ -59,9 +59,9 @@ async def test_async_router_uses_inference_router(mock_user_context: UserContext
 @pytest.mark.asyncio
 async def test_async_synthesizer_uses_inference_router(mock_user_context: UserContext) -> None:
     """Test that synthesize_answer routes LLM calls through InferenceRouter with sensitivity."""
-    from core.agents.synthesizer import synthesize_answer
-
     from types import SimpleNamespace
+
+    from core.agents.synthesizer import synthesize_answer
 
     with patch("core.agents.synthesizer.call_llm_with_decision") as mock_call:
         # Synth now expects a (text, decision, response) tuple.

@@ -274,15 +274,29 @@ async def evaluate_response(state: GraphState) -> dict:
     hallucination_prompt = _get_hallucination_check_prompt(query, generation, context_str)
     completeness_prompt = _get_completeness_prompt(query, generation)
 
+    # Evaluator routing: respects user's prefer_cloud flag like every other
+    # agent. The default sensitivity is "medium" (the answer + retrieved
+    # context have already been seen by the synthesizer, which itself
+    # routed based on sensitivity), so when the user opts into cloud, eval
+    # follows. HIGH-sensitivity content still pins local via the router's
+    # internal gate.
+    prefer_cloud = state.get("prefer_cloud", False)
+    doc_sens = state.get("query_sensitivity", "low")
+    if any((d.get("metadata", {}) or {}).get("sensitivity_level") == "high" for d in docs_to_use):
+        doc_sens = "high"
+    eval_sensitivity = doc_sens
+
     hallucination_task = call_llm_async(
         hallucination_prompt,
         system_prompt="You are a strict fact-checking assistant.",
-        sensitivity_level="high",  # Always local for evaluation
+        sensitivity_level=eval_sensitivity,
+        prefer_cloud=prefer_cloud,
     )
     completeness_task = call_llm_async(
         completeness_prompt,
         system_prompt="You are an answer quality evaluator.",
-        sensitivity_level="high",
+        sensitivity_level=eval_sensitivity,
+        prefer_cloud=prefer_cloud,
     )
 
     hallucination_response, completeness_response = await asyncio.gather(

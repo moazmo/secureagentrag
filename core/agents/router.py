@@ -242,11 +242,14 @@ async def route_query(state: GraphState) -> dict:
         top_k, and audit_trail entry.
     """
     query = state["query"]
-    logger.info("routing_query", query_len=len(query))
+    prefer_cloud = state.get("prefer_cloud", False)
+    logger.info("routing_query", query_len=len(query), prefer_cloud=prefer_cloud)
 
     prompt = _get_routing_prompt(query)
     response = await call_llm_async(
-        prompt, system_prompt="You are a query classification assistant."
+        prompt,
+        system_prompt="You are a query classification assistant.",
+        prefer_cloud=prefer_cloud,
     )
 
     # Parse the response — normalize to expected categories
@@ -341,15 +344,20 @@ async def rewrite_query(state: GraphState) -> dict:
     """
     current_query = state.get("rewritten_query") or state["query"]
     documents = state.get("documents", [])
+    prefer_cloud = state.get("prefer_cloud", False)
 
     # Build summary of irrelevant docs for context
     irrelevant_docs = [d for d in documents if not d.get("relevant", False)]
     failed_summary = "; ".join(doc.get("text", "")[:100] for doc in irrelevant_docs[:3])
 
-    logger.info("rewriting_query", current_query_len=len(current_query))
+    logger.info("rewriting_query", current_query_len=len(current_query), prefer_cloud=prefer_cloud)
 
     prompt = _get_rewrite_prompt(current_query, failed_summary)
-    response = await call_llm_async(prompt, system_prompt="You are a query rewriting assistant.")
+    response = await call_llm_async(
+        prompt,
+        system_prompt="You are a query rewriting assistant.",
+        prefer_cloud=prefer_cloud,
+    )
 
     rewritten = response.strip() if response.strip() else current_query
     retry_count = state.get("retry_count", 0) + 1

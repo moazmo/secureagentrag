@@ -6,7 +6,8 @@ from typing import Any
 
 import pytest
 
-from config.settings import Settings, settings as _live_settings
+from config.settings import Settings
+from config.settings import settings as _live_settings
 
 
 @pytest.fixture(autouse=True)
