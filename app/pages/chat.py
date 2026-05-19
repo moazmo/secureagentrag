@@ -365,9 +365,26 @@ def _process_query_streaming(query: str) -> None:
                 icon="⚠️",
             )
 
-        if citations:
-            with citations_placeholder.container():
-                st.markdown("**Sources:**")
+        # Render the confidence badge + sources block inline in the streaming
+        # path so the score is visible right after generation finishes (the
+        # historical chat_history renderer also shows it on rerun, but the
+        # user shouldn't have to refresh to see it).
+        with citations_placeholder.container():
+            if confidence >= 0.8:
+                color, icon = "#22c55e", "🟢"
+            elif confidence >= 0.6:
+                color, icon = "#eab308", "🟡"
+            else:
+                color, icon = "#ef4444", "🔴"
+            st.markdown(
+                f"<div style='display:inline-flex;align-items:center;gap:6px;"
+                f"padding:4px 10px;border-radius:12px;background:{color}22;"
+                f"color:{color};font-weight:600;'>{icon} Confidence: "
+                f"{confidence:.0%}</div>",
+                unsafe_allow_html=True,
+            )
+            if citations:
+                st.markdown(f"\n**Sources ({len(citations)} citations):**")
                 for i, cite in enumerate(citations, 1):
                     st.markdown(
                         f"{i}. *{cite['source_file']}* (p. {cite['page_number']}) — "
