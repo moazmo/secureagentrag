@@ -9,6 +9,8 @@ all services and components.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
 import sys
 import uuid
@@ -18,6 +20,39 @@ from contextvars import ContextVar
 import structlog
 
 from config.settings import settings
+
+# Switch stdout/stderr to UTF-8 with replacement on import so any logger
+# (even before setup_logging() runs) survives Arabic / CJK / emoji content.
+# Without this, Windows cp1252 stdout aborts log.emit and bubbles a
+# "'charmap' codec can't encode" error into the calling function, which
+# we previously saw crashing retrieve_documents for Arabic queries.
+for _stream_name in ("stdout", "stderr"):
+    _s = getattr(sys, _stream_name, None)
+    if _s is not None and hasattr(_s, "reconfigure"):
+        with contextlib.suppress(Exception):
+            _s.reconfigure(encoding="utf-8", errors="replace")
+
+
+def _utf8_stream(stream):
+    """Wrap a stream in a UTF-8 writer that replaces (not raises) on
+    unencodable chars.
+
+    On Windows the default stdout codec is cp1252, so Arabic / CJK / emoji
+    in log payloads crashes ``StreamHandler.emit`` mid-write — which we saw
+    surface as ``"'charmap' codec can't encode characters"`` errors that
+    aborted retrieve_documents whenever the query contained non-Latin text.
+    """
+    try:
+        return io.TextIOWrapper(
+            stream.buffer,
+            encoding="utf-8",
+            errors="replace",
+            line_buffering=True,
+            write_through=True,
+        )
+    except Exception:
+        return stream
+
 
 # Context variable for the current correlation ID
 _correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
@@ -114,7 +149,7 @@ def setup_logging() -> None:
         ],
     )
 
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(_utf8_stream(sys.stdout))
     handler.setFormatter(formatter)
 
     root_logger = logging.getLogger()
