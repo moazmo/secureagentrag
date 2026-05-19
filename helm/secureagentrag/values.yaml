@@ -86,7 +86,9 @@ config:
   hyde_enabled: false
   self_query_enabled: false
   rag_fusion_enabled: true
-  enable_reranker: false
+  reranker_type: "none"
+  reranker_checkpoint: "BAAI/bge-reranker-v2-m3"
+  colbert_checkpoint: "colbert-ir/colbertv2.0"
   json_citations_enabled: false
   vlm_ocr_enabled: false
   multimodal_descriptions_enabled: false

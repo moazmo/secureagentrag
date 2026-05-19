@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.agents.retriever import (
+    _get_reranker,
     grade_documents,
     retrieve_documents,
     should_retry,
@@ -272,3 +273,57 @@ class TestShouldRetry:
         # relevance_ratio defaults to 0.0, retry_count to 0, max_retries to 2
         # 0.0 < 0.5 and 0 < 2 -> rewrite
         assert should_retry(state) == "rewrite"
+
+
+class TestGetReranker:
+    """Tests for the _get_reranker factory function."""
+
+    def _reset_singleton(self):
+        """Reset the module-level singleton so each test starts fresh."""
+        import core.agents.retriever as retriever_mod
+
+        retriever_mod._reranker = None
+
+    @patch("core.agents.retriever.settings")
+    def test_returns_cross_encoder_when_configured(self, mock_settings):
+        """When reranker_type='cross_encoder', returns CrossEncoder reranker."""
+        self._reset_singleton()
+        mock_settings.reranker_type = "cross_encoder"
+        mock_settings.reranker_checkpoint = "BAAI/bge-reranker-v2-m3"
+        mock_settings.colbert_checkpoint = "colbert-ir/colbertv2.0"
+
+        with patch("retrieval.reranker.Reranker") as mock_reranker_cls:
+            instance = MagicMock()
+            mock_reranker_cls.return_value = instance
+            result = _get_reranker()
+            assert result is instance
+            mock_reranker_cls.assert_called_once_with(model_name="BAAI/bge-reranker-v2-m3")
+
+    @patch("core.agents.retriever.settings")
+    def test_returns_colbert_when_configured(self, mock_settings):
+        """When reranker_type='colbert', returns ColBERTReranker."""
+        self._reset_singleton()
+        mock_settings.reranker_type = "colbert"
+        mock_settings.reranker_checkpoint = "BAAI/bge-reranker-v2-m3"
+        mock_settings.colbert_checkpoint = "colbert-ir/colbertv2.0"
+
+        with patch("retrieval.colbert_reranker.ColBERTReranker") as mock_colbert_cls:
+            instance = MagicMock()
+            mock_colbert_cls.return_value = instance
+            result = _get_reranker()
+            assert result is instance
+            mock_colbert_cls.assert_called_once_with(checkpoint="colbert-ir/colbertv2.0")
+
+    @patch("core.agents.retriever.settings")
+    def test_returns_none_reranker_when_disabled(self, mock_settings):
+        """When reranker_type='none', returns a no-op Reranker."""
+        self._reset_singleton()
+        mock_settings.reranker_type = "none"
+        mock_settings.reranker_checkpoint = "BAAI/bge-reranker-v2-m3"
+        mock_settings.colbert_checkpoint = "colbert-ir/colbertv2.0"
+
+        with patch("retrieval.reranker.Reranker") as mock_reranker_cls:
+            instance = MagicMock()
+            mock_reranker_cls.return_value = instance
+            result = _get_reranker()
+            assert result is instance

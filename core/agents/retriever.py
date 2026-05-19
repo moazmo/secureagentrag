@@ -71,20 +71,37 @@ def _get_hybrid_searcher():
 
 
 def _get_reranker():
-    """Lazily initialize and return the Reranker instance.
+    """Lazily initialize and return the appropriate Reranker instance.
 
-    Thread-safe via double-checked locking pattern.
+    Factory pattern: returns CrossEncoder or ColBERT based on
+    ``settings.reranker_type``. Thread-safe via double-checked locking.
 
     Returns:
-        A configured Reranker instance.
+        A configured reranker instance (always has ``is_available()`` and
+        ``rerank()`` methods).
     """
     global _reranker
     if _reranker is None:
         with _init_lock:
-            if _reranker is None:  # Double-check pattern
-                from retrieval.reranker import Reranker
+            if _reranker is None:
+                reranker_type = settings.reranker_type
+                if reranker_type == "colbert":
+                    from retrieval.colbert_reranker import ColBERTReranker
 
-                _reranker = Reranker()
+                    _reranker = ColBERTReranker(
+                        checkpoint=settings.colbert_checkpoint,
+                    )
+                elif reranker_type == "cross_encoder":
+                    from retrieval.reranker import Reranker
+
+                    _reranker = Reranker(
+                        model_name=settings.reranker_checkpoint,
+                    )
+                else:
+                    # No-op reranker for "none"
+                    from retrieval.reranker import Reranker
+
+                    _reranker = Reranker()
     return _reranker
 
 
@@ -344,10 +361,10 @@ async def retrieve_documents(state: GraphState) -> dict:
                 extra_filter=extra_filter,
             )
 
-        # Optionally rerank. Gated behind settings.enable_reranker because
-        # the first call downloads a ~600MB cross-encoder from HuggingFace
+        # Optionally rerank. Gated behind settings.reranker_type because
+        # the first call may download a ~600MB model from HuggingFace
         # with no progress feedback — easily mistaken for a hang.
-        if settings.enable_reranker and search_results:
+        if settings.reranker_type != "none" and search_results:
             reranker = _get_reranker()
             if reranker.is_available():
                 search_results = reranker.rerank(

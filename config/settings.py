@@ -56,13 +56,16 @@ class Settings(BaseSettings):
     # Set to 1 to disable.
     rag_fusion_n_queries: int = 3
     rag_fusion_enabled: bool = True
-    # The reranker (BAAI/bge-reranker-v2-m3 cross-encoder) downloads ~600MB
-    # from HuggingFace the first time it is used. Disabled by default so the
-    # first query does not silently hang on the download. Enable explicitly
-    # after pre-downloading the model (uv run python -c
-    # "from sentence_transformers import CrossEncoder;
-    #  CrossEncoder('BAAI/bge-reranker-v2-m3')").
-    enable_reranker: bool = False
+    # ── Reranker ─────────────────────────────────────────────────────────────────
+    # Re-score retrieved documents for higher precision.
+    # Options: "none" (disabled), "cross_encoder" (BGE-Reranker-v2-M3),
+    # "colbert" (ColBERTv2 late-interaction, requires colbert-ai package).
+    # The cross-encoder downloads ~600MB from HuggingFace on first use.
+    # The ColBERT checkpoint is ~400MB. Disabled by default so the first
+    # query does not silently hang on download. Pre-download explicitly.
+    reranker_type: str = "none"
+    reranker_checkpoint: str = "BAAI/bge-reranker-v2-m3"
+    colbert_checkpoint: str = "colbert-ir/colbertv2.0"
 
     # ── Inference Providers ──────────────────────────────────────────────────────
     default_provider: str = "ollama"

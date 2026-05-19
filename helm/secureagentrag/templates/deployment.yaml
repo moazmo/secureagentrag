@@ -74,8 +74,12 @@ spec:
               value: {{ .Values.config.self_query_enabled | quote }}
             - name: SAR_RAG_FUSION_ENABLED
               value: {{ .Values.config.rag_fusion_enabled | quote }}
-            - name: SAR_ENABLE_RERANKER
-              value: {{ .Values.config.enable_reranker | quote }}
+            - name: SAR_RERANKER_TYPE
+              value: {{ .Values.config.reranker_type | quote }}
+            - name: SAR_RERANKER_CHECKPOINT
+              value: {{ .Values.config.reranker_checkpoint | quote }}
+            - name: SAR_COLBERT_CHECKPOINT
+              value: {{ .Values.config.colbert_checkpoint | quote }}
             - name: SAR_JSON_CITATIONS_ENABLED
               value: {{ .Values.config.json_citations_enabled | quote }}
             - name: SAR_VLM_OCR_ENABLED
