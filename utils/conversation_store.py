@@ -8,6 +8,7 @@ for easy rotation and backup.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,6 +19,20 @@ from config.settings import settings
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Legacy citation markers used by earlier synthesizer prompts. Rendered as
+# literal "[[N]]" in the UI, which looked like a bug. The current prompt
+# emits `[N]`. We rewrite legacy strings at load time so historic threads
+# display the new format without re-running the LLM.
+_LEGACY_CITATION_RE = re.compile(r"\[\[(\d+)\]\]")
+
+
+def _normalize_citations(text: str) -> str:
+    """Convert legacy ``[[N]]`` markers to ``[N]`` in stored content."""
+    if not text:
+        return text
+    return _LEGACY_CITATION_RE.sub(r"[\1]", text)
+
 
 # Default retention: 90 days for conversation threads
 DEFAULT_RETENTION_DAYS: int = 90
@@ -195,7 +210,7 @@ class ConversationStore:
             messages = [
                 ConversationMessage(
                     role=msg["role"],
-                    content=msg["content"],
+                    content=_normalize_citations(msg["content"]),
                     timestamp=msg.get("timestamp", ""),
                     metadata=msg.get("metadata", {}),
                 )
