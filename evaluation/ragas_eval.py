@@ -18,10 +18,10 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Conditional ragas import
+# Conditional ragas import — try modern path first, fall back to legacy
 try:
     from ragas import evaluate as ragas_evaluate
-    from ragas.metrics import (
+    from ragas.metrics.collections import (
         answer_relevancy,
         context_precision,
         context_recall,
@@ -30,8 +30,19 @@ try:
 
     _RAGAS_AVAILABLE = True
 except ImportError:
-    _RAGAS_AVAILABLE = False
-    logger.info("ragas_not_installed", msg="Evaluation will return None scores")
+    try:
+        from ragas import evaluate as ragas_evaluate
+        from ragas.metrics import (
+            answer_relevancy,
+            context_precision,
+            context_recall,
+            faithfulness,
+        )
+
+        _RAGAS_AVAILABLE = True
+    except ImportError:
+        _RAGAS_AVAILABLE = False
+        logger.info("ragas_not_installed", msg="Evaluation will return None scores")
 
 
 class EvalSample(BaseModel):

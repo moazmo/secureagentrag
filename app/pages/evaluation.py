@@ -41,6 +41,10 @@ def render_evaluation_page() -> None:
     _render_overview_metrics(df)
     st.divider()
 
+    # ── Cache Metrics ────────────────────────────────────────────────────────
+    _render_cache_metrics()
+    st.divider()
+
     # ── Charts ───────────────────────────────────────────────────────────────
     _render_charts(df)
     st.divider()
@@ -183,6 +187,31 @@ def _render_ragas_scores() -> None:
         chart_df["timestamp"] = pd.to_datetime(chart_df["timestamp"])
         chart_df = chart_df.set_index("timestamp")
         st.line_chart(chart_df["overall_score"])
+
+
+def _render_cache_metrics() -> None:
+    """Render query cache hit-rate metrics."""
+    from utils.query_cache import get_cache_metrics
+
+    st.subheader("Query Cache Performance")
+    metrics = get_cache_metrics()
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Cache Hits", metrics["hits"])
+    with col2:
+        st.metric("Cache Misses", metrics["misses"])
+    with col3:
+        st.metric("Total Lookups", metrics["total"])
+    with col4:
+        st.metric("Hit Rate", f"{metrics['hit_rate']:.1%}")
+
+    if metrics["total"] == 0:
+        st.caption("No cache lookups yet. Cache is checked on every query.")
+    elif metrics["hit_rate"] < 0.1:
+        st.caption("Low hit rate — this is expected when each query is unique.")
+    else:
+        st.caption(f"{metrics['hit_rate']:.1%} of identical queries are served from cache.")
 
 
 def _render_overview_metrics(df: pd.DataFrame) -> None:

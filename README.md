@@ -387,17 +387,33 @@ The benchmark script (`scripts/quick_bench.py`) measures:
 - **Retrieval quality**: Relevance ratio after grading
 - **Confidence distribution**: Scores across query types
 
-**Measured Performance** (2026-05-19 on RTX 3060 12GB with qwen3:8b Q4_K_M + bge-m3, 5 queries/type):
+**Measured Performance — Local Only** (2026-05-19 on RTX 3060 12GB with qwen3:8b Q4_K_M + bge-m3, 5 queries/type):
 
 | Metric | Simple | Complex |
 |--------|--------|---------|
 | Mean latency | 67.9 s | 126.3 s |
 | P50 latency | 66.6 s | 113.9 s |
 | P90 latency | 84.7 s | 201.6 s |
-| P99 latency | 84.7 s | 201.6 s |
 | Mean confidence | 0.923 | 0.823 |
 | Mean relevance | 0.64 | 0.38 |
 | Mean retries | 0.2 | 1.0 |
+
+**Measured Performance — Cloud Routed** (Groq llama-3.3-70b-versatile, 3 queries, `SAR_CLOUD_PROVIDER=groq`):
+
+| Metric | Cloud | Notes |
+|--------|-------|-------|
+| Mean latency | 24.6 s | Embedding + security still local |
+| LLM-only latency | ~1.2 s | Groq generation calls |
+| Mean confidence | 0.896 | Comparable to local |
+
+**Measured Performance — Arabic (Cloud)** (Groq, 3 Arabic queries):
+
+| Metric | Value |
+|--------|-------|
+| Mean latency | 12.1 s |
+| Mean confidence | 0.659 |
+
+The cloud router reduces LLM generation time from ~10-40s (Ollama) to ~0.3-2s (Groq), but embeddings (bge-m3 via Ollama) and the security node (forced local for HIGH sensitivity) remain on-device. Use `uv run python -m scripts.cloud_bench_quick` (English) or `uv run python -m scripts.arabic_bench` (Arabic) to reproduce.
 
 **Recommended Benchmark Setup**
 - **Hardware**: RTX 3060 12GB or equivalent
@@ -407,7 +423,7 @@ The benchmark script (`scripts/quick_bench.py`) measures:
 - **Warmup**: 1 query to warm caches before measurement
 - **Runs**: 10 queries per type, report mean/median/P90
 
-*Measured with `uv run python -m scripts.quick_bench` on the NIST AI RMF corpus (147 chunks).*
+*Measured with `uv run python -m scripts.quick_bench` (local) and `uv run python -m scripts.cloud_bench_quick` (cloud) on the NIST AI RMF corpus (147 chunks).*
 
 ---
 

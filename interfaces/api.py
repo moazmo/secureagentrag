@@ -83,6 +83,13 @@ if _FASTAPI_AVAILABLE:
         description="Privacy-first multi-agent RAG with RBAC, guardrails, and audit chain.",
     )
 
+    # Initialize Phoenix tracing if configured
+    from utils.observability import setup_tracing
+
+    _tracing_enabled = setup_tracing()
+    if _tracing_enabled:
+        logger.info("phoenix_tracing_active_in_api")
+
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
