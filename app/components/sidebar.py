@@ -17,9 +17,23 @@ PREDEFINED_USERS: list[dict[str, Any]] = [
     {
         "user_id": "admin_01",
         "org_id": "acme_corp",
-        "roles": ["admin", "analyst", "viewer"],
+        "roles": ["admin", "analyst", "viewer", "engineer", "finance_manager"],
         "clearance_level": 3,
-        "display_name": "Admin User",
+        "display_name": "Admin (sees everything)",
+    },
+    {
+        "user_id": "finance_01",
+        "org_id": "acme_corp",
+        "roles": ["finance_manager", "viewer"],
+        "clearance_level": 3,
+        "display_name": "Finance Manager",
+    },
+    {
+        "user_id": "engineer_01",
+        "org_id": "acme_corp",
+        "roles": ["engineer", "viewer"],
+        "clearance_level": 2,
+        "display_name": "Engineer",
     },
     {
         "user_id": "analyst_01",
@@ -33,14 +47,14 @@ PREDEFINED_USERS: list[dict[str, Any]] = [
         "org_id": "acme_corp",
         "roles": ["viewer"],
         "clearance_level": 1,
-        "display_name": "Junior Viewer",
+        "display_name": "Viewer (public only)",
     },
     {
         "user_id": "external_01",
         "org_id": "partner_inc",
         "roles": ["viewer"],
         "clearance_level": 1,
-        "display_name": "External Consultant",
+        "display_name": "External (different org)",
     },
 ]
 
@@ -55,7 +69,12 @@ def render_sidebar() -> None:
         st.divider()
 
         # ── User Selector ────────────────────────────────────────────────────
-        st.subheader("👤 User Simulation")
+        st.subheader("👤 User Simulation (RBAC demo)")
+        st.caption(
+            "Switch users to see Qdrant payload filters in action — "
+            "the same query returns different docs per role. Seed the demo "
+            "corpus with `uv run python -m scripts.seed_demo_rbac`."
+        )
         user_names = [u["display_name"] for u in PREDEFINED_USERS]
         current_display = st.session_state.current_user.get("display_name", user_names[0])
 
