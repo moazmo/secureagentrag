@@ -377,26 +377,27 @@ uv run python -m evaluation.benchmark
 Benchmarks measure end-to-end pipeline latency (query → response) across query types:
 
 ```bash
-# Run the benchmark suite (requires Ollama + Qdrant running with docs ingested)
-uv run python -m evaluation.benchmark
+# Run the short-form benchmark suite (requires Ollama + Qdrant running with docs ingested)
+uv run python -m scripts.quick_bench
 ```
 
-The benchmark script (`evaluation/benchmark.py`) measures:
+The benchmark script (`scripts/quick_bench.py`) measures:
 - **End-to-end latency**: Total time from query submission to response
 - **Per-node latency**: Router, retriever, grader, synthesizer, evaluator
 - **Retrieval quality**: Relevance ratio after grading
 - **Confidence distribution**: Scores across query types
 
-**Expected Performance Targets** (based on architecture, not measured):
+**Measured Performance** (2026-05-19 on RTX 3060 12GB with qwen3:8b Q4_K_M + bge-m3, 5 queries/type):
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Simple query latency | < 3s | Single retrieval, minimal grading |
-| Complex query latency | < 6s | May include 1 corrective rewrite |
-| Retrieval (dense) | < 200ms | Qdrant local search |
-| Embedding (per batch) | < 500ms | BGE-M3 via Ollama |
-| LLM generation | 20-40 tok/s | Qwen3-8B Q4_K_M on 12GB VRAM |
-| P90 Latency | < 5s | 90th percentile end-to-end |
+| Metric | Simple | Complex |
+|--------|--------|---------|
+| Mean latency | 67.9 s | 126.3 s |
+| P50 latency | 66.6 s | 113.9 s |
+| P90 latency | 84.7 s | 201.6 s |
+| P99 latency | 84.7 s | 201.6 s |
+| Mean confidence | 0.923 | 0.823 |
+| Mean relevance | 0.64 | 0.38 |
+| Mean retries | 0.2 | 1.0 |
 
 **Recommended Benchmark Setup**
 - **Hardware**: RTX 3060 12GB or equivalent
@@ -406,7 +407,7 @@ The benchmark script (`evaluation/benchmark.py`) measures:
 - **Warmup**: 1 query to warm caches before measurement
 - **Runs**: 10 queries per type, report mean/median/P90
 
-*Run benchmarks on your own hardware and update this section with real numbers. The targets above are architectural estimates based on Ollama performance profiles for the specified models.*
+*Measured with `uv run python -m scripts.quick_bench` on the NIST AI RMF corpus (147 chunks).*
 
 ---
 
