@@ -146,6 +146,14 @@ async def guardrails_check(state: GraphState) -> dict:
 
     passed, reason = check_query(state["query"])
 
+    # Strict mode: escalate to an LLM-based classifier for a second opinion.
+    # Regex-blocked queries are blocked immediately; regex-passed queries get
+    # the LLM check when strict mode is on.
+    if passed and settings.guardrails_strict:
+        from core.agents.guardrails_llm import llm_guardrails_check
+
+        passed, reason = await llm_guardrails_check(state["query"])
+
     if not passed:
         user = state.get("user_context", {}) or {}
         audit_logger.log_security_event(

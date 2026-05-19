@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     # obvious jailbreak / system-prompt-override attempts. Logged via the audit
     # logger as ``security_block`` events.
     guardrails_enabled: bool = True
+    # Strict mode: after the fast regex gate, escalate ambiguous or all queries
+    # to a local LLM-based classifier for a second opinion. Adds one LLM call
+    # per query but catches adversarial inputs that evade regex patterns.
+    guardrails_strict: bool = False
 
     # ── Contextual Retrieval (Anthropic 2024 technique) ──────────────────────────
     # Prepend a short LLM-generated context summary to each chunk before
