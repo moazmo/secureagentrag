@@ -129,6 +129,13 @@ class Settings(BaseSettings):
     # failure reduction). Local Qwen3-8B is fine for the summary.
     contextual_retrieval_enabled: bool = False
 
+    # ── VLM OCR (Primary OCR via vision-language model) ───────────────────────────
+    # Use a VLM (Qwen-VL, LLaVA, etc.) via Ollama as the primary OCR path.
+    # Superior to PaddleOCR on complex layouts, tables, and mixed-language
+    # documents. Falls back to PaddleOCR when the VLM is unavailable.
+    vlm_ocr_enabled: bool = False
+    vlm_ocr_model: str = "qwen2.5-vl"
+
     # ── HyDE (Hypothetical Document Embeddings) ──────────────────────────────────
     # Generate a hypothetical answer to the query, embed *that* instead of the
     # raw query. Boosts recall when query vocabulary differs from doc
