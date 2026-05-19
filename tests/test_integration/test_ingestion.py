@@ -49,6 +49,10 @@ def mock_qdrant_manager() -> MagicMock:
     manager.get_collection_info = MagicMock(
         return_value={"points_count": 3, "vectors_count": 3, "name": "test", "status": "green"}
     )
+    # Pipeline routes through for_org(org_id) — single-tenant mode returns
+    # self, so the mock has to mirror that contract.
+    manager.for_org.return_value = manager
+    manager.get_documents_by_source.return_value = []
     return manager
 
 

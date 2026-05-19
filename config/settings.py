@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     use_persistent_checkpointer: bool = False
 
     # ── PostgreSQL (for LangGraph checkpointing) ─────────────────────────────────
-    postgres_url: str = "postgresql://sar_user:sar_password@localhost:5432/secureagentrag"
+    postgres_url: str = "postgresql://sar_user:sar_password@localhost:5433/secureagentrag"
 
     # ── Redis (for distributed rate limiting / caching) ──────────────────────────
     redis_url: str = "redis://localhost:6379/0"
@@ -147,6 +147,13 @@ class Settings(BaseSettings):
     # documents. Falls back to PaddleOCR when the VLM is unavailable.
     vlm_ocr_enabled: bool = False
     vlm_ocr_model: str = "qwen2.5-vl"
+
+    # ── Multi-Tenancy ────────────────────────────────────────────────────────────
+    # When true, each organization gets its own Qdrant collection
+    # (documents_{org_id}). This provides stronger isolation than payload-level
+    # RBAC filtering but requires creating collections per org on first use.
+    # When false, all docs share a single collection with RBAC at payload level.
+    multi_tenant_collections: bool = False
 
     # ── Multi-Modal RAG ──────────────────────────────────────────────────────────
     # When ingesting images, also generate a rich text description using a VLM.

@@ -135,6 +135,10 @@ class TestIngestionPipeline:
         mock_qdrant = MagicMock()
         mock_qdrant.ensure_collection = MagicMock()
         mock_qdrant.upsert_documents = AsyncMock(return_value=["point-1"])
+        # Pipeline calls qdrant.for_org(org_id); single-tenant mode returns
+        # self, so the mock must mirror that behaviour.
+        mock_qdrant.for_org.return_value = mock_qdrant
+        mock_qdrant.get_documents_by_source.return_value = []
 
         mock_embeddings = MagicMock()
         mock_embeddings.embed_batch = AsyncMock(return_value=[[0.1] * 1024])

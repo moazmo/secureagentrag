@@ -200,6 +200,10 @@ class TestHybridSearcher:
         """Create a mock QdrantManager."""
         mock = MagicMock()
         mock.search_with_rbac.return_value = []
+        # The searcher now calls qdrant.for_org(user_context.org_id) before
+        # search to support multi-tenancy. In single-tenant mode the real
+        # implementation returns self; the mock must do the same.
+        mock.for_org.return_value = mock
         return mock
 
     @pytest.fixture()

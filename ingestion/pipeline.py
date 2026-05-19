@@ -161,9 +161,15 @@ class IngestionPipeline:
                 processing_time_seconds=time.time() - start_time,
             )
 
+        # Resolve the tenant-scoped Qdrant manager. When
+        # SAR_MULTI_TENANT_COLLECTIONS=false this is a no-op (returns self);
+        # when true it switches to ``documents_{org_id}`` and creates the
+        # collection on first write.
+        qdrant_for_org = self._qdrant.for_org(request.org_id)
+
         # Step 4: Deduplication — check for existing chunks by source+hash
         if not force_reingest:
-            existing_docs = self._qdrant.get_documents_by_source(
+            existing_docs = qdrant_for_org.get_documents_by_source(
                 source_file=file_path,
                 org_id=request.org_id,
             )
@@ -255,8 +261,8 @@ class IngestionPipeline:
 
         # Step 7: Upsert to Qdrant
         try:
-            self._qdrant.ensure_collection()
-            point_ids = await self._qdrant.upsert_documents(
+            qdrant_for_org.ensure_collection()
+            point_ids = await qdrant_for_org.upsert_documents(
                 chunks=chunk_texts,
                 embeddings=embeddings,
                 metadatas=metadatas,

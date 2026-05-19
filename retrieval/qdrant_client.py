@@ -71,6 +71,34 @@ class QdrantManager:
         """Return the underlying QdrantClient instance."""
         return self._client
 
+    def for_org(self, org_id: str) -> QdrantManager:
+        """Return a QdrantManager scoped to an organization-specific collection.
+
+        When ``settings.multi_tenant_collections`` is True, this creates a
+        new manager using ``documents_{org_id}`` as the collection name,
+        providing namespace-level isolation. When False, returns ``self``.
+
+        Args:
+            org_id: Organization identifier.
+
+        Returns:
+            A QdrantManager instance (new or self).
+        """
+        if not settings.multi_tenant_collections:
+            return self
+        from retrieval.multitenancy import get_collection_name
+
+        org_collection = get_collection_name(org_id)
+        if org_collection == self._collection_name:
+            return self
+        mgr = QdrantManager(
+            url=self._url,
+            collection_name=org_collection,
+            api_key=self._api_key,
+        )
+        mgr.ensure_collection()
+        return mgr
+
     def ensure_collection(self, vector_size: int | None = None) -> None:
         """Create the collection if it does not already exist.
 

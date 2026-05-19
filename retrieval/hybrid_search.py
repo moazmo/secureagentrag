@@ -336,10 +336,16 @@ class HybridSearcher:
         dense_ranking: list[tuple[str, float]] = []
         embeddings_failed = False
 
+        # Multi-tenancy: when SAR_MULTI_TENANT_COLLECTIONS=true, scope this
+        # search to the tenant-specific collection. Falls back to the default
+        # collection when the flag is off so existing single-tenant setups
+        # are unaffected.
+        tenant_qdrant = self._qdrant.for_org(user_context.org_id)
+
         # Step 1: Try embedding + dense search
         try:
             query_embedding = await self._embedder.embed_text(query)
-            dense_results = self._qdrant.search_with_rbac(
+            dense_results = tenant_qdrant.search_with_rbac(
                 query_embedding=query_embedding,
                 user_context=user_context,
                 top_k=top_k * 2,
@@ -411,10 +417,10 @@ class HybridSearcher:
             bm25_only_ids = [doc_id for doc_id, _ in bm25_ranking if doc_id not in dense_doc_ids]
             if bm25_only_ids:
                 try:
-                    rbac_filter = self._qdrant.build_rbac_filter(user_context)
+                    rbac_filter = tenant_qdrant.build_rbac_filter(user_context)
                     # Scroll Qdrant to find which BM25 doc_ids are authorized
-                    filter_results = self._qdrant.client.scroll(
-                        collection_name=self._qdrant.collection_name,
+                    filter_results = tenant_qdrant.client.scroll(
+                        collection_name=tenant_qdrant.collection_name,
                         scroll_filter=rbac_filter,
                         limit=len(bm25_only_ids) * 2,
                         with_payload=False,
@@ -436,8 +442,8 @@ class HybridSearcher:
             if info is None:
                 # BM25-only result — fetch text from Qdrant
                 try:
-                    point_results = self._qdrant.client.retrieve(
-                        collection_name=self._qdrant.collection_name,
+                    point_results = tenant_qdrant.client.retrieve(
+                        collection_name=tenant_qdrant.collection_name,
                         ids=[doc_id],
                     )
                     if point_results:
@@ -496,9 +502,10 @@ class HybridSearcher:
             List of SearchResult objects from dense retrieval only.
         """
         try:
+            tenant_qdrant = self._qdrant.for_org(user_context.org_id)
             query_embedding = await self._embedder.embed_text(query)
 
-            results = self._qdrant.search_with_rbac(
+            results = tenant_qdrant.search_with_rbac(
                 query_embedding=query_embedding,
                 user_context=user_context,
                 top_k=top_k,
