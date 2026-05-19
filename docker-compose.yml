@@ -3,7 +3,8 @@ services:
     image: postgres:16-alpine
     container_name: secureagentrag-postgres
     ports:
-      - "5432:5432"
+      # 5433 on host to avoid conflicts with system-installed Postgres on 5432
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:

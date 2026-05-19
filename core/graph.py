@@ -3,8 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import sys
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+# psycopg's async driver does not support the Proactor event loop (Windows
+# default). Switch to the Selector policy at import time so every asyncio.run
+# the process spawns picks it up. No-op on POSIX. Must run before any other
+# code in this project calls asyncio.run / asyncio.new_event_loop.
+if sys.platform == "win32":
+    with contextlib.suppress(Exception):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -31,12 +41,122 @@ logger = get_logger(__name__)
 _checkpointer: MemorySaver | None = None
 
 
+def _running_inside_event_loop() -> bool:
+    """Return True if we are already inside an active asyncio loop.
+
+    Async checkpointers (aiosqlite, psycopg async) bind their connection to
+    the loop that opened it. Constructing one with ``asyncio.run`` while
+    another loop is already running raises RuntimeError. We detect that
+    condition and fall back to MemorySaver so tests / nest_asyncio harnesses
+    don't fail; production startup paths create the graph from a fresh
+    synchronous context and get the real persistent saver.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _try_async_postgres_saver():
+    """Build an ``AsyncPostgresSaver`` bound to the current connection.
+
+    Returns the saver on success, or ``None`` if the extras are not
+    installed, we're inside a running loop, or the connection fails.
+    """
+    if _running_inside_event_loop():
+        logger.info("postgres_checkpointer_skipped", reason="inside_running_loop")
+        return None
+    try:
+        from langgraph.checkpoint.postgres.aio import (  # type: ignore[import-not-found]
+            AsyncPostgresSaver,
+        )
+        from psycopg_pool import AsyncConnectionPool  # type: ignore[import-not-found]
+    except ImportError:
+        logger.warning(
+            "postgres_checkpointer_not_available",
+            hint="pip install langgraph-checkpoint-postgres 'psycopg[binary,pool]'",
+        )
+        return None
+
+    async def _open() -> Any:
+        pool = AsyncConnectionPool(
+            settings.postgres_url,
+            min_size=1,
+            max_size=5,
+            kwargs={"autocommit": True, "prepare_threshold": 0},
+        )
+        await pool.open()
+        saver = AsyncPostgresSaver(pool)
+        await saver.setup()
+        return saver
+
+    # Windows event-loop policy is already pinned at module import time
+    # so a fresh `asyncio.run(_open())` here gets the selector loop.
+
+    try:
+        saver = asyncio.run(_open())
+        logger.info(
+            "postgres_checkpointer_initialized",
+            db=settings.postgres_url.rsplit("/", 1)[-1],
+        )
+        return saver
+    except Exception as exc:
+        logger.error("postgres_checkpointer_failed", error=str(exc))
+        return None
+
+
+def _try_async_sqlite_saver():
+    """Build an ``AsyncSqliteSaver`` for local persistent checkpointing.
+
+    Returns the saver on success or ``None`` on any failure (missing deps,
+    inside a running loop, I/O error, etc.).
+    """
+    if _running_inside_event_loop():
+        logger.info("sqlite_checkpointer_skipped", reason="inside_running_loop")
+        return None
+    try:
+        import pathlib
+
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    except ImportError:
+        logger.warning(
+            "sqlite_checkpointer_not_available",
+            hint="pip install langgraph-checkpoint-sqlite aiosqlite",
+        )
+        return None
+
+    db_path = pathlib.Path(settings.checkpoint_db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    async def _open() -> Any:
+        conn = await aiosqlite.connect(str(db_path), check_same_thread=False)
+        saver = AsyncSqliteSaver(conn)
+        await saver.setup()
+        return saver
+
+    try:
+        saver = asyncio.run(_open())
+        logger.info("sqlite_checkpointer_initialized", path=str(db_path))
+        return saver
+    except Exception as exc:
+        logger.error("sqlite_checkpointer_failed", error=str(exc))
+        return None
+
+
 def _get_checkpointer():
     """Get or create the LangGraph checkpointer.
 
-    Uses PostgresSaver if ``settings.postgres_url`` is configured and
-    ``langgraph-checkpoint-postgres`` is installed. Falls back to
-    in-memory MemorySaver otherwise.
+    Priority (when ``use_persistent_checkpointer`` is True):
+      1. ``AsyncPostgresSaver`` if ``postgres_url`` is set AND the
+         ``[persistence]`` extras are installed.
+      2. ``AsyncSqliteSaver`` against ``settings.checkpoint_db_path``.
+      3. ``MemorySaver`` (conversations lost on restart).
+
+    Both async savers refuse to construct from within a running event loop
+    to avoid cross-loop binding bugs in pytest-asyncio / nest_asyncio
+    contexts; in those cases we fall back to ``MemorySaver``.
 
     Returns:
         Configured checkpointer instance.
@@ -47,101 +167,122 @@ def _get_checkpointer():
 
     # Persistent checkpointing is opt-in. Default to MemorySaver so the
     # graph compiles without external deps and pytest-asyncio's per-test
-    # event loops don't collide with aiosqlite's loop-bound connection.
+    # event loops don't collide with the async saver's loop-bound state.
     if not settings.use_persistent_checkpointer:
         _checkpointer = MemorySaver()
         logger.info("memory_checkpointer_initialized", reason="persistence_opt_in_disabled")
         return _checkpointer
 
-    # Try Postgres first
+    if settings.postgres_url:
+        saver = _try_async_postgres_saver()
+        if saver is not None:
+            _checkpointer = saver
+            return _checkpointer
+
+    saver = _try_async_sqlite_saver()
+    if saver is not None:
+        _checkpointer = saver
+        return _checkpointer
+
+    # Final fallback: in-memory (conversations lost on restart)
+    _checkpointer = MemorySaver()
+    logger.info("memory_checkpointer_initialized", reason="all_persistent_paths_failed")
+    return _checkpointer
+
+
+async def _get_async_checkpointer():
+    """Async variant of ``_get_checkpointer`` — safe to call from inside a
+    running event loop.
+
+    The async ``AsyncPostgresSaver`` / ``AsyncSqliteSaver`` cannot be opened
+    via ``asyncio.run()`` from within another loop. When the pipeline is
+    invoked from within an already-running loop (Streamlit, FastAPI,
+    user-supplied ``asyncio.run`` wrappers) we open the saver natively
+    here and cache it.
+    """
+    global _checkpointer
+    if _checkpointer is not None and not isinstance(_checkpointer, MemorySaver):
+        return _checkpointer
+
+    if not settings.use_persistent_checkpointer:
+        _checkpointer = MemorySaver()
+        return _checkpointer
+
     if settings.postgres_url:
         try:
-            from langgraph.checkpoint.postgres import PostgresSaver
-            from psycopg import Connection
+            from langgraph.checkpoint.postgres.aio import (  # type: ignore[import-not-found]
+                AsyncPostgresSaver,
+            )
+            from psycopg_pool import AsyncConnectionPool  # type: ignore[import-not-found]
 
-            conn = Connection.connect(settings.postgres_url)
-            _checkpointer = PostgresSaver(conn)
-            _checkpointer.setup()
+            pool = AsyncConnectionPool(
+                settings.postgres_url,
+                min_size=1,
+                max_size=5,
+                kwargs={"autocommit": True, "prepare_threshold": 0},
+                open=False,
+            )
+            await pool.open()
+            saver = AsyncPostgresSaver(pool)
+            await saver.setup()
+            _checkpointer = saver
             logger.info(
-                "postgres_checkpointer_initialized",
+                "postgres_checkpointer_initialized_async",
                 db=settings.postgres_url.rsplit("/", 1)[-1],
             )
             return _checkpointer
         except ImportError:
             logger.warning(
                 "postgres_checkpointer_not_available",
-                hint="pip install langgraph-checkpoint-postgres psycopg",
+                hint="pip install langgraph-checkpoint-postgres 'psycopg[binary,pool]'",
             )
         except Exception as exc:
-            logger.error("postgres_checkpointer_failed", error=str(exc))
+            logger.error("postgres_checkpointer_failed_async", error=str(exc))
 
-    # Try SQLite for persistent local checkpointing (no external DB needed).
-    # AsyncSqliteSaver wraps an aiosqlite.Connection bound to the event loop
-    # that opens it — so we only construct it from a fresh sync context
-    # (application startup). If we are already inside a running loop (tests,
-    # nest_asyncio contexts), we fall back to MemorySaver to avoid cross-loop
-    # binding bugs; production code paths build the graph at startup before
-    # any event loop is created.
     try:
         import pathlib
 
         import aiosqlite
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-        try:
-            asyncio.get_running_loop()
-            inside_loop = True
-        except RuntimeError:
-            inside_loop = False
-
-        if inside_loop:
-            raise RuntimeError(
-                "graph compiled inside a running event loop — using in-memory "
-                "checkpointer to avoid cross-loop SQLite binding"
-            )
-
         db_path = pathlib.Path(settings.checkpoint_db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        async def _open_async_saver() -> AsyncSqliteSaver:
-            conn = await aiosqlite.connect(str(db_path), check_same_thread=False)
-            saver = AsyncSqliteSaver(conn)
-            await saver.setup()
-            return saver
-
-        _checkpointer = asyncio.run(_open_async_saver())
-        logger.info("sqlite_checkpointer_initialized", path=str(db_path))
+        conn = await aiosqlite.connect(str(db_path), check_same_thread=False)
+        saver = AsyncSqliteSaver(conn)
+        await saver.setup()
+        _checkpointer = saver
+        logger.info("sqlite_checkpointer_initialized_async", path=str(db_path))
         return _checkpointer
     except ImportError:
         logger.warning(
             "sqlite_checkpointer_not_available",
             hint="pip install langgraph-checkpoint-sqlite aiosqlite",
         )
-    except RuntimeError as exc:
-        logger.info("sqlite_checkpointer_skipped", reason=str(exc))
     except Exception as exc:
-        logger.error("sqlite_checkpointer_failed", error=str(exc))
+        logger.error("sqlite_checkpointer_failed_async", error=str(exc))
 
-    # Final fallback: in-memory (conversations lost on restart)
     _checkpointer = MemorySaver()
-    logger.info("memory_checkpointer_initialized")
     return _checkpointer
 
 
-def build_rag_graph() -> StateGraph:
-    """Build and compile the multi-agent RAG workflow graph.
+async def build_rag_graph_async() -> StateGraph:
+    """Build the LangGraph workflow with an async-resolved checkpointer.
 
-    Creates a StateGraph with the following flow:
-        START -> router -> security -> [proceed: retriever | blocked: END]
-        retriever -> grader -> [rewrite: rewriter -> retriever | generate: synthesizer]
-        synthesizer -> evaluator -> END
-
-    Returns:
-        Compiled LangGraph StateGraph ready for invocation.
+    Equivalent to :func:`build_rag_graph` but suitable for callers that are
+    already inside an event loop and want a persistent (Postgres / aiosqlite)
+    saver instead of the MemorySaver fallback ``build_rag_graph`` returns
+    in that situation.
     """
-    workflow = StateGraph(GraphState)
+    workflow = _compose_workflow()
+    checkpointer = await _get_async_checkpointer()
+    compiled = workflow.compile(checkpointer=checkpointer)
+    logger.info("rag_graph_compiled_async", nodes=list(workflow.nodes.keys()))
+    return compiled
 
-    # Add nodes
+
+def _compose_workflow() -> StateGraph:
+    """Build the agent graph structure (no checkpointer attached)."""
+    workflow = StateGraph(GraphState)
     workflow.add_node("router", route_query)
     workflow.add_node("guardrails", guardrails_check)
     workflow.add_node("security", check_security)
@@ -150,59 +291,50 @@ def build_rag_graph() -> StateGraph:
     workflow.add_node("rewriter", rewrite_query)
     workflow.add_node("synthesizer", synthesize_answer)
     workflow.add_node("evaluator", evaluate_response)
-
-    # Note: All graph nodes are async functions. LangGraph natively supports
-    # async node functions — when graph.ainvoke() is called, all nodes execute
-    # within the same async event loop without nested loop hacks.
-
-    # Add edges
     workflow.add_edge(START, "router")
     workflow.add_edge("router", "guardrails")
-
-    # Guardrails conditional edge — block prompt-injection before any work
     workflow.add_conditional_edges(
         "guardrails",
         guardrails_gate,
-        {
-            "proceed": "security",
-            "blocked": END,
-        },
+        {"proceed": "security", "blocked": END},
     )
-
-    # Security conditional edge
     workflow.add_conditional_edges(
         "security",
         security_gate,
-        {
-            "proceed": "retriever",
-            "blocked": END,
-        },
+        {"proceed": "retriever", "blocked": END},
     )
-
     workflow.add_edge("retriever", "grader")
-
-    # Corrective RAG conditional edge
     workflow.add_conditional_edges(
         "grader",
         should_retry,
-        {
-            "rewrite": "rewriter",
-            "generate": "synthesizer",
-        },
+        {"rewrite": "rewriter", "generate": "synthesizer"},
     )
-
-    # Rewriter loops back to retriever
     workflow.add_edge("rewriter", "retriever")
-
     workflow.add_edge("synthesizer", "evaluator")
     workflow.add_edge("evaluator", END)
+    return workflow
 
-    # Compile with persistent checkpointer (Postgres or Memory)
+
+def build_rag_graph() -> StateGraph:
+    """Build and compile the multi-agent RAG workflow graph.
+
+    Creates a StateGraph with the following flow:
+        START -> router -> guardrails -> security -> [proceed: retriever | blocked: END]
+        retriever -> grader -> [rewrite: rewriter -> retriever | generate: synthesizer]
+        synthesizer -> evaluator -> END
+
+    Uses the sync checkpointer resolver, which falls back to MemorySaver
+    when called from inside a running event loop. Production async paths
+    should use :func:`build_rag_graph_async` instead so the persistent
+    Postgres / aiosqlite saver can be opened natively in the running loop.
+
+    Returns:
+        Compiled LangGraph StateGraph ready for invocation.
+    """
+    workflow = _compose_workflow()
     checkpointer = _get_checkpointer()
     compiled = workflow.compile(checkpointer=checkpointer)
-
     logger.info("rag_graph_compiled", nodes=list(workflow.nodes.keys()))
-
     return compiled
 
 
@@ -285,7 +417,7 @@ async def run_rag_pipeline(
     )
 
     start_time = time.perf_counter()
-    graph = build_rag_graph()
+    graph = await build_rag_graph_async()
     initial_state = create_initial_state(
         query, user_context, prefer_cloud=prefer_cloud, override_provider=override_provider
     )

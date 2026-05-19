@@ -24,7 +24,10 @@ uv sync
 
 # Bring up Qdrant + (optionally) Postgres + Redis
 docker compose up -d qdrant
-# Add `redis postgres` to the list if you want full persistence stack
+# Add `redis postgres` to the list if you want full persistence stack.
+# Note: docker-compose maps Postgres to host port 5433 (not 5432) to avoid
+# conflicts with system-installed Postgres. Update SAR_POSTGRES_URL if you
+# expose it differently.
 
 # Make sure Ollama is running and pull the models
 ollama pull qwen3:8b           # ~5.5 GB, generation model
@@ -144,6 +147,10 @@ Run it after each meaningful change to the inference path (router, synthesizer, 
 If you ever push this to a real server:
 
 - [ ] Set `SAR_USE_PERSISTENT_CHECKPOINTER=true` so thread state survives restarts.
+  - Install the persistence extras: `uv sync --extra persistence` (pulls `psycopg[binary,pool]` + `langgraph-checkpoint-postgres`).
+  - Point `SAR_POSTGRES_URL` at the real DB (default is `postgresql://sar_user:sar_password@localhost:5433/secureagentrag` — the docker-compose Postgres on host port 5433).
+  - On startup the graph chooses `AsyncPostgresSaver` first, falls back to `AsyncSqliteSaver` (`SAR_CHECKPOINT_DB_PATH`), then in-memory if both fail.
+  - Verify with `docker exec secureagentrag-postgres psql -U sar_user -d secureagentrag -c "SELECT thread_id, COUNT(*) FROM checkpoints GROUP BY thread_id;"` after running a query.
 - [ ] Pin absolute paths via `SAR_AUDIT_LOG_DIR`, `SAR_CONVERSATION_DIR`, `SAR_CHECKPOINT_DB_PATH`, `SAR_BM25_INDEX_PATH` to a persistent volume.
 - [ ] Set `SAR_PHOENIX_ENDPOINT` and run Phoenix as a sidecar.
 - [ ] Run Qdrant with replication; back up the `qdrant_storage/` volume regularly.

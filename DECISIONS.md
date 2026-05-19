@@ -442,3 +442,43 @@ Per-1M-token prices for Groq / OpenAI / Anthropic live in
 - (+) Prices are config — easy to adjust as provider prices change
 - (-) Local cost is an estimate; real measurement would need power
   metering integration
+
+
+---
+
+## ADR-018: AsyncPostgresSaver for LangGraph Checkpointing
+
+**Date:** 2026-05-19
+**Status:** Accepted (opt-in via `SAR_USE_PERSISTENT_CHECKPOINTER`)
+
+**Context:**
+The pipeline previously cached a sync `PostgresSaver` opened via
+`psycopg.Connection.connect`. Inside the async pipeline (`graph.ainvoke`)
+this blocks the event loop on every write. The SQLite path already used
+`AsyncSqliteSaver`, so the Postgres path was asymmetric. Worse: building
+the sync saver inside `asyncio.run` clobbered langgraph internals on
+Windows because psycopg async required the Selector loop, not the
+default Proactor.
+
+**Decision:**
+1. Switch to `AsyncPostgresSaver` backed by an `AsyncConnectionPool`.
+2. Pin `asyncio.WindowsSelectorEventLoopPolicy` at `core/graph.py` import
+   time so subsequent `asyncio.run` invocations pick it up.
+3. Add `build_rag_graph_async()` that awaits a fresh saver from inside
+   the running loop; `run_rag_pipeline` calls it. Tests + sync callers
+   keep using `build_rag_graph()` which still falls back to MemorySaver
+   when nested inside a loop.
+4. Map docker-compose Postgres to host port 5433 to avoid colliding with
+   system-installed Postgres on the default 5432.
+
+**Consequences:**
+- (+) Postgres checkpoint reads/writes happen inside the same async loop
+  the pipeline already uses — no thread bouncing.
+- (+) Verified end-to-end: a single 113s pipeline run lands 9 checkpoint
+  rows (one per node) in the `checkpoints` table.
+- (+) Connection pool (1-5) handles concurrent FastAPI / Streamlit
+  requests without saturating Postgres.
+- (-) Persistence extras add `psycopg[binary,pool]` (~5 MB) on top of
+  base install.
+- (-) Windows users still need the selector loop policy — pinned at
+  import time but documented in the RUNBOOK.
