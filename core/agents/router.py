@@ -83,6 +83,7 @@ async def call_llm_async(
     system_prompt: str = "",
     sensitivity_level: str = "low",
     prefer_cloud: bool = False,
+    json_mode: bool = False,
 ) -> str:
     """Call LLM asynchronously with inference routing.
 
@@ -96,6 +97,7 @@ async def call_llm_async(
         system_prompt: Optional system prompt for context.
         sensitivity_level: Data sensitivity for routing (high/medium/low).
         prefer_cloud: Whether to prefer cloud providers for low-sensitivity.
+        json_mode: Whether to request JSON-formatted output.
 
     Returns:
         The generated text response, or empty string on failure.
@@ -105,6 +107,7 @@ async def call_llm_async(
         system_prompt=system_prompt,
         sensitivity_level=sensitivity_level,
         prefer_cloud=prefer_cloud,
+        json_mode=json_mode,
     )
     return text
 
@@ -114,6 +117,7 @@ async def call_llm_with_decision(
     system_prompt: str = "",
     sensitivity_level: str = "low",
     prefer_cloud: bool = False,
+    json_mode: bool = False,
 ):
     """Like ``call_llm_async`` but returns (text, RoutingDecision, LLMResponse).
 
@@ -129,6 +133,7 @@ async def call_llm_with_decision(
             system_prompt=system_prompt,
             sensitivity_level=sensitivity_level,
             prefer_cloud=prefer_cloud,
+            json_mode=json_mode,
         )
         logger.info(
             "call_llm_async_routed",

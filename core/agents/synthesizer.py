@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from config.settings import settings
 from core.agents.router import call_llm_stream, call_llm_with_decision
 from core.state import Citation, GraphState  # noqa: TC001
 from utils.logging import get_logger
@@ -94,6 +96,63 @@ def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitiv
     )
 
 
+def _build_json_synthesis_prompt(
+    query: str, documents: list[DocumentGrade], sensitivity: str
+) -> str:
+    """Build a JSON-mode synthesis prompt requesting structured output.
+
+    Args:
+        query: The user's query.
+        documents: List of relevant documents to use as context.
+        sensitivity: Sensitivity level string for disclaimer handling.
+
+    Returns:
+        Formatted prompt string for the LLM.
+    """
+    context_parts: list[str] = []
+    for i, doc in enumerate(documents, start=1):
+        source = doc.get("metadata", {}).get("source_file", "unknown")
+        page = doc.get("metadata", {}).get("page_number", 0)
+        context_parts.append(f"[{i}] (Source: {source}, Page: {page})\n{doc['text'][:600]}")
+
+    context_str = "\n\n".join(context_parts)
+
+    sensitivity_instruction = ""
+    if sensitivity in ("high", "medium"):
+        sensitivity_instruction = (
+            "\n\nIMPORTANT: This involves sensitive information. "
+            "Include appropriate disclaimers about data sensitivity and "
+            "note that verification may be required."
+        )
+
+    return (
+        "You are an expert research assistant. Answer the user's question using "
+        "ONLY the provided context. You MUST respond with a single valid JSON object "
+        "and nothing else. Do not wrap the JSON in markdown code blocks.\n\n"
+        "The JSON object must have exactly these two fields:\n"
+        '- "answer": a string with the full answer text. Every factual statement '
+        "must end with an inline citation marker `[N]` where N is the source number.\n"
+        '- "citations": a list of integers (source numbers) that were cited, '
+        "in the order they first appear in the answer. Each integer must be >= 1.\n\n"
+        "CITATION RULES:\n"
+        "1. Every factual statement MUST end with a citation marker `[N]`.\n"
+        "2. If two sources support a claim, cite both: `... [1][3]`.\n"
+        "3. Do NOT use double brackets, footnotes, or any other format.\n"
+        "4. Do NOT write a 'Sources:' or 'References:' section.\n"
+        "5. If the context lacks information to answer fully, say so explicitly.\n\n"
+        "STYLE:\n"
+        "- Be concise but complete.\n"
+        "- Use short paragraphs or bullet points.\n"
+        "- Do not preface the answer with phrases like 'Based on the context'.\n"
+        "- Do not include `<think>` or reasoning trace blocks.\n\n"
+        f"Context:\n{context_str}\n\n"
+        f"Question: {query}\n"
+        f"{sensitivity_instruction}\n\n"
+        "Respond with ONLY valid JSON in this exact format: "
+        '{"answer": "...", "citations": [1, 3]}'
+    )
+
+
 def _extract_citations(response: str, documents: list[DocumentGrade]) -> list[Citation]:
     """Extract citation references from the LLM response.
 
@@ -139,6 +198,80 @@ def _extract_citations(response: str, documents: list[DocumentGrade]) -> list[Ci
         citations.append(citation)
 
     return citations
+
+
+def _extract_json_citations(
+    response: str, documents: list[DocumentGrade]
+) -> tuple[str, list[Citation]]:
+    """Parse JSON-mode response and extract answer text plus citations.
+
+    Falls back to regex extraction if the response is not valid JSON or
+    lacks the expected fields.
+
+    Args:
+        response: The generated response text (expected to be JSON).
+        documents: The list of documents used as context.
+
+    Returns:
+        Tuple of (answer_text, citations). If JSON parsing fails, answer_text
+        is empty and citations come from regex fallback.
+    """
+    cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = cleaned.strip()
+
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else ""
+        if cleaned.endswith("```"):
+            cleaned = cleaned.rsplit("\n", 1)[0]
+
+    cleaned = cleaned.strip()
+    if not cleaned:
+        return "", _extract_citations(response, documents)
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return "", _extract_citations(response, documents)
+
+    if not isinstance(data, dict):
+        return "", _extract_citations(response, documents)
+
+    answer = data.get("answer", "")
+    if not isinstance(answer, str):
+        answer = str(answer)
+
+    citations: list[Citation] = []
+    seen_indices: set[int] = set()
+    raw_citations = data.get("citations", [])
+    if not isinstance(raw_citations, list):
+        raw_citations = []
+
+    for ref in raw_citations:
+        if not isinstance(ref, int):
+            try:
+                ref = int(ref)
+            except (ValueError, TypeError):
+                continue
+        idx = ref - 1
+        if idx < 0 or idx >= len(documents) or idx in seen_indices:
+            continue
+        seen_indices.add(idx)
+        doc = documents[idx]
+        metadata = doc.get("metadata", {})
+        citation: Citation = {
+            "source_file": metadata.get("source_file", "unknown"),
+            "page_number": metadata.get("page_number", 0),
+            "chunk_text": doc["text"][:200],
+            "relevance_score": doc.get("score", 0.0),
+        }
+        citations.append(citation)
+
+    if not citations:
+        fallback_citations = _extract_citations(answer, documents)
+        if fallback_citations:
+            citations = fallback_citations
+
+    return answer, citations
 
 
 def _compute_synthesis_confidence(
@@ -263,12 +396,17 @@ async def synthesize_answer(state: GraphState) -> dict:
     # takes effect for LOW/MEDIUM sensitivity — HIGH always routes local.
     # max_sensitivity is the higher of (doc sensitivity, query sensitivity)
     # so a sensitive QUERY against low-tagged docs still routes local.
-    prompt = _build_synthesis_prompt(query, docs_to_use, max_sensitivity)
+    json_mode = settings.json_citations_enabled
+    if json_mode:
+        prompt = _build_json_synthesis_prompt(query, docs_to_use, max_sensitivity)
+    else:
+        prompt = _build_synthesis_prompt(query, docs_to_use, max_sensitivity)
     response_text, decision, llm_response = await call_llm_with_decision(
         prompt,
         system_prompt="You are an expert research assistant that always cites sources.",
         sensitivity_level=max_sensitivity,
         prefer_cloud=prefer_cloud,
+        json_mode=json_mode,
     )
     response = response_text
 
@@ -276,10 +414,14 @@ async def synthesize_answer(state: GraphState) -> dict:
         response = "Unable to generate a response. Please try again."
 
     # Extract citations
-    citations = _extract_citations(response, docs_to_use)
-
-    # Add disclaimers based on sensitivity
-    generation = _add_disclaimers(response, max_sensitivity)
+    if json_mode:
+        answer_text, citations = _extract_json_citations(response, docs_to_use)
+        if not answer_text.strip():
+            answer_text = response
+        generation = _add_disclaimers(answer_text, max_sensitivity)
+    else:
+        citations = _extract_citations(response, docs_to_use)
+        generation = _add_disclaimers(response, max_sensitivity)
 
     # Compute preliminary confidence score for the evaluator to refine
     confidence_score = _compute_synthesis_confidence(docs_to_use, citations, generation)
@@ -372,7 +514,11 @@ async def synthesize_answer_stream(state: GraphState) -> AsyncGenerator[dict, No
     query_sensitivity = state.get("query_sensitivity", "low")
     max_sensitivity = _max_label(doc_sensitivity, query_sensitivity)
     prefer_cloud = state.get("prefer_cloud", False)
-    prompt = _build_synthesis_prompt(query, docs_to_use, max_sensitivity)
+    json_mode = settings.json_citations_enabled
+    if json_mode:
+        prompt = _build_json_synthesis_prompt(query, docs_to_use, max_sensitivity)
+    else:
+        prompt = _build_synthesis_prompt(query, docs_to_use, max_sensitivity)
 
     # Resolve the routing decision up-front so the audit trail can record
     # provider/model even on the streaming path. The router is cheap to
@@ -401,8 +547,14 @@ async def synthesize_answer_stream(state: GraphState) -> AsyncGenerator[dict, No
         raw_response = "Unable to generate a response. Please try again."
         yield {"type": "token", "text": raw_response}
 
-    citations = _extract_citations(raw_response, docs_to_use)
-    generation = _add_disclaimers(raw_response, max_sensitivity)
+    if json_mode:
+        answer_text, citations = _extract_json_citations(raw_response, docs_to_use)
+        if not answer_text.strip():
+            answer_text = raw_response
+        generation = _add_disclaimers(answer_text, max_sensitivity)
+    else:
+        citations = _extract_citations(raw_response, docs_to_use)
+        generation = _add_disclaimers(raw_response, max_sensitivity)
 
     # Emit disclaimer suffix as a final token so UI sees full text
     disclaimer_suffix = generation[len(raw_response) :]

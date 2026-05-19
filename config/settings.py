@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.6
     max_retries: int = 2
 
+    # ── JSON Citations ────────────────────────────────────────────────────────────
+    # When enabled, the synthesizer requests structured JSON output from the LLM
+    # with `answer` and `citations` fields instead of relying on regex extraction.
+    json_citations_enabled: bool = False
+
     # ── Embedding Batch Size ──────────────────────────────────────────────────────
     embedding_batch_size: int = 32  # Max texts per embedding API call
     embedding_max_concurrent_batches: int = 4  # Max concurrent batch requests

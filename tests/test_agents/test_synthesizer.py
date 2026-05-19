@@ -10,6 +10,7 @@ import pytest
 from core.agents.synthesizer import (
     _add_disclaimers,
     _extract_citations,
+    _extract_json_citations,
     synthesize_answer,
 )
 from utils.async_helpers import run_async
@@ -294,3 +295,123 @@ class TestAddDisclaimers:
         result = _add_disclaimers(response, "high")
 
         assert result.startswith("Original answer content.")
+
+
+class TestExtractJsonCitations:
+    """Tests for the _extract_json_citations helper."""
+
+    def test_extract_valid_json_citations(self):
+        """Test extracting citations from a valid JSON response."""
+        docs = [
+            {
+                "doc_id": "d1",
+                "text": "Source text",
+                "score": 0.9,
+                "relevant": True,
+                "metadata": {"source_file": "test.pdf", "page_number": 3},
+            }
+        ]
+        response = '{"answer": "The answer is based on [1] research.", "citations": [1]}'
+
+        answer, citations = _extract_json_citations(response, docs)
+
+        assert answer == "The answer is based on [1] research."
+        assert len(citations) == 1
+        assert citations[0]["source_file"] == "test.pdf"
+
+    def test_extract_json_citations_with_markdown_fence(self):
+        """Test stripping markdown code fences before JSON parsing."""
+        docs = [
+            {
+                "doc_id": "d1",
+                "text": "Text 1",
+                "score": 0.9,
+                "relevant": True,
+                "metadata": {"source_file": "a.pdf", "page_number": 1},
+            },
+            {
+                "doc_id": "d2",
+                "text": "Text 2",
+                "score": 0.8,
+                "relevant": True,
+                "metadata": {"source_file": "b.pdf", "page_number": 2},
+            },
+        ]
+        response = '```json\n{"answer": "Point A [1] and point B [2].", "citations": [1, 2]}\n```'
+
+        answer, citations = _extract_json_citations(response, docs)
+
+        assert "Point A" in answer
+        assert len(citations) == 2
+
+    def test_extract_json_fallback_on_invalid_json(self):
+        """Test regex fallback when JSON is malformed."""
+        docs = [
+            {
+                "doc_id": "d1",
+                "text": "Source text",
+                "score": 0.9,
+                "relevant": True,
+                "metadata": {"source_file": "test.pdf", "page_number": 3},
+            }
+        ]
+        response = "The answer is based on [1] research."
+
+        answer, citations = _extract_json_citations(response, docs)
+
+        assert answer == ""  # Fallback signals empty answer
+        assert len(citations) == 1
+
+    def test_extract_json_ignores_out_of_range(self):
+        """Test that out-of-range citation indices are ignored in JSON mode."""
+        docs = [
+            {
+                "doc_id": "d1",
+                "text": "Source text",
+                "score": 0.9,
+                "relevant": True,
+                "metadata": {"source_file": "test.pdf", "page_number": 3},
+            }
+        ]
+        response = '{"answer": "See [1] and [5] for details.", "citations": [1, 5]}'
+
+        _answer, citations = _extract_json_citations(response, docs)
+
+        assert len(citations) == 1
+        assert citations[0]["source_file"] == "test.pdf"
+
+
+class TestSynthesizeAnswerJsonMode:
+    """Tests for synthesize_answer when JSON citations are enabled."""
+
+    @patch("core.agents.synthesizer.settings")
+    @patch("core.agents.synthesizer.call_llm_with_decision")
+    def test_synthesize_answer_json_mode(self, mock_llm, mock_settings, synth_state):
+        """Test answer synthesis with JSON-mode citation extraction."""
+        mock_settings.json_citations_enabled = True
+        mock_llm.return_value = _mocked_call_return(
+            '{"answer": "RAG improves answers [1] and reduces hallucinations [2].", '
+            '"citations": [1, 2]}'
+        )
+
+        result = run_async(synthesize_answer(synth_state))
+
+        assert "RAG improves answers" in result["generation"]
+        assert len(result["citations"]) == 2
+        assert result["citations"][0]["source_file"] == "rag_intro.pdf"
+        mock_llm.assert_called_once()
+        assert mock_llm.call_args.kwargs.get("json_mode") is True
+
+    @patch("core.agents.synthesizer.settings")
+    @patch("core.agents.synthesizer.call_llm_with_decision")
+    def test_synthesize_answer_json_mode_fallback(self, mock_llm, mock_settings, synth_state):
+        """Test JSON-mode fallback to regex when response is not valid JSON."""
+        mock_settings.json_citations_enabled = True
+        mock_llm.return_value = _mocked_call_return(
+            "RAG improves answers [1] and reduces hallucinations [2]."
+        )
+
+        result = run_async(synthesize_answer(synth_state))
+
+        assert "[1]" in result["generation"]
+        assert len(result["citations"]) == 2

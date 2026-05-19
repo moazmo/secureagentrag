@@ -64,6 +64,7 @@ class OllamaClient:
         system_prompt: str = "",
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        json_mode: bool = False,
     ) -> LLMResponse:
         """Generate a completion from the Ollama API.
 
@@ -72,6 +73,7 @@ class OllamaClient:
             system_prompt: Optional system context.
             temperature: Sampling temperature (0.0-1.0).
             max_tokens: Maximum tokens to generate.
+            json_mode: When True, request JSON-formatted output.
 
         Returns:
             LLMResponse with generated text and metadata.
@@ -88,6 +90,8 @@ class OllamaClient:
         }
         if system_prompt:
             payload["system"] = system_prompt
+        if json_mode:
+            payload["format"] = "json"
 
         start = time.perf_counter()
         response = await self._client.post("/api/generate", json=payload)

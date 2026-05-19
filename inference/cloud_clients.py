@@ -65,6 +65,7 @@ class BaseCloudClient(ABC):
         system_prompt: str = "",
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        json_mode: bool = False,
     ) -> LLMResponse:
         """Generate a completion from the provider.
 
@@ -73,6 +74,7 @@ class BaseCloudClient(ABC):
             system_prompt: Optional system context.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            json_mode: When True, request JSON-formatted output.
 
         Returns:
             LLMResponse with generated text and metadata.
@@ -169,6 +171,7 @@ class GroqClient(BaseCloudClient):
         system_prompt: str = "",
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        json_mode: bool = False,
     ) -> LLMResponse:
         """Generate a completion via Groq's OpenAI-compatible API.
 
@@ -177,6 +180,7 @@ class GroqClient(BaseCloudClient):
             system_prompt: Optional system context.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            json_mode: When True, request JSON-formatted output.
 
         Returns:
             LLMResponse with generated text and metadata.
@@ -186,7 +190,9 @@ class GroqClient(BaseCloudClient):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        return await self.chat(messages=messages, temperature=temperature, max_tokens=max_tokens)
+        return await self.chat(
+            messages=messages, temperature=temperature, max_tokens=max_tokens, json_mode=json_mode
+        )
 
     @_retry_on_connection
     async def chat(
@@ -194,6 +200,7 @@ class GroqClient(BaseCloudClient):
         messages: list[dict],
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        json_mode: bool = False,
     ) -> LLMResponse:
         """Send a chat request to Groq's API.
 
@@ -201,6 +208,7 @@ class GroqClient(BaseCloudClient):
             messages: List of message dicts with 'role' and 'content' keys.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            json_mode: When True, request JSON-formatted output.
 
         Returns:
             LLMResponse with generated text and metadata.
@@ -211,6 +219,8 @@ class GroqClient(BaseCloudClient):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
 
         start = time.perf_counter()
         response = await self._client.post(
@@ -344,6 +354,7 @@ class OpenAIClient(BaseCloudClient):
         system_prompt: str = "",
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        json_mode: bool = False,
     ) -> LLMResponse:
         """Generate a completion via OpenAI's Chat Completions API.
 
@@ -352,6 +363,7 @@ class OpenAIClient(BaseCloudClient):
             system_prompt: Optional system context.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            json_mode: When True, request JSON-formatted output.
 
         Returns:
             LLMResponse with generated text and metadata.
@@ -361,7 +373,9 @@ class OpenAIClient(BaseCloudClient):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        return await self.chat(messages=messages, temperature=temperature, max_tokens=max_tokens)
+        return await self.chat(
+            messages=messages, temperature=temperature, max_tokens=max_tokens, json_mode=json_mode
+        )
 
     @_retry_on_connection
     async def chat(
@@ -369,6 +383,7 @@ class OpenAIClient(BaseCloudClient):
         messages: list[dict],
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        json_mode: bool = False,
     ) -> LLMResponse:
         """Send a chat request to OpenAI's API.
 
@@ -376,6 +391,7 @@ class OpenAIClient(BaseCloudClient):
             messages: List of message dicts with 'role' and 'content' keys.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            json_mode: When True, request JSON-formatted output.
 
         Returns:
             LLMResponse with generated text and metadata.
@@ -386,6 +402,8 @@ class OpenAIClient(BaseCloudClient):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
 
         start = time.perf_counter()
         response = await self._client.post(
@@ -520,6 +538,7 @@ class AnthropicClient(BaseCloudClient):
         system_prompt: str = "",
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        json_mode: bool = False,
     ) -> LLMResponse:
         """Generate a completion via Anthropic's Messages API.
 
@@ -528,6 +547,7 @@ class AnthropicClient(BaseCloudClient):
             system_prompt: Optional system context.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            json_mode: Anthropic does not support native JSON mode; ignored.
 
         Returns:
             LLMResponse with generated text and metadata.
