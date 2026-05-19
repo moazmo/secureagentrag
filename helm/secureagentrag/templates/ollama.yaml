@@ -1,0 +1,68 @@
+{{- if .Values.dependencies.ollama.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "secureagentrag.fullname" . }}-ollama
+  labels:
+    {{- include "secureagentrag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  serviceName: {{ include "secureagentrag.fullname" . }}-ollama
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "secureagentrag.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ollama
+  template:
+    metadata:
+      labels:
+        {{- include "secureagentrag.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ollama
+    spec:
+      {{- if .Values.dependencies.ollama.gpu.enabled }}
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      {{- end }}
+      containers:
+        - name: ollama
+          image: {{ .Values.dependencies.ollama.image | quote }}
+          ports:
+            - containerPort: 11434
+              name: http
+          {{- if .Values.dependencies.ollama.gpu.enabled }}
+          resources:
+            limits:
+              nvidia.com/gpu: {{ .Values.dependencies.ollama.gpu.count }}
+          {{- end }}
+          {{- if .Values.dependencies.ollama.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: /root/.ollama
+          {{- end }}
+  {{- if .Values.dependencies.ollama.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.dependencies.ollama.persistence.size | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "secureagentrag.fullname" . }}-ollama
+  labels:
+    {{- include "secureagentrag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  selector:
+    {{- include "secureagentrag.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+  ports:
+    - port: 11434
+      targetPort: 11434
+      name: http
+{{- end }}

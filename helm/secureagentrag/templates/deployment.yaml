@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "secureagentrag.fullname" . }}
+  labels:
+    {{- include "secureagentrag.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "secureagentrag.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "secureagentrag.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "secureagentrag.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: SAR_APP_NAME
+              value: {{ .Values.config.app_name | quote }}
+            - name: SAR_LOG_LEVEL
+              value: {{ .Values.config.log_level | quote }}
+            - name: SAR_QDRANT_URL
+              value: {{ .Values.config.qdrant_url | quote }}
+            - name: SAR_QDRANT_COLLECTION
+              value: {{ .Values.config.qdrant_collection | quote }}
+            - name: SAR_OLLAMA_URL
+              value: {{ .Values.config.ollama_url | quote }}
+            - name: SAR_LLM_MODEL
+              value: {{ .Values.config.llm_model | quote }}
+            - name: SAR_EMBEDDING_MODEL
+              value: {{ .Values.config.embedding_model | quote }}
+            - name: SAR_EMBEDDING_DIM
+              value: {{ .Values.config.embedding_dim | quote }}
+            - name: SAR_DEFAULT_PROVIDER
+              value: {{ .Values.config.default_provider | quote }}
+            - name: SAR_CLOUD_PROVIDER
+              value: {{ .Values.config.cloud_provider | quote }}
+            - name: SAR_ENABLE_RBAC
+              value: {{ .Values.config.enable_rbac | quote }}
+            - name: SAR_GUARDRAILS_ENABLED
+              value: {{ .Values.config.guardrails_enabled | quote }}
+            - name: SAR_GUARDRAILS_STRICT
+              value: {{ .Values.config.guardrails_strict | quote }}
+            - name: SAR_PII_REDACTION_ENABLED
+              value: {{ .Values.config.pii_redaction_enabled | quote }}
+            - name: SAR_CONTEXTUAL_RETRIEVAL_ENABLED
+              value: {{ .Values.config.contextual_retrieval_enabled | quote }}
+            - name: SAR_HYDE_ENABLED
+              value: {{ .Values.config.hyde_enabled | quote }}
+            - name: SAR_SELF_QUERY_ENABLED
+              value: {{ .Values.config.self_query_enabled | quote }}
+            - name: SAR_RAG_FUSION_ENABLED
+              value: {{ .Values.config.rag_fusion_enabled | quote }}
+            - name: SAR_ENABLE_RERANKER
+              value: {{ .Values.config.enable_reranker | quote }}
+            - name: SAR_JSON_CITATIONS_ENABLED
+              value: {{ .Values.config.json_citations_enabled | quote }}
+            - name: SAR_VLM_OCR_ENABLED
+              value: {{ .Values.config.vlm_ocr_enabled | quote }}
+            - name: SAR_MULTIMODAL_DESCRIPTIONS_ENABLED
+              value: {{ .Values.config.multimodal_descriptions_enabled | quote }}
+            - name: SAR_PHOENIX_ENDPOINT
+              value: {{ .Values.config.phoenix_endpoint | quote }}
+            {{- if .Values.secrets.groq_api_key }}
+            - name: SAR_GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "secureagentrag.fullname" . }}-secrets
+                  key: groq-api-key
+            {{- end }}
+            {{- if .Values.secrets.openai_api_key }}
+            - name: SAR_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "secureagentrag.fullname" . }}-secrets
+                  key: openai-api-key
+            {{- end }}
+            {{- if .Values.secrets.anthropic_api_key }}
+            - name: SAR_ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "secureagentrag.fullname" . }}-secrets
+                  key: anthropic-api-key
+            {{- end }}
+            {{- if .Values.secrets.qdrant_api_key }}
+            - name: SAR_QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "secureagentrag.fullname" . }}-secrets
+                  key: qdrant-api-key
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

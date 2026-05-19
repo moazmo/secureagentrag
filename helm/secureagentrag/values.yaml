@@ -1,0 +1,136 @@
+# Default values for SecureAgentRAG.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/moazmo/secureagentrag
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+service:
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: secureagentrag.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# SecureAgentRAG-specific configuration
+config:
+  app_name: "SecureAgentRAG"
+  log_level: "INFO"
+  qdrant_url: "http://secureagentrag-qdrant:6333"
+  qdrant_collection: "documents"
+  ollama_url: "http://secureagentrag-ollama:11434"
+  llm_model: "qwen3:8b"
+  embedding_model: "bge-m3"
+  embedding_dim: 1024
+  default_provider: "ollama"
+  cloud_provider: ""
+  enable_rbac: true
+  guardrails_enabled: true
+  guardrails_strict: false
+  pii_redaction_enabled: true
+  contextual_retrieval_enabled: false
+  hyde_enabled: false
+  self_query_enabled: false
+  rag_fusion_enabled: true
+  enable_reranker: false
+  json_citations_enabled: false
+  vlm_ocr_enabled: false
+  multimodal_descriptions_enabled: false
+  phoenix_endpoint: ""
+
+# Secrets (override these with Helm --set or SealedSecrets)
+secrets:
+  groq_api_key: ""
+  openai_api_key: ""
+  anthropic_api_key: ""
+  qdrant_api_key: ""
+
+# External dependencies (set to false if managing separately)
+dependencies:
+  qdrant:
+    enabled: true
+    image: qdrant/qdrant:latest
+    persistence:
+      enabled: true
+      size: 10Gi
+  ollama:
+    enabled: true
+    image: ollama/ollama:latest
+    persistence:
+      enabled: true
+      size: 50Gi
+    gpu:
+      enabled: false
+      count: 1
+  postgres:
+    enabled: true
+    image: postgres:16-alpine
+    persistence:
+      enabled: true
+      size: 5Gi
+  redis:
+    enabled: true
+    image: redis:7-alpine
+    persistence:
+      enabled: true
+      size: 2Gi
+  phoenix:
+    enabled: false
+    image: arizephoenix/phoenix:latest
+    persistence:
+      enabled: true
+      size: 5Gi

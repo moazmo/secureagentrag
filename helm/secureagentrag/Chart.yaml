@@ -1,0 +1,15 @@
+apiVersion: v2
+name: secureagentrag
+description: A Helm chart for SecureAgentRAG — secure, multi-tenant RAG pipeline
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - rag
+  - llm
+  - ollama
+  - qdrant
+  - security
+maintainers:
+  - name: moazmo
+    email: moazmo27@gmail.com
