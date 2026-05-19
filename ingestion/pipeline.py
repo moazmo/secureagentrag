@@ -243,10 +243,13 @@ class IngestionPipeline:
                 processing_time_seconds=time.time() - start_time,
             )
 
-        # Step 7: Update BM25 index if available
+        # Step 7: Append to BM25 index. Previously this called build_index
+        # which WIPED the existing corpus on every upload — so only the last
+        # ingested document was searchable via BM25. add_documents extends
+        # in place.
         if self._bm25 is not None and point_ids:
             try:
-                self._bm25.build_index(
+                self._bm25.add_documents(
                     documents=chunk_texts,
                     doc_ids=point_ids,
                 )

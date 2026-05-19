@@ -76,7 +76,11 @@ class BM25Index:
             self.load_index()
 
     def build_index(self, documents: list[str], doc_ids: list[str]) -> None:
-        """Tokenize documents and build the BM25Okapi index.
+        """Tokenize documents and build the BM25Okapi index (FULL REBUILD).
+
+        This REPLACES any existing index. Use ``add_documents`` instead when
+        ingesting new docs incrementally so previously indexed chunks are
+        preserved.
 
         Args:
             documents: List of document texts to index.
@@ -92,11 +96,52 @@ class BM25Index:
         if len(documents) != len(doc_ids):
             raise ValueError(f"Length mismatch: documents={len(documents)}, doc_ids={len(doc_ids)}")
 
-        self._doc_ids = doc_ids
+        self._doc_ids = list(doc_ids)
         self._corpus = [doc.lower().split() for doc in documents]
         self._bm25 = BM25Okapi(self._corpus)
 
         logger.info("bm25_index_built", num_documents=len(documents))
+        self.save_index()
+
+    def add_documents(self, documents: list[str], doc_ids: list[str]) -> None:
+        """Append documents to the existing BM25 index, rebuild BM25Okapi.
+
+        ``rank-bm25`` has no incremental update path — it precomputes per-corpus
+        IDF statistics — so we extend the in-memory corpus and reconstruct the
+        Okapi object. For typical document counts (10s-100s of thousands of
+        chunks) this stays fast enough to run on every ingestion.
+
+        Args:
+            documents: New document texts to add.
+            doc_ids: Corresponding point IDs (already unique).
+
+        Raises:
+            ValueError: If lengths don't match.
+            RuntimeError: If rank_bm25 is not installed.
+        """
+        if not _BM25_AVAILABLE:
+            raise RuntimeError("rank_bm25 is not installed. Install with: pip install rank-bm25")
+        if len(documents) != len(doc_ids):
+            raise ValueError(f"Length mismatch: documents={len(documents)}, doc_ids={len(doc_ids)}")
+        if not documents:
+            return
+
+        existing = set(self._doc_ids)
+        new_pairs = [(t, i) for t, i in zip(documents, doc_ids, strict=False) if i not in existing]
+        if not new_pairs:
+            logger.debug("bm25_add_noop", reason="all_doc_ids_already_indexed")
+            return
+
+        new_texts, new_ids = zip(*new_pairs, strict=False)
+        self._doc_ids.extend(new_ids)
+        self._corpus.extend(t.lower().split() for t in new_texts)
+        self._bm25 = BM25Okapi(self._corpus)
+
+        logger.info(
+            "bm25_index_extended",
+            added=len(new_pairs),
+            total=len(self._doc_ids),
+        )
         self.save_index()
 
     def save_index(self) -> bool:
