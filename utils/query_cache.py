@@ -14,6 +14,7 @@ from typing import Any
 
 from config.settings import settings
 from utils.logging import get_logger
+from utils.pii import redact_dict
 
 logger = get_logger(__name__)
 
@@ -132,8 +133,9 @@ def set_cached_result(
     cache_key = _build_cache_key(user_id, query, context_hash)
     ttl = ttl_seconds or _memory_cache_ttl_seconds
 
-    # Serialize result (exclude non-serializable fields)
-    serializable_result = _make_serializable(result)
+    # Serialize result (exclude non-serializable fields) + redact PII before
+    # persistence so disk/Redis never sees emails, phones, card numbers, etc.
+    serializable_result = redact_dict(_make_serializable(result))
 
     # Try Redis first
     redis_client = _get_redis_client()

@@ -3,10 +3,18 @@
 Records all sensitive operations (queries, data access, ingestion events,
 security blocks) with structured metadata. Persists entries to daily JSONL
 files for later review, export to SIEM systems, or compliance reporting.
+
+Each entry carries a SHA-256 ``entry_hash`` and the ``prev_hash`` of the
+previous entry, forming a hash chain. Any in-place edit, deletion, or
+re-ordering of past entries breaks the chain and is detected by
+``verify_chain`` / ``scripts/verify_audit_chain.py``.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import threading
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -15,8 +23,11 @@ from pydantic import BaseModel, Field
 
 from config.settings import settings
 from utils.logging import get_logger
+from utils.pii import redact_dict
 
 _audit_log = get_logger("audit")
+
+GENESIS_HASH = "GENESIS"
 
 
 class AuditEntry(BaseModel):
@@ -32,6 +43,8 @@ class AuditEntry(BaseModel):
         status: Outcome — "success", "blocked", or "error".
         latency_ms: Operation latency in milliseconds (if applicable).
         metadata: Additional unstructured metadata.
+        prev_hash: SHA-256 of the previous entry's ``entry_hash`` (``GENESIS`` for first).
+        entry_hash: SHA-256 over canonical JSON of this entry excluding ``entry_hash``.
     """
 
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -43,6 +56,14 @@ class AuditEntry(BaseModel):
     status: str = "success"
     latency_ms: float | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    prev_hash: str = ""
+    entry_hash: str = ""
+
+    def compute_hash(self) -> str:
+        """Compute the SHA-256 over canonical JSON of this entry except ``entry_hash``."""
+        payload = self.model_dump(mode="json", exclude={"entry_hash"})
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class AuditLogger:
@@ -65,6 +86,33 @@ class AuditLogger:
         """
         self._log_dir = Path(log_dir if log_dir is not None else settings.audit_log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
+        # In-process mutex for hash-chain integrity. Multi-process deployments
+        # should serialise audit writes (single writer) or migrate to Postgres.
+        self._chain_lock = threading.Lock()
+        self._last_hash: str | None = None  # Lazily resolved on first write
+
+    def _read_last_hash(self) -> str:
+        """Scan audit directory to find the most recent entry's hash.
+
+        Used once on first write to bootstrap the chain. Returns ``GENESIS``
+        if no prior entries exist.
+        """
+        try:
+            files = sorted(self._log_dir.glob("audit_*.jsonl"))
+            for path in reversed(files):
+                # Walk file backwards line by line — newest entry is last
+                with open(path, encoding="utf-8") as f:
+                    lines = [ln for ln in f if ln.strip()]
+                if not lines:
+                    continue
+                last = json.loads(lines[-1])
+                last_hash = last.get("entry_hash")
+                if last_hash:
+                    return last_hash
+            return GENESIS_HASH
+        except Exception as exc:
+            _audit_log.warning("audit_chain_bootstrap_failed", error=str(exc))
+            return GENESIS_HASH
 
     def log_query(
         self,
@@ -281,21 +329,112 @@ class AuditLogger:
         )
 
     def _persist(self, entry: AuditEntry) -> None:
-        """Append an audit entry to the daily JSONL file.
+        """Append an audit entry to the daily JSONL file with hash chaining.
 
-        File naming convention: ``audit_YYYY-MM-DD.jsonl``
+        File naming convention: ``audit_YYYY-MM-DD.jsonl``. Each entry's
+        ``prev_hash`` references the previous entry's ``entry_hash`` so the
+        whole stream is a tamper-evident chain. Writes are serialised by
+        ``self._chain_lock`` to prevent concurrent re-use of a ``prev_hash``.
 
         Args:
-            entry: The AuditEntry to persist.
+            entry: The AuditEntry to persist (hash fields populated here).
         """
         try:
-            today = date.today().isoformat()
-            file_path = self._log_dir / f"audit_{today}.jsonl"
-            line = entry.model_dump_json() + "\n"
-            with open(file_path, "a", encoding="utf-8") as f:
-                f.write(line)
+            with self._chain_lock:
+                if self._last_hash is None:
+                    self._last_hash = self._read_last_hash()
+                # Scrub PII *before* hashing so the on-disk entry and its
+                # signature match. Live in-memory state is unaffected because
+                # _persist is the boundary to durable storage.
+                entry.details = redact_dict(entry.details)
+                entry.metadata = redact_dict(entry.metadata)
+                entry.prev_hash = self._last_hash
+                entry.entry_hash = entry.compute_hash()
+
+                today = date.today().isoformat()
+                file_path = self._log_dir / f"audit_{today}.jsonl"
+                line = entry.model_dump_json() + "\n"
+                with open(file_path, "a", encoding="utf-8") as f:
+                    f.write(line)
+
+                self._last_hash = entry.entry_hash
         except Exception as exc:
             _audit_log.error("audit_persist_failed", error=str(exc))
+
+    def verify_chain(
+        self,
+        start_date: date | str | None = None,
+        end_date: date | str | None = None,
+    ) -> dict[str, Any]:
+        """Verify the SHA-256 hash chain across one or more daily audit files.
+
+        Walks every entry in ``[start_date, end_date]`` (or all files when
+        both are ``None``) and recomputes ``entry_hash`` while checking that
+        each entry's ``prev_hash`` matches the previous entry's hash.
+
+        Args:
+            start_date: First date (inclusive). ``None`` for "earliest".
+            end_date: Last date (inclusive). ``None`` for "latest".
+
+        Returns:
+            Dict with keys ``valid`` (bool), ``checked`` (int), ``broken_at``
+            (list of file:line:reason strings), and ``last_hash`` (str).
+        """
+        files = sorted(self._log_dir.glob("audit_*.jsonl"))
+        if start_date is not None:
+            if isinstance(start_date, str):
+                start_date = date.fromisoformat(start_date)
+            files = [p for p in files if date.fromisoformat(p.stem.split("_", 1)[1]) >= start_date]
+        if end_date is not None:
+            if isinstance(end_date, str):
+                end_date = date.fromisoformat(end_date)
+            files = [p for p in files if date.fromisoformat(p.stem.split("_", 1)[1]) <= end_date]
+
+        broken: list[str] = []
+        checked = 0
+        expected_prev = GENESIS_HASH if start_date is None else None
+        last_hash = GENESIS_HASH
+
+        for path in files:
+            with open(path, encoding="utf-8") as f:
+                for lineno, raw in enumerate(f, start=1):
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        entry = AuditEntry.model_validate_json(raw)
+                    except Exception as exc:
+                        broken.append(f"{path.name}:{lineno}:parse_error:{exc}")
+                        return {
+                            "valid": False,
+                            "checked": checked,
+                            "broken_at": broken,
+                            "last_hash": last_hash,
+                        }
+
+                    recomputed = entry.compute_hash()
+                    if recomputed != entry.entry_hash:
+                        broken.append(
+                            f"{path.name}:{lineno}:hash_mismatch:"
+                            f"stored={entry.entry_hash[:12]} recomputed={recomputed[:12]}"
+                        )
+
+                    if expected_prev is not None and entry.prev_hash != expected_prev:
+                        broken.append(
+                            f"{path.name}:{lineno}:chain_broken:"
+                            f"prev_hash={entry.prev_hash[:12]} expected={expected_prev[:12]}"
+                        )
+
+                    expected_prev = entry.entry_hash
+                    last_hash = entry.entry_hash
+                    checked += 1
+
+        return {
+            "valid": not broken,
+            "checked": checked,
+            "broken_at": broken,
+            "last_hash": last_hash,
+        }
 
     def get_entries(
         self,
