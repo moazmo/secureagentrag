@@ -6,7 +6,19 @@ from typing import Any
 
 import pytest
 
-from config.settings import Settings
+from config.settings import Settings, settings as _live_settings
+
+
+@pytest.fixture(autouse=True)
+def _disable_rag_fusion_in_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable RAG Fusion globally for the unit test suite.
+
+    RAG Fusion makes the retriever generate N query reformulations via an
+    LLM call and run N parallel Qdrant searches. Unit tests mock the
+    searcher and expect a single deterministic call, so we turn fusion
+    off for them. Integration tests that need it can re-enable explicitly.
+    """
+    monkeypatch.setattr(_live_settings, "rag_fusion_enabled", False)
 
 
 @pytest.fixture()

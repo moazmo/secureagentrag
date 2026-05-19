@@ -61,8 +61,15 @@ async def test_async_synthesizer_uses_inference_router(mock_user_context: UserCo
     """Test that synthesize_answer routes LLM calls through InferenceRouter with sensitivity."""
     from core.agents.synthesizer import synthesize_answer
 
-    with patch("core.agents.synthesizer.call_llm_async") as mock_call:
-        mock_call.return_value = "Generated answer [1]."
+    from types import SimpleNamespace
+
+    with patch("core.agents.synthesizer.call_llm_with_decision") as mock_call:
+        # Synth now expects a (text, decision, response) tuple.
+        mock_call.return_value = (
+            "Generated answer [1].",
+            SimpleNamespace(provider="ollama", model="qwen3:8b", reason="test", forced_local=True),
+            SimpleNamespace(text="Generated answer [1].", usage={}, latency_ms=10.0),
+        )
         state = create_initial_state("test", mock_user_context)
         state["relevant_documents"] = [
             {

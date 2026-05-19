@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +13,19 @@ from core.agents.synthesizer import (
     synthesize_answer,
 )
 from utils.async_helpers import run_async
+
+
+def _mocked_call_return(text: str):
+    """Build the (text, decision, response) tuple synth now expects from
+    call_llm_with_decision so test mocks stay compact."""
+    decision = SimpleNamespace(
+        provider="ollama",
+        model="qwen3:8b",
+        reason="test fixture",
+        forced_local=True,
+    )
+    response = SimpleNamespace(text=text, usage={}, latency_ms=12.3)
+    return text, decision, response
 
 
 @pytest.fixture()
@@ -92,10 +106,10 @@ def synth_state():
 class TestSynthesizeAnswer:
     """Tests for the synthesize_answer function."""
 
-    @patch("core.agents.synthesizer.call_llm_async")
+    @patch("core.agents.synthesizer.call_llm_with_decision")
     def test_synthesize_answer_with_citations(self, mock_llm, synth_state):
         """Test answer synthesis with proper citations."""
-        mock_llm.return_value = (
+        mock_llm.return_value = _mocked_call_return(
             "RAG (Retrieval-Augmented Generation) is a technique that combines "
             "information retrieval with language model generation [1]. This helps "
             "reduce hallucinations by grounding responses in retrieved context [2]."
@@ -109,7 +123,7 @@ class TestSynthesizeAnswer:
         assert result["citations"][0]["source_file"] == "rag_intro.pdf"
         assert len(result["audit_trail"]) == 1
 
-    @patch("core.agents.synthesizer.call_llm_async")
+    @patch("core.agents.synthesizer.call_llm_with_decision")
     def test_synthesize_answer_no_documents(self, mock_llm, synth_state):
         """Test synthesis with no documents available."""
         synth_state["relevant_documents"] = []
@@ -121,19 +135,19 @@ class TestSynthesizeAnswer:
         assert result["citations"] == []
         mock_llm.assert_not_called()
 
-    @patch("core.agents.synthesizer.call_llm_async")
+    @patch("core.agents.synthesizer.call_llm_with_decision")
     def test_synthesize_answer_empty_llm_response(self, mock_llm, synth_state):
         """Test handling of empty LLM response."""
-        mock_llm.return_value = ""
+        mock_llm.return_value = _mocked_call_return("")
 
         result = run_async(synthesize_answer(synth_state))
 
         assert result["generation"] != ""  # Should have a fallback message
 
-    @patch("core.agents.synthesizer.call_llm_async")
+    @patch("core.agents.synthesizer.call_llm_with_decision")
     def test_synthesize_answer_high_sensitivity_disclaimer(self, mock_llm, synth_state):
         """Test that high sensitivity adds a disclaimer."""
-        mock_llm.return_value = "Confidential answer [1]."
+        mock_llm.return_value = _mocked_call_return("Confidential answer [1].")
         synth_state["relevant_documents"][0]["metadata"]["sensitivity_level"] = "high"
 
         result = run_async(synthesize_answer(synth_state))
