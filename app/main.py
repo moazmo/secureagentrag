@@ -23,10 +23,10 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from app.components.sidebar import PREDEFINED_USERS, render_sidebar
-from app.pages.audit import render_audit_page
-from app.pages.chat import render_chat_page
-from app.pages.evaluation import render_evaluation_page
-from app.pages.upload import render_upload_page
+from app.views.audit import render_audit_page
+from app.views.chat import render_chat_page
+from app.views.evaluation import render_evaluation_page
+from app.views.upload import render_upload_page
 from utils.logging import setup_logging
 from utils.observability import setup_tracing
 
