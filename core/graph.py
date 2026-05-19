@@ -11,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 
 from config.settings import settings
 from core.agents.evaluator import evaluate_response
+from core.agents.guardrails import guardrails_check, guardrails_gate
 from core.agents.retriever import grade_documents, retrieve_documents, should_retry
 from core.agents.router import rewrite_query, route_query
 from core.agents.security import check_security, security_gate
@@ -142,6 +143,7 @@ def build_rag_graph() -> StateGraph:
 
     # Add nodes
     workflow.add_node("router", route_query)
+    workflow.add_node("guardrails", guardrails_check)
     workflow.add_node("security", check_security)
     workflow.add_node("retriever", retrieve_documents)
     workflow.add_node("grader", grade_documents)
@@ -155,7 +157,17 @@ def build_rag_graph() -> StateGraph:
 
     # Add edges
     workflow.add_edge(START, "router")
-    workflow.add_edge("router", "security")
+    workflow.add_edge("router", "guardrails")
+
+    # Guardrails conditional edge — block prompt-injection before any work
+    workflow.add_conditional_edges(
+        "guardrails",
+        guardrails_gate,
+        {
+            "proceed": "security",
+            "blocked": END,
+        },
+    )
 
     # Security conditional edge
     workflow.add_conditional_edges(
@@ -223,6 +235,8 @@ def create_initial_state(
         "query_type": "",
         "rewritten_query": "",
         "query_sensitivity": "low",
+        "guardrails_passed": False,
+        "guardrails_reason": "",
         "security_passed": False,
         "security_message": "",
         "documents": [],
@@ -371,7 +385,23 @@ async def run_rag_pipeline_stream(
     _merge_update(state, await route_query(state))
     yield {"type": "phase", "name": "router", "state": dict(state)}
 
-    # 2. Security
+    # 2. Guardrails (prompt-injection)
+    _merge_update(state, await guardrails_check(state))
+    yield {"type": "phase", "name": "guardrails", "state": dict(state)}
+
+    if guardrails_gate(state) == "blocked":
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        yield {
+            "type": "blocked",
+            "message": (
+                f"Blocked by guardrails: {state.get('guardrails_reason', 'prompt_injection')}"
+            ),
+            "state": dict(state),
+            "latency_ms": elapsed_ms,
+        }
+        return
+
+    # 3. Security
     _merge_update(state, await check_security(state))
     yield {"type": "phase", "name": "security", "state": dict(state)}
 

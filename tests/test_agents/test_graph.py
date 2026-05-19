@@ -77,7 +77,10 @@ class TestBuildRagGraph:
 
         # Check critical direct edges
         assert ("__start__", "router") in edge_pairs
-        assert ("router", "security") in edge_pairs
+        # Guardrails sits between router and security to catch prompt-
+        # injection before any retrieval / LLM budget is spent.
+        assert ("router", "guardrails") in edge_pairs
+        assert ("guardrails", "security") in edge_pairs
         assert ("retriever", "grader") in edge_pairs
         assert ("rewriter", "retriever") in edge_pairs
         assert ("synthesizer", "evaluator") in edge_pairs

@@ -60,6 +60,10 @@ class GraphState(TypedDict):
     rewritten_query: str
     query_sensitivity: str  # "low" | "medium" | "high" — inferred from the query itself
 
+    # Guardrails (prompt-injection / jailbreak detection)
+    guardrails_passed: bool
+    guardrails_reason: str
+
     # Security
     security_passed: bool
     security_message: str
