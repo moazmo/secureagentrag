@@ -139,11 +139,18 @@ class Settings(BaseSettings):
     contextual_retrieval_enabled: bool = False
 
     # ── VLM OCR (Primary OCR via vision-language model) ───────────────────────────
-    # Use a VLM (Qwen-VL, LLaVA, etc.) via Ollama as the primary OCR path.
+    # Use a VLM (Qwen2.5-VL / Qwen3-VL, LLaVA, etc.) via Ollama as the primary OCR path.
     # Superior to PaddleOCR on complex layouts, tables, and mixed-language
     # documents. Falls back to PaddleOCR when the VLM is unavailable.
     vlm_ocr_enabled: bool = False
     vlm_ocr_model: str = "qwen2.5-vl"
+
+    # ── Multi-Modal RAG ──────────────────────────────────────────────────────────
+    # When ingesting images, also generate a rich text description using a VLM.
+    # The description is embedded as a separate chunk, enabling retrieval for
+    # queries like "what does the diagram show?" without requiring CLIP or
+    # other multi-modal embedding models.
+    multimodal_descriptions_enabled: bool = False
 
     # ── Self-Query Retrieval ─────────────────────────────────────────────────────
     # Extract structured metadata filters (source_file, date_range,

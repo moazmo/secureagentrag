@@ -25,6 +25,28 @@ _memory_cache_ttl_seconds: float = 300.0  # 5 minutes default
 # Redis singleton
 _redis_client = None
 
+# Cache metrics counters
+_cache_hits: int = 0
+_cache_misses: int = 0
+
+
+def get_cache_metrics() -> dict[str, int]:
+    """Return cache hit/miss counters."""
+    total = _cache_hits + _cache_misses
+    return {
+        "hits": _cache_hits,
+        "misses": _cache_misses,
+        "total": total,
+        "hit_rate": round(_cache_hits / total, 4) if total > 0 else 0.0,
+    }
+
+
+def reset_cache_metrics() -> None:
+    """Reset cache hit/miss counters."""
+    global _cache_hits, _cache_misses
+    _cache_hits = 0
+    _cache_misses = 0
+
 
 def _get_redis_client():
     """Lazy-initialize Redis client for query caching.
@@ -90,6 +112,8 @@ def get_cached_result(
     cache_key = _build_cache_key(user_id, query, context_hash)
     _ = ttl_seconds or _memory_cache_ttl_seconds
 
+    global _cache_hits, _cache_misses
+
     # Try Redis first
     redis_client = _get_redis_client()
     if redis_client:
@@ -97,6 +121,7 @@ def get_cached_result(
             cached = redis_client.get(f"rag:query:{cache_key}")
             if cached:
                 result = json.loads(cached)
+                _cache_hits += 1
                 logger.info("query_cache_hit", source="redis", user_id=user_id)
                 return result
         except Exception as exc:
@@ -106,11 +131,13 @@ def get_cached_result(
     if cache_key in _memory_cache:
         result, expiry = _memory_cache[cache_key]
         if time.time() < expiry:
+            _cache_hits += 1
             logger.info("query_cache_hit", source="memory", user_id=user_id)
             return result
         # Expired — clean up
         del _memory_cache[cache_key]
 
+    _cache_misses += 1
     return None
 
 

@@ -19,6 +19,7 @@ from utils.audit import audit_logger
 from utils.logging import get_logger
 
 if TYPE_CHECKING:
+    from ingestion.multimodal import ImageDescriptor
     from retrieval.embeddings import EmbeddingService
     from retrieval.hybrid_search import BM25Index
     from retrieval.qdrant_client import QdrantManager
@@ -68,6 +69,7 @@ class IngestionPipeline:
         chunker: TextChunker | None = None,
         ocr_processor: OCRProcessor | None = None,
         bm25_index: BM25Index | None = None,
+        image_descriptor: ImageDescriptor | None = None,
     ) -> None:
         """Initialize the ingestion pipeline with its dependencies.
 
@@ -77,12 +79,14 @@ class IngestionPipeline:
             chunker: Text chunker instance. Uses default settings if None.
             ocr_processor: OCR processor instance. Creates new one if None.
             bm25_index: Shared BM25Index to populate with chunk texts.
+            image_descriptor: Optional VLM-based image describer for multi-modal RAG.
         """
         self._qdrant = qdrant_manager
         self._embeddings = embedding_service
         self._chunker = chunker or TextChunker()
         self._ocr = ocr_processor or OCRProcessor()
         self._bm25 = bm25_index
+        self._image_descriptor = image_descriptor
 
         logger.info("ingestion_pipeline_initialized")
 
@@ -351,14 +355,15 @@ class IngestionPipeline:
         documents: list[LoadedDocument],
         file_path: str,
     ) -> list[LoadedDocument]:
-        """Apply OCR to documents with insufficient text content.
+        """Apply OCR and optional VLM description to documents with insufficient text.
 
         Args:
             documents: List of loaded documents to process.
             file_path: Original file path for OCR processing.
 
         Returns:
-            Updated list of documents with OCR-enhanced text where applicable.
+            Updated list of documents with OCR-enhanced text and optional
+            VLM-generated image descriptions.
         """
         enhanced: list[LoadedDocument] = []
 
@@ -377,7 +382,29 @@ class IngestionPipeline:
                                 metadata={**doc.metadata, "ocr_applied": True},
                             )
                         )
-                        continue
+                    # Multi-modal: also generate a VLM description for images
+                    if (
+                        doc.file_type == "image"
+                        and settings.multimodal_descriptions_enabled
+                        and self._image_descriptor is not None
+                        and self._image_descriptor.is_available()
+                    ):
+                        description = self._image_descriptor.describe_image(file_path)
+                        if description:
+                            enhanced.append(
+                                LoadedDocument(
+                                    text=description,
+                                    page_number=doc.page_number,
+                                    source_file=doc.source_file,
+                                    file_type="image_description",
+                                    metadata={
+                                        **doc.metadata,
+                                        "vlm_description": True,
+                                        "original_file": file_path,
+                                    },
+                                )
+                            )
+                    continue
                 elif doc.file_type == "pdf":
                     ocr_text = self._ocr.extract_text_from_pdf_page(file_path, doc.page_number)
                     if ocr_text:
