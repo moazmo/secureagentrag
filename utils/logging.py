@@ -157,6 +157,13 @@ def setup_logging() -> None:
     root_logger.addHandler(handler)
     root_logger.setLevel(settings.log_level.upper())
 
+    # Pin chatty third-party loggers to WARNING. httpx in particular emits a
+    # request-level INFO line for every HTTP call, which under Streamlit's
+    # thread model races with the script-runner closing stdout and surfaces
+    # as cosmetic 'ValueError: I/O operation on closed file' tracebacks.
+    for noisy in ("httpx", "httpcore", "openai", "anthropic", "groq", "qdrant_client"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """Return a named structlog logger instance.
