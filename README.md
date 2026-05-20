@@ -434,7 +434,7 @@ The benchmark script (`scripts/quick_bench.py`) measures:
 | Mean latency | 12.1 s |
 | Mean confidence | 0.659 |
 
-The cloud router reduces LLM generation time from ~10-40s (Ollama) to ~0.3-2s (Groq), but embeddings (bge-m3 via Ollama) and the security node (forced local for HIGH sensitivity) remain on-device. Use `uv run python -m scripts.cloud_bench_quick` (English) or `uv run python -m scripts.arabic_bench` (Arabic) to reproduce.
+The cloud router reduces LLM generation time from ~10-40s (Ollama) to ~0.3-2s (Groq), but embeddings (bge-m3 via Ollama) and the security node (forced local for HIGH sensitivity) remain on-device. Use `uv run python -m scripts.cloud_bench --quick` (English) or `uv run python -m scripts.arabic_bench` (Arabic) to reproduce.
 
 **Recommended Benchmark Setup**
 - **Hardware**: RTX 3060 12GB or equivalent
@@ -444,7 +444,7 @@ The cloud router reduces LLM generation time from ~10-40s (Ollama) to ~0.3-2s (G
 - **Warmup**: 1 query to warm caches before measurement
 - **Runs**: 10 queries per type, report mean/median/P90
 
-*Measured with `uv run python -m scripts.quick_bench` (local) and `uv run python -m scripts.cloud_bench_quick` (cloud) on the NIST AI RMF corpus (147 chunks).*
+*Measured with `uv run python -m scripts.quick_bench` (local) and `uv run python -m scripts.cloud_bench --quick` (cloud) on the NIST AI RMF corpus (147 chunks).*
 
 ---
 

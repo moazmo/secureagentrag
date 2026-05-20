@@ -73,7 +73,7 @@ def render_sidebar() -> None:
         st.caption(
             "Switch users to see Qdrant payload filters in action — "
             "the same query returns different docs per role. Seed the demo "
-            "corpus with `uv run python -m scripts.seed_demo_rbac`."
+            "corpus with `uv run python -m scripts.seed_corpus --mode rbac`."
         )
         user_names = [u["display_name"] for u in PREDEFINED_USERS]
         current_display = st.session_state.current_user.get("display_name", user_names[0])

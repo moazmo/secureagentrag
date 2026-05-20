@@ -1,10 +1,13 @@
 """Cloud-vs-local benchmark comparison.
 
-Runs the same query set against both local Ollama and a configured cloud
+Runs the same query set against local Ollama and the configured cloud
 provider (Groq/OpenAI/Anthropic), producing a side-by-side latency table.
+Pass ``--quick`` to run only the 3-query cloud-only subset (~2 min) for
+quick README-number refreshes.
 
 Usage:
-    uv run python -m scripts.cloud_bench
+    uv run python -m scripts.cloud_bench           # full comparison
+    uv run python -m scripts.cloud_bench --quick   # cloud-only, 3 queries
 
 Requires:
     - Ollama + Qdrant running with docs ingested
@@ -14,6 +17,7 @@ Requires:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import statistics
@@ -36,13 +40,14 @@ USER = UserContext(
     clearance_level=3,
 )
 
-QUERIES = [
+QUERIES_FULL = [
     "What are the four NIST AI RMF functions?",
     "How do GOVERN and MANAGE differ in the NIST AI RMF lifecycle?",
     "Summarise the trustworthiness characteristics defined in NIST AI RMF.",
     "Explain the relationship between MAP outcomes and MEASURE inputs.",
     "What role does context play across the four AI RMF functions?",
 ]
+QUERIES_QUICK = QUERIES_FULL[:3]
 
 
 def _pct(xs: list[float], q: float) -> float:
@@ -96,44 +101,72 @@ async def _bench_provider(
     }
 
 
-async def _run() -> dict:
-    print("warmup (local)...")
-    await run_rag_pipeline(query="warmup", user_context=USER, thread_id="bench-warmup")
-
-    print("\n--- Local (Ollama) ---")
-    local_results = await _bench_provider(QUERIES, "ollama", "bench-local")
-
-    print("\n--- Cloud ---")
+async def _run(quick: bool) -> dict:
     from config.settings import settings
 
     cloud = settings.cloud_provider or "groq"
-    cloud_results = await _bench_provider(QUERIES, cloud, "bench-cloud", prefer_cloud=True)
+    queries = QUERIES_QUICK if quick else QUERIES_FULL
 
-    report = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "queries": len(QUERIES),
-        "local": local_results,
-        "cloud": cloud_results,
-    }
+    if quick:
+        print(f"--- Quick cloud bench ({cloud}, {len(queries)} queries) ---")
+        cloud_results = await _bench_provider(
+            queries, cloud, "bench-cloud-quick", prefer_cloud=True
+        )
+        report = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "queries": len(queries),
+            "mode": "quick",
+            "cloud": cloud_results,
+        }
+    else:
+        print("warmup (local)...")
+        await run_rag_pipeline(query="warmup", user_context=USER, thread_id="bench-warmup")
+
+        print("\n--- Local (Ollama) ---")
+        local_results = await _bench_provider(queries, "ollama", "bench-local")
+
+        print(f"\n--- Cloud ({cloud}) ---")
+        cloud_results = await _bench_provider(queries, cloud, "bench-cloud", prefer_cloud=True)
+        report = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "queries": len(queries),
+            "mode": "full",
+            "local": local_results,
+            "cloud": cloud_results,
+        }
 
     out_dir = Path("data/benchmarks")
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"cloud_bench_{int(datetime.now(UTC).timestamp())}.json"
+    suffix = "quick" if quick else "full"
+    out_path = out_dir / f"cloud_bench_{suffix}_{int(datetime.now(UTC).timestamp())}.json"
     out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     print("\n=== RESULTS ===")
-    print(f"{'Metric':<20} {'Local (Ollama)':>18} {'Cloud (' + cloud + ')':>18}")
-    print("-" * 58)
-    for key in ["mean_ms", "p50_ms", "p90_ms", "p99_ms", "mean_confidence"]:
-        local_val = local_results[key]
-        cloud_val = cloud_results[key]
-        print(f"{key:<20} {local_val:>18.1f} {cloud_val:>18.1f}")
-    speedup = local_results["mean_ms"] / max(cloud_results["mean_ms"], 1)
-    print(f"\nCloud is ~{speedup:.1f}x faster on average")
+    if quick:
+        for key in ["mean_ms", "p50_ms", "p90_ms", "p99_ms", "mean_confidence"]:
+            print(f"{key:<20} {cloud_results[key]:>18.1f}")
+    else:
+        print(f"{'Metric':<20} {'Local (Ollama)':>18} {f'Cloud ({cloud})':>18}")
+        print("-" * 58)
+        for key in ["mean_ms", "p50_ms", "p90_ms", "p99_ms", "mean_confidence"]:
+            print(f"{key:<20} {report['local'][key]:>18.1f} {report['cloud'][key]:>18.1f}")
+        speedup = report["local"]["mean_ms"] / max(report["cloud"]["mean_ms"], 1)
+        print(f"\nCloud is ~{speedup:.1f}x faster on average")
     print(f"Results saved to {out_path}")
 
     return report
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Run cloud-only with 3 queries (~2 min). Default: full local+cloud comparison.",
+    )
+    args = parser.parse_args()
+    asyncio.run(_run(quick=args.quick))
+
+
 if __name__ == "__main__":
-    asyncio.run(_run())
+    main()
