@@ -155,7 +155,7 @@ if _FASTAPI_AVAILABLE:
         pipeline = IngestionPipeline(
             qdrant_manager=searcher._qdrant,  # type: ignore[attr-defined]
             embedding_service=searcher._embeddings,  # type: ignore[attr-defined]
-            bm25_index=searcher._bm25_index,  # type: ignore[attr-defined]
+            sparse_service=searcher._sparse,  # type: ignore[attr-defined]
         )
         req = IngestRequest(
             file_path=body.file_path,
@@ -228,11 +228,33 @@ if _FASTAPI_AVAILABLE:
         and the Streamlit demo can mint a real token rather than the
         unsigned base64 fallback.
         """
+        if settings.jwt_algorithm.upper() == "RS256":
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Dev token endpoint disabled in RS256 mode — use the external IdP",
+            )
         if not settings.jwt_secret:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "SAR_JWT_SECRET is not configured; token endpoint disabled",
             )
+        try:
+            token = issue_token(
+                user_id=body.user_id,
+                org_id=body.org_id,
+                roles=body.roles,
+                clearance_level=body.clearance_level,
+                ttl_seconds=body.ttl_seconds,
+            )
+        except AuthError as exc:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR, f"token_issue_{exc.reason}: {exc}"
+            ) from exc
+        return _TokenResponse(
+            access_token=token,
+            token_type="bearer",
+            expires_in=body.ttl_seconds or settings.jwt_ttl_seconds,
+        )
         try:
             token = issue_token(
                 user_id=body.user_id,

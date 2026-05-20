@@ -199,7 +199,7 @@ class TestIngest:
         searcher = MagicMock()
         searcher._qdrant = MagicMock()
         searcher._embeddings = MagicMock()
-        searcher._bm25_index = MagicMock()
+        searcher._sparse = MagicMock()
         mock_get_searcher.return_value = searcher
 
         token = _make_token("ingest_user", ["user"])
