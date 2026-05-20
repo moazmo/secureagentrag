@@ -26,7 +26,7 @@ from core.agents.guardrails import guardrails_check, guardrails_gate
 from core.agents.retriever import grade_documents, retrieve_documents, should_retry
 from core.agents.router import rewrite_query, route_query
 from core.agents.security import check_security, security_gate
-from core.agents.synthesizer import synthesize_answer, synthesize_answer_stream
+from core.agents.synthesizer import synthesize_answer
 from core.state import GraphState
 from utils.logging import get_logger
 from utils.observability import trace_graph_execution
@@ -370,6 +370,7 @@ def create_initial_state(
         "user_context": user_context.model_dump(),
         "prefer_cloud": prefer_cloud,
         "override_provider": override_provider,
+        "_stream": False,
         "query_type": "",
         "rewritten_query": "",
         "query_sensitivity": "low",
@@ -543,23 +544,27 @@ async def run_rag_pipeline_stream(
     prefer_cloud: bool = False,
     override_provider: str = "",
 ) -> AsyncGenerator[dict, None]:
-    """Execute the full RAG pipeline with real token-by-token streaming of the
-    synthesized answer.
+    """Execute the full RAG pipeline with real token-by-token streaming.
 
-    Runs all non-synthesis nodes (router, security, retriever, grader,
-    optional rewrite loop), then streams synthesizer tokens to the caller,
-    then runs the evaluator on the collected text.
+    Single source of truth: runs the same compiled LangGraph workflow the
+    non-streaming path uses via ``graph.astream(stream_mode=["updates",
+    "custom"])``. Node updates become ``phase`` events; the synthesizer's
+    ``get_stream_writer()`` calls surface as ``token`` events. Blocked
+    gates and timeouts are detected from the merged state — no parallel
+    hand-walked graph.
 
     Event types yielded:
-        {"type": "phase", "name": str, "state": dict}    -- after each non-synth node
-        {"type": "blocked", "message": str, "state": dict}
-        {"type": "token", "text": str}                    -- synthesis token
-        {"type": "final", "state": dict, "latency_ms": float}
+        {"type": "phase",   "name": str, "state": dict}   — after each node
+        {"type": "blocked", "message": str, "state": dict, "latency_ms": float}
+        {"type": "token",   "text": str}                  — synthesis token
+        {"type": "final",   "state": dict, "latency_ms": float}
 
     Args:
         query: Natural language query.
         user_context: Authenticated user context for RBAC.
         thread_id: Thread identifier for audit/log correlation.
+        prefer_cloud: Caller opts into cloud providers for LOW/MEDIUM.
+        override_provider: Admin-only provider pin.
 
     Yields:
         Event dicts as described above.
@@ -573,10 +578,87 @@ async def run_rag_pipeline_stream(
     start_time = time.perf_counter()
     budget = settings.request_timeout_s
 
-    def _timed_out() -> bool:
-        return bool(budget and budget > 0 and (time.perf_counter() - start_time) > budget)
+    graph = await build_rag_graph_async()
+    initial_state = create_initial_state(
+        query, user_context, prefer_cloud=prefer_cloud, override_provider=override_provider
+    )
+    # Opt the synthesizer into the streaming dispatch path. The flag is
+    # local to this run and is not part of the public state contract — it
+    # exists so the synthesizer can deterministically choose call_llm_stream
+    # over call_llm_with_decision without sniffing framework internals.
+    initial_state["_stream"] = True
+    config = {"configurable": {"thread_id": thread_id}}
 
-    def _timeout_event() -> dict:
+    # Track the merged state as it grows. LangGraph's "updates" stream
+    # yields one partial dict per node; we apply them locally so we can
+    # detect blocked gates without waiting for the entire graph.
+    state: dict = dict(initial_state)
+    emitted_blocked = False
+
+    async def _astream():
+        async for chunk in graph.astream(
+            initial_state, config=config, stream_mode=["updates", "custom"]
+        ):
+            yield chunk
+
+    try:
+        stream_ctx = asyncio.timeout(budget) if budget and budget > 0 else contextlib.nullcontext()
+        async with stream_ctx:
+            async for chunk in _astream():
+                # LangGraph yields (mode, payload) tuples when stream_mode
+                # is a list.
+                if not isinstance(chunk, tuple) or len(chunk) != 2:
+                    continue
+                mode, payload = chunk
+
+                if mode == "custom":
+                    # Synthesizer pushes {"type": "token", "text": ...}
+                    # through the writer; relay verbatim.
+                    if isinstance(payload, dict):
+                        yield payload
+                    continue
+
+                if mode != "updates":
+                    continue
+
+                # `updates` payload is {node_name: partial_state}. Apply
+                # the partial to our local state and emit a phase event.
+                if not isinstance(payload, dict):
+                    continue
+                for node_name, partial in payload.items():
+                    if isinstance(partial, dict):
+                        _merge_update(state, dict(partial))
+                    yield {"type": "phase", "name": node_name, "state": dict(state)}
+
+                    # Detect blocked gates as soon as they fire.
+                    if (
+                        node_name == "guardrails"
+                        and state.get("guardrails_passed") is False
+                        and not emitted_blocked
+                    ):
+                        emitted_blocked = True
+                        yield {
+                            "type": "blocked",
+                            "message": (
+                                "Blocked by guardrails: "
+                                f"{state.get('guardrails_reason', 'prompt_injection')}"
+                            ),
+                            "state": dict(state),
+                            "latency_ms": (time.perf_counter() - start_time) * 1000,
+                        }
+                    elif (
+                        node_name == "security"
+                        and state.get("security_passed") is False
+                        and not emitted_blocked
+                    ):
+                        emitted_blocked = True
+                        yield {
+                            "type": "blocked",
+                            "message": state.get("security_message", "Blocked by security policy."),
+                            "state": dict(state),
+                            "latency_ms": (time.perf_counter() - start_time) * 1000,
+                        }
+    except TimeoutError:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.error(
             "rag_pipeline_stream_timeout",
@@ -599,115 +681,16 @@ async def run_rag_pipeline_stream(
         )
         state["needs_human_review"] = True
         state["evaluation_notes"] = "request_timeout"
-        return {
-            "type": "blocked",
-            "message": (
-                "Request exceeded the configured wall-clock budget "
-                f"({budget:.1f}s) and was cancelled."
-            ),
-            "state": dict(state),
-            "latency_ms": elapsed_ms,
-        }
-
-    state: dict = create_initial_state(
-        query, user_context, prefer_cloud=prefer_cloud, override_provider=override_provider
-    )
-
-    # 1. Router
-    _merge_update(state, await route_query(state))
-    yield {"type": "phase", "name": "router", "state": dict(state)}
-    if _timed_out():
-        yield _timeout_event()
-        return
-
-    # 2. Guardrails (prompt-injection)
-    _merge_update(state, await guardrails_check(state))
-    yield {"type": "phase", "name": "guardrails", "state": dict(state)}
-
-    if guardrails_gate(state) == "blocked":
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
         yield {
             "type": "blocked",
             "message": (
-                f"Blocked by guardrails: {state.get('guardrails_reason', 'prompt_injection')}"
+                f"Request exceeded the configured wall-clock budget ({budget:.1f}s) "
+                "and was cancelled."
             ),
             "state": dict(state),
             "latency_ms": elapsed_ms,
         }
         return
-    if _timed_out():
-        yield _timeout_event()
-        return
-
-    # 3. Security
-    _merge_update(state, await check_security(state))
-    yield {"type": "phase", "name": "security", "state": dict(state)}
-
-    if security_gate(state) == "blocked":
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        yield {
-            "type": "blocked",
-            "message": state.get("security_message", "Blocked by security policy."),
-            "state": dict(state),
-            "latency_ms": elapsed_ms,
-        }
-        return
-    if _timed_out():
-        yield _timeout_event()
-        return
-
-    # 3. Retrieve + grade + (optional rewrite loop)
-    while True:
-        _merge_update(state, await retrieve_documents(state))
-        yield {"type": "phase", "name": "retriever", "state": dict(state)}
-        if _timed_out():
-            yield _timeout_event()
-            return
-
-        _merge_update(state, await grade_documents(state))
-        yield {"type": "phase", "name": "grader", "state": dict(state)}
-        if _timed_out():
-            yield _timeout_event()
-            return
-
-        if should_retry(state) == "generate":
-            break
-
-        _merge_update(state, await rewrite_query(state))
-        yield {"type": "phase", "name": "rewriter", "state": dict(state)}
-        if _timed_out():
-            yield _timeout_event()
-            return
-
-    # 4. Streaming synthesis
-    final_synth_event: dict | None = None
-    async for event in synthesize_answer_stream(state):
-        if event["type"] == "token":
-            yield {"type": "token", "text": event["text"]}
-        elif event["type"] == "final":
-            final_synth_event = event
-
-    if final_synth_event:
-        state["generation"] = final_synth_event["generation"]
-        state["citations"] = final_synth_event["citations"]
-        state["confidence_score"] = final_synth_event["confidence_score"]
-        state["synth_provider"] = final_synth_event.get("synth_provider", "")
-        state["synth_model"] = final_synth_event.get("synth_model", "")
-        state["synth_usage"] = final_synth_event.get("synth_usage", {})
-        state["synth_latency_ms"] = final_synth_event.get("synth_latency_ms", 0.0)
-        _apply_audit(state, [final_synth_event["audit_entry"]])
-
-    # 4b. Faithfulness check (no-op when SAR_FAITHFULNESS_GATE_ENABLED is off)
-    pre_faith_gen = state.get("generation", "")
-    _merge_update(state, await check_faithfulness(state))
-    post_faith_gen = state.get("generation", "")
-    # If the gate trimmed or annotated the generation, emit the delta as a
-    # token so the UI sees the final approved text.
-    if post_faith_gen != pre_faith_gen:
-        yield {"type": "token", "text": "\n\n" + post_faith_gen}
-
-    # 5. Evaluator (runs on collected text, not streamed)
-    _merge_update(state, await evaluate_response(state))
 
     elapsed_ms = (time.perf_counter() - start_time) * 1000
 

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
+from typing import ClassVar
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -11,6 +12,23 @@ import core.graph as graph_mod
 from config.settings import settings
 from core.graph import build_rag_graph, create_initial_state, run_rag_pipeline
 from ingestion.metadata import UserContext
+
+
+class _DummySearcher:
+    """Minimal HybridSearcher stub for the streaming contract test."""
+
+    async def search(self, *_args, **_kwargs):
+        from retrieval.hybrid_search import SearchResult
+
+        return [
+            SearchResult(
+                id="d1",
+                text="Document X explains the answer.",
+                score=0.9,
+                metadata={"source_file": "x.txt", "page_number": 1},
+                source="dense",
+            )
+        ]
 
 
 @pytest.fixture()
@@ -177,6 +195,61 @@ class TestRequestDeadline:
         assert final["audit_trail"], "timeout must leave an audit entry"
         assert final["audit_trail"][0]["node"] == "deadline"
         assert final["audit_trail"][0]["action"] == "timeout"
+
+    def test_streaming_emits_token_events_via_writer(self, sample_user_context):
+        """Contract: streaming flows through graph.astream(stream_mode=['updates',
+        'custom']) and the synthesizer pushes token events through the
+        LangGraph writer. No hand-walked graph anywhere."""
+        from core.graph import run_rag_pipeline_stream
+
+        async def _fake_stream(prompt, **_kwargs):
+            for chunk in ("Hello ", "world", " [1]."):
+                yield chunk
+
+        # Make every other LLM call a no-op so the graph runs locally.
+        async def _fake_decision(prompt, **_kwargs):
+            class _R:
+                provider = "ollama"
+                model = "test"
+                reason = "test"
+                forced_local = False
+
+            class _Resp:
+                usage: ClassVar[dict] = {}
+                latency_ms = 0.0
+
+            return ("yes", _R(), _Resp())
+
+        async def _drive():
+            tokens: list[str] = []
+            saw_phase = False
+            with (
+                patch("core.agents.synthesizer.call_llm_stream", _fake_stream),
+                patch("core.agents.router.call_llm_with_decision", _fake_decision),
+                patch("core.agents.retriever.call_llm_async", AsyncMock(return_value="yes")),
+                patch(
+                    "core.agents.retriever._get_hybrid_searcher",
+                    return_value=_DummySearcher(),
+                ),
+                patch("core.agents.security.call_llm_async", AsyncMock(return_value="SAFE")),
+                patch("core.agents.evaluator.call_llm_async", AsyncMock(return_value="0.8")),
+            ):
+                async for event in run_rag_pipeline_stream(
+                    query="What is X?",
+                    user_context=sample_user_context,
+                    thread_id="t-stream-contract",
+                ):
+                    if event.get("type") == "token":
+                        tokens.append(event["text"])
+                    elif event.get("type") == "phase":
+                        saw_phase = True
+            return tokens, saw_phase
+
+        tokens, saw_phase = asyncio.run(_drive())
+        assert saw_phase, "phase events must surface from astream(updates)"
+        # At least the three streamed chunks landed via the writer.
+        joined = "".join(tokens)
+        assert "Hello " in joined and "world" in joined and "[1]." in joined
 
     def test_run_rag_pipeline_disabled_when_budget_zero(self, sample_user_context):
         """SAR_REQUEST_TIMEOUT_S=0 disables the deadline."""
