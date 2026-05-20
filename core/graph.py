@@ -21,6 +21,7 @@ from langgraph.graph import END, START, StateGraph
 
 from config.settings import settings
 from core.agents.evaluator import evaluate_response
+from core.agents.faithfulness import check_faithfulness
 from core.agents.guardrails import guardrails_check, guardrails_gate
 from core.agents.retriever import grade_documents, retrieve_documents, should_retry
 from core.agents.router import rewrite_query, route_query
@@ -290,6 +291,7 @@ def _compose_workflow() -> StateGraph:
     workflow.add_node("grader", grade_documents)
     workflow.add_node("rewriter", rewrite_query)
     workflow.add_node("synthesizer", synthesize_answer)
+    workflow.add_node("faithfulness", check_faithfulness)
     workflow.add_node("evaluator", evaluate_response)
     workflow.add_edge(START, "router")
     workflow.add_edge("router", "guardrails")
@@ -310,7 +312,11 @@ def _compose_workflow() -> StateGraph:
         {"rewrite": "rewriter", "generate": "synthesizer"},
     )
     workflow.add_edge("rewriter", "retriever")
-    workflow.add_edge("synthesizer", "evaluator")
+    # Faithfulness sits between synth and evaluator so the evaluator's
+    # confidence math can read faithfulness_ratio directly. When the gate
+    # is disabled the node is a no-op pass-through.
+    workflow.add_edge("synthesizer", "faithfulness")
+    workflow.add_edge("faithfulness", "evaluator")
     workflow.add_edge("evaluator", END)
     return workflow
 
@@ -385,8 +391,45 @@ def create_initial_state(
         "synth_latency_ms": 0.0,
         "needs_human_review": False,
         "evaluation_notes": "",
+        "faithfulness_ratio": 1.0,
+        "faithfulness_unsupported": [],
         "audit_trail": [],
     }
+
+
+def _build_timeout_state(
+    query: str,
+    user_context: UserContext,
+    elapsed_ms: float,
+    prefer_cloud: bool,
+    override_provider: str,
+) -> GraphState:
+    """Synthesize a final-state dict for a request that hit the SLO deadline.
+
+    Mirrors the shape of a normal final state so downstream code (UI rendering,
+    cost dashboard, audit logger) treats it the same as a synthesized answer.
+    """
+    state = create_initial_state(
+        query, user_context, prefer_cloud=prefer_cloud, override_provider=override_provider
+    )
+    state["generation"] = (
+        "Request exceeded the configured wall-clock budget and was cancelled. "
+        "Try a shorter query, disable streaming, or raise SAR_REQUEST_TIMEOUT_S."
+    )
+    state["citations"] = []
+    state["confidence_score"] = 0.0
+    state["needs_human_review"] = True
+    state["evaluation_notes"] = "request_timeout"
+    state["audit_trail"] = [
+        {
+            "node": "deadline",
+            "action": "timeout",
+            "elapsed_ms": elapsed_ms,
+            "budget_s": settings.request_timeout_s,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+    ]
+    return state
 
 
 async def run_rag_pipeline(
@@ -399,7 +442,9 @@ async def run_rag_pipeline(
     """Execute the full RAG pipeline and return the final state.
 
     High-level async function that builds the graph, creates initial state,
-    and invokes the workflow with checkpointing enabled.
+    and invokes the workflow with checkpointing enabled. Bounded by
+    ``settings.request_timeout_s``: on deadline, returns a graceful timeout
+    state with ``needs_human_review=True`` rather than blocking indefinitely.
 
     Args:
         query: The user's natural language query.
@@ -424,7 +469,25 @@ async def run_rag_pipeline(
 
     config = {"configurable": {"thread_id": thread_id}}
 
-    final_state = await graph.ainvoke(initial_state, config=config)
+    budget = settings.request_timeout_s
+    try:
+        if budget and budget > 0:
+            async with asyncio.timeout(budget):
+                final_state = await graph.ainvoke(initial_state, config=config)
+        else:
+            final_state = await graph.ainvoke(initial_state, config=config)
+    except TimeoutError:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.error(
+            "rag_pipeline_timeout",
+            budget_s=budget,
+            elapsed_ms=elapsed_ms,
+            user_id=user_context.user_id,
+            thread_id=thread_id,
+        )
+        return _build_timeout_state(
+            query, user_context, elapsed_ms, prefer_cloud, override_provider
+        )
 
     elapsed_ms = (time.perf_counter() - start_time) * 1000
 
@@ -508,6 +571,43 @@ async def run_rag_pipeline_stream(
         thread_id=thread_id,
     )
     start_time = time.perf_counter()
+    budget = settings.request_timeout_s
+
+    def _timed_out() -> bool:
+        return bool(budget and budget > 0 and (time.perf_counter() - start_time) > budget)
+
+    def _timeout_event() -> dict:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.error(
+            "rag_pipeline_stream_timeout",
+            budget_s=budget,
+            elapsed_ms=elapsed_ms,
+            user_id=user_context.user_id,
+            thread_id=thread_id,
+        )
+        _apply_audit(
+            state,
+            [
+                {
+                    "node": "deadline",
+                    "action": "timeout",
+                    "elapsed_ms": elapsed_ms,
+                    "budget_s": budget,
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+            ],
+        )
+        state["needs_human_review"] = True
+        state["evaluation_notes"] = "request_timeout"
+        return {
+            "type": "blocked",
+            "message": (
+                "Request exceeded the configured wall-clock budget "
+                f"({budget:.1f}s) and was cancelled."
+            ),
+            "state": dict(state),
+            "latency_ms": elapsed_ms,
+        }
 
     state: dict = create_initial_state(
         query, user_context, prefer_cloud=prefer_cloud, override_provider=override_provider
@@ -516,6 +616,9 @@ async def run_rag_pipeline_stream(
     # 1. Router
     _merge_update(state, await route_query(state))
     yield {"type": "phase", "name": "router", "state": dict(state)}
+    if _timed_out():
+        yield _timeout_event()
+        return
 
     # 2. Guardrails (prompt-injection)
     _merge_update(state, await guardrails_check(state))
@@ -532,6 +635,9 @@ async def run_rag_pipeline_stream(
             "latency_ms": elapsed_ms,
         }
         return
+    if _timed_out():
+        yield _timeout_event()
+        return
 
     # 3. Security
     _merge_update(state, await check_security(state))
@@ -546,20 +652,32 @@ async def run_rag_pipeline_stream(
             "latency_ms": elapsed_ms,
         }
         return
+    if _timed_out():
+        yield _timeout_event()
+        return
 
     # 3. Retrieve + grade + (optional rewrite loop)
     while True:
         _merge_update(state, await retrieve_documents(state))
         yield {"type": "phase", "name": "retriever", "state": dict(state)}
+        if _timed_out():
+            yield _timeout_event()
+            return
 
         _merge_update(state, await grade_documents(state))
         yield {"type": "phase", "name": "grader", "state": dict(state)}
+        if _timed_out():
+            yield _timeout_event()
+            return
 
         if should_retry(state) == "generate":
             break
 
         _merge_update(state, await rewrite_query(state))
         yield {"type": "phase", "name": "rewriter", "state": dict(state)}
+        if _timed_out():
+            yield _timeout_event()
+            return
 
     # 4. Streaming synthesis
     final_synth_event: dict | None = None
@@ -578,6 +696,15 @@ async def run_rag_pipeline_stream(
         state["synth_usage"] = final_synth_event.get("synth_usage", {})
         state["synth_latency_ms"] = final_synth_event.get("synth_latency_ms", 0.0)
         _apply_audit(state, [final_synth_event["audit_entry"]])
+
+    # 4b. Faithfulness check (no-op when SAR_FAITHFULNESS_GATE_ENABLED is off)
+    pre_faith_gen = state.get("generation", "")
+    _merge_update(state, await check_faithfulness(state))
+    post_faith_gen = state.get("generation", "")
+    # If the gate trimmed or annotated the generation, emit the delta as a
+    # token so the UI sees the final approved text.
+    if post_faith_gen != pre_faith_gen:
+        yield {"type": "token", "text": "\n\n" + post_faith_gen}
 
     # 5. Evaluator (runs on collected text, not streamed)
     _merge_update(state, await evaluate_response(state))

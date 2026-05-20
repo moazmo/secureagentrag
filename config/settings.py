@@ -113,6 +113,42 @@ class Settings(BaseSettings):
     # ── PostgreSQL (for LangGraph checkpointing) ─────────────────────────────────
     postgres_url: str = "postgresql://sar_user:sar_password@localhost:5433/secureagentrag"
 
+    # ── Pipeline SLO ─────────────────────────────────────────────────────────────
+    # Hard wall-clock budget for a single RAG pipeline run (rewrite loop +
+    # retrieval + grading + synthesis + evaluation). On timeout the caller
+    # gets a graceful refusal + audit entry; nothing partial is rendered as
+    # if the answer succeeded. 0 disables the deadline.
+    request_timeout_s: float = 60.0
+
+    # ── Authentication ───────────────────────────────────────────────────────────
+    # When ``jwt_secret`` is set the FastAPI / MCP layers verify HS256-signed
+    # JWTs and derive UserContext from validated claims. When unset, callers
+    # fall back to the dev-mode base64(json(UserContext)) token shape so
+    # existing tests and smoke scripts keep working — but a runtime warning is
+    # emitted on every request. Production deployments MUST set this.
+    #
+    # ``jwt_issuer`` / ``jwt_audience`` are checked against ``iss`` / ``aud``
+    # claims when present. Leave empty to disable that check (default).
+    # ``jwt_ttl_seconds`` is the lifetime of tokens minted via the local
+    # ``/token`` dev endpoint; real IdPs (Keycloak/Auth0) set their own.
+    jwt_secret: str | None = None
+    jwt_issuer: str = "secureagentrag"
+    jwt_audience: str = "secureagentrag-api"
+    jwt_ttl_seconds: int = 3600
+    jwt_algorithm: str = "HS256"
+
+    # ── Citation Faithfulness Gate (NLI) ─────────────────────────────────────────
+    # After synthesis, run a per-sentence NLI check: for each sentence that
+    # carries an inline `[N]` citation, ask a yes/no entailment question
+    # against the cited chunk's text. Sentences that fail are either marked
+    # `[unsupported]` (soft mode) or dropped from the answer (strict mode).
+    # The check uses the same local LLM as the rest of the graph — no extra
+    # model download. Cost: one LLM call per cited sentence (parallel).
+    faithfulness_gate_enabled: bool = False
+    faithfulness_gate_mode: str = "flag"  # "flag" | "drop"
+    faithfulness_threshold: float = 0.7  # min entailment ratio to consider answer faithful
+    faithfulness_max_concurrent: int = 4  # parallel NLI checks
+
     # ── Redis (for distributed rate limiting / caching) ──────────────────────────
     redis_url: str = "redis://localhost:6379/0"
     use_redis_rate_limiter: bool = False

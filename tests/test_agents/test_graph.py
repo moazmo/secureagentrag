@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import patch
+
 import pytest
 
-from core.graph import build_rag_graph, create_initial_state
+import core.graph as graph_mod
+from config.settings import settings
+from core.graph import build_rag_graph, create_initial_state, run_rag_pipeline
 from ingestion.metadata import UserContext
 
 
@@ -83,7 +88,11 @@ class TestBuildRagGraph:
         assert ("guardrails", "security") in edge_pairs
         assert ("retriever", "grader") in edge_pairs
         assert ("rewriter", "retriever") in edge_pairs
-        assert ("synthesizer", "evaluator") in edge_pairs
+        # Faithfulness gate sits between synth and evaluator so the
+        # evaluator can read faithfulness_ratio when it's enabled, and the
+        # node is a no-op when disabled.
+        assert ("synthesizer", "faithfulness") in edge_pairs
+        assert ("faithfulness", "evaluator") in edge_pairs
 
 
 class TestCreateInitialState:
@@ -131,3 +140,70 @@ class TestCreateInitialState:
         assert "org_id" in uc
         assert "roles" in uc
         assert "clearance_level" in uc
+
+
+class TestRequestDeadline:
+    """The pipeline must enforce settings.request_timeout_s and refuse
+    gracefully — never block the caller forever."""
+
+    def test_run_rag_pipeline_returns_timeout_state(self, sample_user_context):
+        """A graph.ainvoke that exceeds the budget produces a timeout final state."""
+
+        class _SlowGraph:
+            async def ainvoke(self, *_args, **_kwargs):
+                # Sleep well beyond the test budget so the deadline must trigger.
+                await asyncio.sleep(2.0)
+                raise AssertionError("graph should have been cancelled by deadline")
+
+        async def _fake_build():
+            return _SlowGraph()
+
+        with (
+            patch.object(settings, "request_timeout_s", 0.05),
+            patch.object(graph_mod, "build_rag_graph_async", _fake_build),
+        ):
+            final = asyncio.run(
+                run_rag_pipeline(
+                    query="anything",
+                    user_context=sample_user_context,
+                    thread_id="t-timeout",
+                )
+            )
+
+        assert "exceeded" in final["generation"].lower()
+        assert final["needs_human_review"] is True
+        assert final["evaluation_notes"] == "request_timeout"
+        assert final["confidence_score"] == 0.0
+        assert final["audit_trail"], "timeout must leave an audit entry"
+        assert final["audit_trail"][0]["node"] == "deadline"
+        assert final["audit_trail"][0]["action"] == "timeout"
+
+    def test_run_rag_pipeline_disabled_when_budget_zero(self, sample_user_context):
+        """SAR_REQUEST_TIMEOUT_S=0 disables the deadline."""
+
+        called = {"n": 0}
+
+        class _FastGraph:
+            async def ainvoke(self, initial_state, **_kwargs):
+                called["n"] += 1
+                # Return a minimal final state the pipeline can post-process.
+                initial_state["generation"] = "ok"
+                initial_state["audit_trail"] = [{"node": "router"}]
+                return initial_state
+
+        async def _fake_build():
+            return _FastGraph()
+
+        with (
+            patch.object(settings, "request_timeout_s", 0.0),
+            patch.object(graph_mod, "build_rag_graph_async", _fake_build),
+        ):
+            final = asyncio.run(
+                run_rag_pipeline(
+                    query="hi",
+                    user_context=sample_user_context,
+                    thread_id="t-nobudget",
+                )
+            )
+        assert called["n"] == 1
+        assert final["generation"] == "ok"
