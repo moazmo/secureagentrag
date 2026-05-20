@@ -25,27 +25,48 @@ Designed for deployment on consumer-grade hardware (8GB+ VRAM), SecureAgentRAG u
 
 ---
 
-## Key Features
+## The hero story
+
+Most RAG demos retrieve docs and ask an LLM to cite them. SecureAgentRAG goes four steps further — and these are the only things you need to read about the project:
+
+1. **Corrective RAG + NLI citation faithfulness.** Cited sentences are checked back against the source chunk with a local-model entailment pass. Unsupported claims are flagged (`*[unsupported]*`) or dropped. Citation present ≠ claim entailed; we enforce the gap.
+2. **RBAC at the vector layer + multi-tenant collections + signed JWT auth.** Qdrant payload filters enforce role/clearance on every search. Multi-tenant flag scopes each org to its own collection. HS256-signed bearer tokens replace the dev base64 shape; every audit entry carries the `jti`.
+3. **Privacy-first hybrid inference.** A sensitivity router forces HIGH-sensitivity work to local Ollama regardless of the caller's `prefer_cloud`. LOW work can opt into Groq / OpenAI / Anthropic. Provenance is recorded in the audit trail.
+4. **Tamper-evident audit chain with SLO deadlines.** Every operation lands in a SHA-256 hash-chained JSONL log; the chain verifier detects edits/insertions/deletions. The pipeline respects a configurable wall-clock budget and refuses gracefully on timeout.
+
+One-shot interview demo:
+
+```bash
+uv run python -m scripts.interview_demo
+# Walks 4 personas through the corpus, blocks a prompt-injection probe,
+# verifies the audit chain, exercises the deadline + faithfulness gate.
+```
+
+<details>
+<summary>Full feature list</summary>
 
 | Feature | Description |
 |---------|-------------|
-| **Multi-Agent Corrective RAG** | LangGraph-orchestrated workflow with router, retriever, grader, rewriter, synthesizer, and evaluator agents. Automatic query refinement when relevance drops below threshold. SQLite checkpointer persists thread state across restarts. |
-| **RBAC at Vector DB Level** | Role-based access control enforced via Qdrant metadata filters — unauthorized documents are never returned regardless of semantic similarity. |
-| **Hybrid Inference Routing** | Sensitivity-based routing ensures HIGH-sensitivity data never leaves local infrastructure. Cloud fallback available for low-sensitivity workloads. |
-| **Hybrid Search + Reranking** | Dense retrieval (BGE-M3) combined with BM25 sparse search via Reciprocal Rank Fusion, followed by cross-encoder reranking for maximum relevance. |
-| **True Token Streaming** | Synthesis tokens stream from the LLM through the pipeline to the UI — no fake post-hoc word-by-word replay. Works for Ollama, Groq, OpenAI, Anthropic. |
-| **Arabic + Multilingual Support** | BGE-M3 multilingual embeddings + PaddleOCR for bilingual document processing (English/Arabic). |
-| **Production Observability** | Structured logging (structlog), distributed tracing (Arize Phoenix/OpenTelemetry), and comprehensive audit trail with JSONL persistence. |
-| **Evaluation Pipeline** | Ragas metrics (faithfulness, relevancy, context precision/recall) + custom latency/confidence/RBAC tracking with Streamlit dashboard. |
-| **Privacy-First Architecture** | All data stays local by default. Cloud providers are opt-in fallbacks, never the default path for sensitive data. |
-| **VRAM-Optimized** | Runs on 8GB GPUs with quantized models. Designed for consumer hardware without sacrificing capability. |
-| **Prompt-Injection Guardrails** | Dedicated graph node blocks jailbreak / system-prompt-override attempts before they spend embedding or LLM budget. Output also scanned for system-prompt leakage. |
-| **Tamper-Evident Audit Chain** | SHA-256 hash chain across all audit entries. `scripts/verify_audit_chain.py` detects edits, insertions, or deletions. |
-| **PII Redaction** | Email, phone, SSN, credit-card (Luhn-validated), IBAN, IP, and API keys are scrubbed before audit log + query cache persistence. Live in-flight state untouched. |
-| **Contextual Retrieval & HyDE** | Opt-in Anthropic-style contextual chunks and hypothetical-document embeddings for measurable recall gains on complex queries. |
-| **MCP Server + FastAPI** | First-class IDE integration (Claude Desktop / Code / Cursor) and REST API — both share the same `QueryResponse` Pydantic schema. |
-| **Cost Dashboard** | $/query for Groq / OpenAI / Anthropic + electricity-equivalent for local. Makes the privacy-vs-spend trade-off legible at a glance. |
-| **CI Eval Gating** | Nightly Ragas evaluation against a golden Q/A set; > 5 pp regression on faithfulness or context_precision opens an issue. |
+| **Multi-Agent Corrective RAG** | LangGraph workflow: router, guardrails, security, retriever, grader, rewriter, synthesizer, faithfulness, evaluator. Rewrite loop refines the query when relevance drops; the synthesizer refuses instead of synthesizing from off-topic context. Async Postgres / SQLite checkpointer persists thread state. |
+| **NLI Faithfulness Gate** | Per-sentence entailment check after synthesis. Annotates or drops unsupported claims. Local model — no extra download. Threshold gates `needs_human_review` and feeds the confidence score. |
+| **RBAC at Vector DB Level** | Role + clearance enforced via Qdrant metadata filters; unauthorized docs never returned regardless of similarity. |
+| **Multi-Tenant Collections** | Each org optionally gets its own `documents_{org_id}` collection; cross-tenant queries return zero results, BM25 is still RBAC-checked post-fusion. |
+| **Signed JWT Auth** | HS256 bearer tokens (`python-jose`) replace the dev base64 fallback. `/token` endpoint mints dev tokens; production drops a Keycloak/Auth0 JWKS verifier into the same hook. |
+| **Pipeline SLO Deadline** | `SAR_REQUEST_TIMEOUT_S` bounds the whole graph; on overflow the caller gets a graceful refusal + audit entry. |
+| **Hybrid Inference Routing** | Sensitivity-based routing forces HIGH to local; LOW/MEDIUM may opt into Groq / OpenAI / Anthropic. Provider + model recorded in audit. |
+| **Hybrid Search + Reranking** | Dense (BGE-M3) + BM25 fused via RRF, then cross-encoder or ColBERTv2 reranker. Self-query and HyDE retrieval modes available. |
+| **True Token Streaming** | Synthesis tokens stream end-to-end. Works for Ollama, Groq, OpenAI, Anthropic. |
+| **Arabic + Multilingual** | BGE-M3 multilingual embeddings + PaddleOCR / Qwen-VL OCR for English + Arabic. |
+| **Observability** | Structured `structlog`, Phoenix / OpenTelemetry tracing, per-stage latency in the audit trail. |
+| **Eval Pipeline + CI Gating** | Ragas faithfulness / relevancy / context-precision; nightly job opens an issue on >5 pp regression. |
+| **Prompt-Injection Guardrails** | Dedicated graph node blocks jailbreak / system-prompt-override attempts before retrieval. Output scanned for system-prompt leakage. |
+| **Tamper-Evident Audit Chain** | SHA-256 hash chain across audit entries. `scripts/verify_audit_chain.py` detects edits, insertions, and deletions. |
+| **PII Redaction** | Email, phone, SSN, credit-card (Luhn-validated), IBAN, IP, API keys scrubbed before audit + query cache. |
+| **Contextual Retrieval + HyDE + RAG Fusion** | Opt-in Anthropic-style contextual chunks, hypothetical-document embeddings, multi-query RAG Fusion. |
+| **MCP Server + FastAPI** | First-class IDE integration (Claude Desktop / Code / Cursor) and REST API sharing one Pydantic schema. |
+| **Cost Dashboard** | $/query for cloud providers + electricity-equivalent for local. Makes the privacy-vs-spend trade-off legible. |
+
+</details>
 
 ---
 
