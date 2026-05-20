@@ -564,15 +564,23 @@ Delivered:
 - [x] **CI eval gating** — nightly Ragas run on golden set, regression > 5pp opens an issue
 - [x] **Structured response schema** — Pydantic `QueryResponse` shared by FastAPI + MCP
 
-Planned:
+- [x] **Multi-modal RAG** — VLM image understanding via `ingestion/vlm_ocr.py` + `ingestion/multimodal.py` (Qwen-VL primary, PaddleOCR fallback). Opt-in via `SAR_VLM_OCR_ENABLED` and `SAR_MULTIMODAL_DESCRIPTIONS_ENABLED`.
+- [x] **JSON-mode synth** — structured citation output via `_build_json_synthesis_prompt`. Opt-in via `SAR_JSON_CITATIONS_ENABLED`.
+- [x] **Self-query** — natural-language filter extraction in `retrieval/self_query.py`. Opt-in via `SAR_SELF_QUERY_ENABLED`.
+- [x] **HyDE retrieval** — hypothetical-document embeddings via `retrieval/hyde.py`. Opt-in via `SAR_HYDE_ENABLED`.
+- [x] **Multi-tenant deployment** — per-org Qdrant collections via `QdrantManager.for_org()`. Opt-in via `SAR_MULTI_TENANT_COLLECTIONS`.
+- [x] **Kubernetes Helm chart** — production deployment manifests in `helm/secureagentrag/`.
+- [x] **LLM-based guardrails escalation** — `core/agents/guardrails_llm.py` runs a local-LLM second opinion on ambiguous queries after the regex gate. Opt-in via `SAR_GUARDRAILS_STRICT`.
+- [x] **NLI citation faithfulness gate** — per-sentence entailment check in `core/agents/faithfulness.py`. Opt-in via `SAR_FAITHFULNESS_GATE_ENABLED`.
+- [x] **Pipeline SLO deadline** — wall-clock budget via `SAR_REQUEST_TIMEOUT_S`.
+- [x] **Signed JWT auth** — HS256 bearer tokens via `utils/auth.py`.
 
-- [ ] **Multi-modal RAG** — image understanding and table extraction (Qwen-VL)
-- [ ] **JSON-mode synth** — function-calling for citations instead of regex parse
-- [ ] **Self-query** — extract structured filters from natural language
-- [ ] **Fine-tuned reranker** — domain-specific cross-encoder training
-- [ ] **Multi-tenant deployment** — full organization isolation with Qdrant namespaces
-- [ ] **Kubernetes Helm chart** — production deployment manifests
-- [ ] **LLamaGuard / NeMo Guardrails** — escalation path on top of regex gate
+Planned (not yet implemented):
+
+- [ ] **Fine-tuned reranker** — domain-specific cross-encoder training (current rerankers use off-the-shelf BGE-Reranker-v2-M3 or ColBERTv2 checkpoints).
+- [ ] **LlamaGuard / NeMo Guardrails integration** — drop-in classifier as an alternative to the local-LLM escalation path (the framework hook is in place; the model integration is not).
+- [ ] **SPLADE / Qdrant native sparse vectors** — retire the BM25 pickle for per-tenant sparse search.
+- [ ] **RS256 + JWKS auth** — swap HS256 for IdP-driven public-key verification (Keycloak / Auth0 / Microsoft Entra).
 
 ---
 
