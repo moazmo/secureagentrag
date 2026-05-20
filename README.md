@@ -573,14 +573,13 @@ Delivered:
 - [x] **LLM-based guardrails escalation** — `core/agents/guardrails_llm.py` runs a local-LLM second opinion on ambiguous queries after the regex gate. Opt-in via `SAR_GUARDRAILS_STRICT`.
 - [x] **NLI citation faithfulness gate** — per-sentence entailment check in `core/agents/faithfulness.py`. Opt-in via `SAR_FAITHFULNESS_GATE_ENABLED`.
 - [x] **Pipeline SLO deadline** — wall-clock budget via `SAR_REQUEST_TIMEOUT_S`.
-- [x] **Signed JWT auth** — HS256 bearer tokens via `utils/auth.py`.
+- [x] **Signed JWT auth — HS256 + RS256/JWKS** — `utils/auth.py` dispatches on `SAR_JWT_ALGORITHM`. RS256 mode pulls public keys from `SAR_JWKS_URL` with a TTL cache in `utils/jwks_cache.py`. Keycloak realm export at `deploy/keycloak-realm.json`; `docker compose --profile auth up -d keycloak` brings it up.
+- [x] **Qdrant native sparse vectors** — replaces the `rank_bm25` pickle. `retrieval/sparse_embeddings.py` supports `bm25` (default, no new deps) and `splade` (`naver/splade-cocondenser-ensembledistil` via transformers) backends. Sparse search hits Qdrant under the same RBAC filter as dense — entire BM25-bypass class of bugs is structurally impossible. Benchmark in `evaluation/benchmarks/splade_vs_bm25.md`. Migrate existing collections with `uv run python -m scripts.migrate_to_splade`.
 
 Planned (not yet implemented):
 
-- [ ] **Fine-tuned reranker** — domain-specific cross-encoder training (current rerankers use off-the-shelf BGE-Reranker-v2-M3 or ColBERTv2 checkpoints).
-- [ ] **LlamaGuard / NeMo Guardrails integration** — drop-in classifier as an alternative to the local-LLM escalation path (the framework hook is in place; the model integration is not).
-- [ ] **SPLADE / Qdrant native sparse vectors** — retire the BM25 pickle for per-tenant sparse search.
-- [ ] **RS256 + JWKS auth** — swap HS256 for IdP-driven public-key verification (Keycloak / Auth0 / Microsoft Entra).
+- [ ] **LlamaGuard / NeMo Guardrails classifier** — drop-in classifier as an alternative to the local-LLM escalation path. Model integration not yet wired (the framework hook in `core/agents/guardrails_llm.py` exists).
+- [ ] **Fine-tuned reranker** — domain-specific cross-encoder training. Current rerankers use off-the-shelf BGE-Reranker-v2-M3 or ColBERTv2 checkpoints.
 
 ---
 

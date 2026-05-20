@@ -30,7 +30,8 @@ graph TB
 
     subgraph SLO Layer
         Deadline[Request Deadline Guard]
-        JWT[JWT Verifier python-jose HS256]
+        JWT[JWT Verifier python-jose HS256 or RS256-JWKS]
+        JWKS[JWKS Cache TTL]
     end
 
     subgraph External Surfaces
@@ -40,7 +41,7 @@ graph TB
 
     subgraph Retrieval Layer
         EmbedService[Embedding Service BGE-M3]
-        BM25[BM25 Sparse Index]
+        Sparse[Qdrant Native Sparse Vectors BM25 or SPLADE]
         RRF[Reciprocal Rank Fusion]
         Reranker[Cross-Encoder Reranker]
         QdrantClient[Qdrant Client + RBAC Filters]
@@ -100,9 +101,9 @@ graph TB
     JWT --> MCP
 
     Retriever --> EmbedService
-    Retriever --> BM25
+    Retriever --> Sparse
     EmbedService --> QdrantClient
-    BM25 --> RRF
+    Sparse --> QdrantClient
     QdrantClient --> RRF
     RRF --> Reranker
 
@@ -148,7 +149,7 @@ graph TB
 1. User submits a query through Streamlit
 2. RBAC context is constructed from user session (user_id, org_id, roles)
 3. LangGraph invokes the pipeline: route → security check → retrieve → grade → synthesize → evaluate
-4. Retrieval uses hybrid search (dense + BM25 → RRF → reranker) with RBAC filters
+4. Retrieval uses hybrid search (dense + Qdrant native sparse → RRF → reranker). Both paths share the same RBAC payload filter; sparse-only results are already authorised, no post-fusion re-check needed.
 5. If relevance is low, the corrective loop rewrites the query and retries
 6. Inference router selects local or cloud provider based on data sensitivity
 7. Response is returned with citations, confidence score, and evaluation metadata

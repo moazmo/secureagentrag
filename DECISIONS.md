@@ -482,3 +482,104 @@ default Proactor.
   base install.
 - (-) Windows users still need the selector loop policy — pinned at
   import time but documented in the RUNBOOK.
+
+## ADR-019: HS256 + RS256 dispatch with JWKS-cached verification
+
+**Status:** Accepted (2026-05-21)
+
+**Context:**
+The initial JWT layer (ADR-equivalent in [feat(auth): HS256-signed JWT
+bearer tokens](https://github.com/moazmo/secureagentrag/commit/025ce73))
+verified tokens with a shared HMAC secret. That secret has to live on
+both the API server and every token issuer, which is fine for a single-
+process demo but rules out external IdPs and key rotation across
+services. Production deployments need public-key verification against
+an identity provider's JWKS endpoint (Keycloak, Auth0, Microsoft Entra).
+
+**Decision:**
+1. Keep HS256 as the default (`SAR_JWT_ALGORITHM=HS256`) for local
+   development and the existing test suite. Setting
+   `SAR_JWT_ALGORITHM=RS256` plus `SAR_JWKS_URL=<idp jwks endpoint>`
+   switches the verifier to public-key mode.
+2. `utils/auth.py::_verify_jwt` dispatches on the algorithm flag. The
+   RS256 branch reads the token's `kid` header, looks up the
+   corresponding PEM in `utils/jwks_cache.py`, and hands it to
+   `python-jose`'s `jwt.decode`. Missing `kid` → `AuthError("bad_claims")`.
+   JWKS fetch errors → `AuthError("bad_signature")`.
+3. `utils/jwks_cache.py` keeps a per-URL TTL cache (default 300s,
+   `SAR_JWKS_CACHE_TTL_SECONDS`). On `kid` miss inside the TTL the
+   cache refreshes once before giving up. On fetch error the cache
+   serves stale keys if available — graceful degradation through a
+   transient IdP outage.
+4. Production deployments bring up Keycloak via the new compose profile
+   (`docker compose --profile auth up -d keycloak`) which auto-imports
+   the realm from `deploy/keycloak-realm.json`.
+
+**Consequences:**
+- (+) Public-key verification works against any standards-compliant
+  OIDC provider — no code change needed past the JWKS URL.
+- (+) Key rotation handled transparently by the cache: rotating keys
+  in Keycloak triggers a JWKS refresh on the first request with the
+  new `kid`. Old tokens remain valid until their `exp`.
+- (+) Stable error-reason taxonomy (`missing` / `expired` /
+  `bad_signature` / `bad_claims` / `malformed`) shared across HS256
+  and RS256 so HTTP status code mapping stays unchanged.
+- (-) Adds ~125 LOC for the cache + the dispatch logic. Justified by
+  the production-readiness win.
+- (-) `cryptography` is now required (transitively via `python-jose[cryptography]`)
+  for the JWK→PEM conversion.
+
+## ADR-020: Qdrant native sparse vectors over `rank_bm25` pickle
+
+**Status:** Accepted (2026-05-21)
+
+**Context:**
+The hybrid retrieval path stored BM25 in a global `rank_bm25` pickle on
+disk, behind a `FileLock` for concurrent writes. Two problems:
+
+1. **RBAC.** BM25 has no payload filter, so the search ran on the full
+   global index. The post-fusion RBAC re-check in `HybridSearcher` was
+   the only thing keeping unauthorised hits out — and it landed twice
+   as a security regression (most recently when a cross-org user got
+   3 ACME docs back through the BM25-only branch).
+2. **Multi-tenancy.** With `SAR_MULTI_TENANT_COLLECTIONS=true` each org
+   has its own Qdrant collection, but the BM25 pickle stayed shared
+   across all orgs. Two orgs sharing one BM25 index defeats the
+   isolation story.
+
+**Decision:**
+1. Drop `rank_bm25` and `utils/file_lock.py`. Replace with Qdrant 1.10+
+   native sparse vectors stored alongside dense vectors on each point.
+2. New `retrieval/sparse_embeddings.py` with two pluggable backends:
+   - `bm25` — whitespace tokenize + `zlib.crc32` hash for deterministic
+     integer indices, term-frequency normalised by max-tf. Zero new
+     dependencies. Default.
+   - `splade` — `naver/splade-cocondenser-ensembledistil` via
+     `transformers.AutoModelForMaskedLM` with `log(1 + ReLU(x))` +
+     max-pool. Requires the `[embeddings-local]` extra. Falls back to
+     `bm25` on import/runtime errors.
+3. `HybridSearcher` now calls `search_sparse_with_rbac` on
+   `QdrantManager`, which applies the same `build_rbac_filter` that
+   dense uses. The post-fusion RBAC re-check goes away — sparse-only
+   results are already authorised.
+4. `scripts/migrate_to_splade.py` walks every point in a collection
+   and re-upserts it with both dense and sparse vectors. Idempotent.
+
+**Consequences:**
+- (+) The entire cross-tenant / over-clearance / role-mismatch BM25
+  bypass class is **structurally impossible**. Sparse search returns
+  zero unauthorised candidates by construction.
+- (+) Per-tenant isolation: with multi-tenant collections, each org's
+  sparse index lives in its own collection alongside its dense index.
+- (+) ~200 LOC removed from `HybridSearcher` (the file-lock dance, the
+  conditional re-check, the BM25-only fetch branch).
+- (+) Benchmark (`evaluation/benchmarks/splade_vs_bm25.md`) shows sparse
+  is ~55× faster than dense per query (no Ollama round-trip) on the
+  NIST corpus. Hybrid (RRF over both) recovers ~80% of dense quality
+  while being resilient to embedding-service outages.
+- (-) Sparse latency advantage doesn't compose with dense — hybrid is
+  bounded by the slowest path.
+- (-) SPLADE requires `[embeddings-local]` (transformers + torch ~2 GB
+  install). The default `bm25` backend keeps the slim profile.
+- (-) Existing collections need re-indexing via the migration script
+  before sparse queries return results.

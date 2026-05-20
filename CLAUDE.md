@@ -123,39 +123,41 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ## 5. State of the codebase (as of this commit)
 
-- **484 tests pass**, 3 skipped. Lint + format clean.
-- **~26.7k Python LOC** across 130 files.
+- **485 tests pass**, 0 skipped. Lint + format clean.
+- **~26.5k Python LOC** across 131 files (net -200 LOC after SPLADE migration).
 - **9 graph nodes:** router → guardrails → security → retriever → grader → rewriter → synthesizer → faithfulness → evaluator.
 - Streamlit, FastAPI, MCP all share `core.schemas.QueryResponse`.
+- **Hybrid search** now uses Qdrant native sparse vectors. The `rank_bm25` pickle, `utils/file_lock.py`, and the post-fusion RBAC re-check are all gone. Sparse runs under the same RBAC filter as dense — cross-tenant bypass is structurally impossible.
+- **Auth** dispatches HS256 (default, dev) ↔ RS256 (Keycloak/Auth0 via JWKS) on `SAR_JWT_ALGORITHM`.
 - Recent commits (chronological):
+  - `b43bc66` feat(ops): Keycloak under docker-compose `auth` profile + realm export
+  - `e80a519` feat(auth): RS256 + JWKS verification path with in-memory key cache
+  - `a8c43b6` feat(scripts): SPLADE migration + retrieval benchmark tooling
+  - `26500ae` feat(retrieval): Qdrant native sparse vectors replace rank_bm25 pickle
+  - `17069ac` docs(agents): add 12 advanced real-world scenarios (#13-24) to UI gate
+  - `092a06f` docs(agents): mandate end-of-mission Streamlit browser test with evidence
+  - `18a66d5` docs: add CLAUDE.md (project brief) + AGENTS.md (operating manual)
   - `b8cdaa2` fix(ui): role multiselect expanded to all seeded roles
   - `3b2cab7` fix(security): close BM25-bypass RBAC leak when dense returns zero
-  - `807636a` docs(readme): correct stale Planned section — 8 items already shipped
-  - `2164a81` docs: delete REVIEW_REPORT.md + refresh architecture.md
-  - `9b8dc19` chore(scripts): merge cloud_bench_quick + seed_demo_rbac via flags
-  - `79f2af8` fix(logging): bootstrap structlog at import time (Streamlit Windows)
   - `9c39229` refactor(streaming): unify via graph.astream(stream_mode=updates+custom)
-  - `069c3e5` feat(demo): interview_demo + README tighten
-  - `025ce73` feat(auth): HS256 JWT replacing unsigned base64
   - `a75dd33` feat(faithfulness): NLI gate + evaluator integration
-  - `23c7ce6` feat(slo): SAR_REQUEST_TIMEOUT_S deadline
-  - `40b2cf9` fix(synthesizer): refuse when grader rejects all docs
+  - `025ce73` feat(auth): HS256 JWT replacing unsigned base64
 
 ---
 
-## 6. Genuinely remaining work (the "planned" list, audited 2026-05-20)
+## 6. Genuinely remaining work (audited 2026-05-21)
 
 In priority order. Each one is its own commit/PR-worthy unit.
 
-1. **SPLADE / Qdrant native sparse vectors** — retire `rank_bm25` pickle. Per-tenant by collection, no cross-tenant leakage class. Touches `retrieval/hybrid_search.py`, `retrieval/embeddings.py`, `ingestion/pipeline.py`. Likely **-300 LOC** when done. Risk: medium (requires re-indexing).
-2. **LlamaGuard / NeMo Guardrails classifier** — drop-in classifier as an alternative to the local-LLM escalation path in `core/agents/guardrails_llm.py`. Touches that file + new settings flag. Risk: low.
-3. **Fine-tuned domain reranker** — train a cross-encoder on labeled query/passage pairs from MS-MARCO or in-domain data. Touches `retrieval/reranker.py` + new `scripts/train_reranker.py`. Risk: low (off-the-shelf fallback always works).
-4. **RS256 + JWKS auth** — swap HS256 for IdP-driven public-key verification in `utils/auth.py::_verify_jwt`. The hook is 30 LOC; swap is ~20 LOC. Add `docker compose` profile with Keycloak. Touches `utils/auth.py`, `docker-compose.yml`. Risk: low.
+1. **LlamaGuard / NeMo Guardrails classifier** — drop-in classifier as an alternative to the local-LLM escalation path in `core/agents/guardrails_llm.py`. New `core/agents/guardrails_llamaguard.py`, new flag `SAR_GUARDRAILS_BACKEND=regex|llm|llamaguard`. Risk: low. Real-data: score on `jailbreakbench/JBB-Behaviors`.
+2. **Fine-tuned domain reranker** — train a cross-encoder on MS-MARCO triplets + hard-negative mining on NIST corpus. New `scripts/train_reranker.py`, checkpoint under `data/checkpoints/reranker-domain-v1/`. Risk: low (off-the-shelf fallback always works).
+3. **Slim `app/views/chat.py`** (currently 783 LOC) — extract a `chat_service.py` so the view is UI-only. Less code, easier review.
+4. **Slim `inference/cloud_clients.py`** (735 LOC) — one ≤80-LOC class per provider, shared retry/timeout in parent.
+5. **Calibrate confidence + faithfulness thresholds** against a labeled gold set (Ragas). Wire into CI so >5pp regression fails the build.
 
-Plus continuous improvement of the main goal:
-- **Slim `app/views/chat.py`** (currently 783 LOC) — extract a `chat_service.py` so the view is UI-only. Less code, easier review.
-- **Calibrate confidence + faithfulness thresholds** against a labeled gold set (Ragas).
-- **Per-tenant BM25 / SPLADE indexes** when (1) lands.
+**Recently shipped** (was in this section, now done):
+- ✅ Qdrant native sparse vectors (ADR-020, commit `26500ae`)
+- ✅ RS256 + JWKS auth (ADR-019, commit `e80a519`)
 
 ---
 
