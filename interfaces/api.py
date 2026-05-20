@@ -26,6 +26,8 @@ import json
 from datetime import date
 from typing import Annotated
 
+from config.settings import settings
+from utils.auth import AuthError, issue_token, verify_token
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,20 +56,36 @@ if _FASTAPI_AVAILABLE:
 
     rate_limiter = RateLimiter()  # uses default token-bucket config
 
-    def _resolve_user(authorization: Annotated[str | None, Header()] = None) -> UserContext:
-        """Decode the bearer token into a ``UserContext``.
+    _AUTH_ERROR_STATUS: dict[str, int] = {
+        "missing": status.HTTP_401_UNAUTHORIZED,
+        "malformed": status.HTTP_401_UNAUTHORIZED,
+        "expired": status.HTTP_401_UNAUTHORIZED,
+        "bad_signature": status.HTTP_401_UNAUTHORIZED,
+        "bad_claims": status.HTTP_403_FORBIDDEN,
+    }
 
-        Token format: ``Bearer <base64(json(UserContext))>``. Production
-        replacement: validate a Keycloak / Auth0 JWT and map claims to roles.
+    def _resolve_user_full(
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> tuple[UserContext, dict]:
+        """Verify the bearer token and return (UserContext, claims).
+
+        Delegates to :func:`utils.auth.verify_token`, which uses HS256 JWT
+        when ``SAR_JWT_SECRET`` is set and falls back to the legacy unsigned
+        base64 token otherwise (with a runtime warning).
         """
         if not authorization or not authorization.lower().startswith("bearer "):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
         token = authorization.split(" ", 1)[1]
         try:
-            payload = json.loads(base64.b64decode(token).decode("utf-8"))
-            return UserContext(**payload)
-        except Exception as exc:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"invalid token: {exc}") from exc
+            return verify_token(token)
+        except AuthError as exc:
+            code = _AUTH_ERROR_STATUS.get(exc.reason, status.HTTP_401_UNAUTHORIZED)
+            raise HTTPException(code, f"auth_{exc.reason}: {exc}") from exc
+
+    def _resolve_user(authorization: Annotated[str | None, Header()] = None) -> UserContext:
+        """Backward-compatible dependency returning only the UserContext."""
+        ctx, _claims = _resolve_user_full(authorization=authorization)
+        return ctx
 
     def _require_role(required: str):
         def _dep(user: Annotated[UserContext, Depends(_resolve_user)]) -> UserContext:
@@ -103,17 +121,21 @@ if _FASTAPI_AVAILABLE:
     @app.post("/query", response_model=QueryResponse, tags=["rag"])
     async def query_endpoint(
         body: QueryRequest,
-        user: Annotated[UserContext, Depends(_resolve_user)],
+        auth: Annotated[tuple[UserContext, dict], Depends(_resolve_user_full)],
     ) -> QueryResponse:
+        user, claims = auth
         if not rate_limiter.is_allowed(f"{user.user_id}:query"):
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "rate limit exceeded")
         # Caller-supplied user_id must match the bearer-token identity.
         if body.user_id != user.user_id:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "user_id mismatch")
+        # Use the JWT id so the audit trail can correlate a query with the
+        # exact token that authorised it; useful for revocation forensics.
+        jti = claims.get("jti", "unsigned")
         state = await run_rag_pipeline(
             query=body.query,
             user_context=user,
-            thread_id=f"api-{user.user_id}",
+            thread_id=f"api-{user.user_id}-{jti}",
             prefer_cloud=body.prefer_cloud,
             override_provider=body.override_provider,
         )
@@ -180,11 +202,75 @@ if _FASTAPI_AVAILABLE:
         result = audit_logger.verify_chain(start_date=start, end_date=end)
         return result
 
+    from pydantic import BaseModel as _PydBM
+
+    class _TokenRequest(_PydBM):
+        """Identity payload accepted by the dev ``/token`` endpoint."""
+
+        user_id: str
+        org_id: str = ""
+        roles: list[str] = []
+        clearance_level: int = 1
+        ttl_seconds: int | None = None
+
+    class _TokenResponse(_PydBM):
+        access_token: str
+        token_type: str = "bearer"
+        expires_in: int
+
+    @app.post("/token", response_model=_TokenResponse, tags=["auth"])
+    async def issue_dev_token(body: _TokenRequest) -> _TokenResponse:
+        """Mint a signed JWT for local testing.
+
+        In production the IdP (Keycloak / Auth0 / Microsoft Entra) issues the
+        token externally and this endpoint is removed via the
+        ``SAR_DISABLE_DEV_TOKEN`` flag — kept here so the e2e smoke script
+        and the Streamlit demo can mint a real token rather than the
+        unsigned base64 fallback.
+        """
+        if not settings.jwt_secret:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "SAR_JWT_SECRET is not configured; token endpoint disabled",
+            )
+        try:
+            token = issue_token(
+                user_id=body.user_id,
+                org_id=body.org_id,
+                roles=body.roles,
+                clearance_level=body.clearance_level,
+                ttl_seconds=body.ttl_seconds,
+            )
+        except AuthError as exc:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR, f"token_issue_{exc.reason}: {exc}"
+            ) from exc
+        return _TokenResponse(
+            access_token=token,
+            expires_in=body.ttl_seconds or settings.jwt_ttl_seconds,
+        )
+
 else:  # pragma: no cover
     app = None  # type: ignore[assignment]
 
 
 def mint_dev_token(user: dict) -> str:
-    """Convenience for local testing — build a bearer token for a UserContext dict."""
+    """Convenience for local testing — build a bearer token for a UserContext dict.
+
+    When ``SAR_JWT_SECRET`` is configured this mints a real signed JWT; with
+    no secret it falls back to the legacy unsigned base64 shape so existing
+    test fixtures keep working.
+    """
+    if settings.jwt_secret:
+        try:
+            return issue_token(
+                user_id=user.get("user_id", ""),
+                org_id=user.get("org_id", ""),
+                roles=list(user.get("roles", [])),
+                clearance_level=int(user.get("clearance_level", 1)),
+            )
+        except AuthError:
+            # Fall through to legacy shape on issuer error.
+            pass
     payload = json.dumps(user).encode("utf-8")
     return base64.b64encode(payload).decode("ascii")

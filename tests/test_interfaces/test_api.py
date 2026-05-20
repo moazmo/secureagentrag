@@ -301,7 +301,105 @@ class TestMintDevToken:
 
     def test_roundtrip(self):
         """A minted token decodes back to the original payload."""
-        payload = {"user_id": "test", "roles": ["admin"], "clearance_level": 3}
-        token = mint_dev_token(payload)
-        decoded = json.loads(base64.b64decode(token).decode("utf-8"))
-        assert decoded == payload
+        from config.settings import settings
+
+        # Force legacy unsigned mode for this specific test so the base64
+        # roundtrip is meaningful.
+        with patch.object(settings, "jwt_secret", None):
+            payload = {"user_id": "test", "roles": ["admin"], "clearance_level": 3}
+            token = mint_dev_token(payload)
+            decoded = json.loads(base64.b64decode(token).decode("utf-8"))
+            assert decoded == payload
+
+
+class TestJWTAuth:
+    """Signed-JWT path through the FastAPI surface.
+
+    When SAR_JWT_SECRET is set, /token mints a real JWT and /query verifies
+    signature, expiry, and claims.
+    """
+
+    @patch("interfaces.api.run_rag_pipeline", new_callable=AsyncMock)
+    def test_signed_jwt_accepted_on_query(self, mock_pipeline, client):
+        from config.settings import settings
+
+        mock_pipeline.return_value = {
+            "generation": "ok",
+            "citations": [],
+            "confidence_score": 0.9,
+            "needs_human_review": False,
+            "query_type": "simple",
+            "retry_count": 0,
+            "security_passed": True,
+            "guardrails_passed": True,
+            "synth_provider": "ollama",
+            "synth_model": "qwen3:8b",
+            "synth_latency_ms": 1.0,
+            "synth_usage": {},
+        }
+
+        with patch.object(settings, "jwt_secret", "TEST-SECRET-XYZ"):
+            tok = client.post(
+                "/token",
+                json={"user_id": "alice", "org_id": "acme", "roles": ["viewer"]},
+            )
+            assert tok.status_code == 200
+            access = tok.json()["access_token"]
+            assert access.count(".") == 2  # header.payload.signature
+
+            response = client.post(
+                "/query",
+                json={"query": "hi", "user_id": "alice"},
+                headers={"Authorization": f"Bearer {access}"},
+            )
+        assert response.status_code == 200
+        # The pipeline must have been called with a thread_id that carries
+        # the jti so audit can correlate the call back to a token.
+        call_kwargs = mock_pipeline.await_args.kwargs
+        assert call_kwargs["thread_id"].startswith("api-alice-")
+        assert call_kwargs["thread_id"] != "api-alice-unsigned"
+
+    def test_token_endpoint_503_without_secret(self, client):
+        from config.settings import settings
+
+        with patch.object(settings, "jwt_secret", None):
+            response = client.post(
+                "/token",
+                json={"user_id": "alice", "org_id": "acme", "roles": ["viewer"]},
+            )
+        assert response.status_code == 503
+
+    def test_legacy_base64_still_works_when_secret_unset(self, client):
+        """Backwards-compat path keeps existing smoke scripts running.
+
+        When ``SAR_JWT_SECRET`` is unset, the base64(json) token shape is
+        accepted (with a runtime warning) so the e2e harness and Streamlit
+        demo do not break in dev. This test pins that contract.
+        """
+        from config.settings import settings
+
+        with (
+            patch.object(settings, "jwt_secret", None),
+            patch("interfaces.api.run_rag_pipeline", new_callable=AsyncMock) as mock_pipeline,
+        ):
+            mock_pipeline.return_value = {
+                "generation": "ok",
+                "citations": [],
+                "confidence_score": 0.0,
+                "needs_human_review": False,
+                "query_type": "simple",
+                "retry_count": 0,
+                "security_passed": True,
+                "guardrails_passed": True,
+                "synth_provider": "",
+                "synth_model": "",
+                "synth_latency_ms": 0.0,
+                "synth_usage": {},
+            }
+            token = _make_token("legacy_user", ["viewer"])
+            r = client.post(
+                "/query",
+                json={"query": "hi", "user_id": "legacy_user"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert r.status_code == 200
