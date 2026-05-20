@@ -175,3 +175,15 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
         A bound structlog logger.
     """
     return structlog.get_logger(name)
+
+
+# Initialise logging at import time. Modules instantiated at *import time*
+# (e.g. ``utils.conversation_store.conversation_store``, ``utils.audit.audit_logger``)
+# call ``get_logger(...).info(...)`` before any application entry point gets
+# a chance to call setup_logging(). Without this bootstrap structlog's
+# default ``PrintLoggerFactory`` writes raw bytes to sys.stdout, which
+# Streamlit's stdout capture treats as ``OSError [Errno 22]`` on Windows.
+# Running setup_logging() unconditionally here is idempotent — the second
+# call from app/main.py is a harmless re-configure.
+with contextlib.suppress(Exception):
+    setup_logging()
