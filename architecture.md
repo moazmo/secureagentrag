@@ -24,7 +24,13 @@ graph TB
         Grader[Document Grader Agent]
         Rewriter[Query Rewriter Agent]
         Synth[Synthesizer Agent]
+        Faith[Faithfulness Gate Agent NLI]
         Eval[Evaluator Agent]
+    end
+
+    subgraph SLO Layer
+        Deadline[Request Deadline Guard]
+        JWT[JWT Verifier python-jose HS256]
     end
 
     subgraph External Surfaces
@@ -86,7 +92,12 @@ graph TB
     Grader --> Rewriter
     Grader --> Synth
     Rewriter --> Retriever
-    Synth --> Eval
+    Synth --> Faith
+    Faith --> Eval
+    Graph -.-> Deadline
+    User --> JWT
+    JWT --> FastAPI
+    JWT --> MCP
 
     Retriever --> EmbedService
     Retriever --> BM25
@@ -167,7 +178,8 @@ graph TB
 
     RewriterNode --> RetrieverNode
 
-    SynthNode --> EvalNode[evaluator: Quality Assessment]
+    SynthNode --> FaithNode[faithfulness: NLI Entailment Gate]
+    FaithNode --> EvalNode[evaluator: Quality Assessment + Faithfulness Threshold]
     EvalNode --> END_SUCCESS([END - Response Delivered])
 
     subgraph State Fields
