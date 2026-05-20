@@ -361,26 +361,52 @@ async def synthesize_answer(state: GraphState) -> dict:
     query = state.get("rewritten_query") or state["query"]
     relevant_documents = state.get("relevant_documents", [])
     all_documents = state.get("documents", [])
+    retry_count = state.get("retry_count", 0)
 
-    # Use relevant docs preferably, fall back to all if retries exhausted
-    docs_to_use = relevant_documents if relevant_documents else all_documents
+    # Corrective RAG: only synthesize from documents the grader judged relevant.
+    # Falling back to all_documents when relevant_documents is empty defeats the
+    # whole point of the grader + rewrite loop — we would synthesize from text
+    # we already decided was off-topic. Refuse instead.
+    docs_to_use = relevant_documents
 
-    logger.info("synthesizing_answer", doc_count=len(docs_to_use))
+    logger.info(
+        "synthesizing_answer",
+        doc_count=len(docs_to_use),
+        retrieved_total=len(all_documents),
+        retries=retry_count,
+    )
 
     if not docs_to_use:
-        generation = (
-            "I was unable to find relevant documents to answer your question. "
-            "Please try rephrasing your query or check that the relevant "
-            "documents have been ingested."
-        )
+        # Distinguish "nothing retrieved at all" from "retrieved but all
+        # judged irrelevant after retries". The user-facing message is the
+        # same — but the audit trail records the real reason.
+        if not all_documents:
+            refuse_reason = "no_documents_retrieved"
+            generation = (
+                "I was unable to find any documents matching your question. "
+                "Please check that the relevant documents have been ingested "
+                "and that you have permission to access them."
+            )
+        else:
+            refuse_reason = "all_documents_off_topic"
+            generation = (
+                "I retrieved documents but none were judged relevant to your "
+                "question after corrective retries. Please try rephrasing the "
+                "query with more specific terms, or confirm that the indexed "
+                "corpus actually covers this topic."
+            )
         return {
             "generation": generation,
             "citations": [],
+            "confidence_score": 0.0,
             "audit_trail": [
                 {
                     "node": "synthesizer",
-                    "action": "synthesize_answer",
+                    "action": "refuse",
+                    "reason": refuse_reason,
                     "doc_count": 0,
+                    "retrieved_total": len(all_documents),
+                    "retries": retry_count,
                     "generation_len": len(generation),
                     "timestamp": datetime.now(UTC).isoformat(),
                 }
@@ -484,16 +510,34 @@ async def synthesize_answer_stream(state: GraphState) -> AsyncGenerator[dict, No
     query = state.get("rewritten_query") or state["query"]
     relevant_documents = state.get("relevant_documents", [])
     all_documents = state.get("documents", [])
-    docs_to_use = relevant_documents if relevant_documents else all_documents
+    retry_count = state.get("retry_count", 0)
+    # See synthesize_answer for the reasoning behind refusing instead of
+    # falling back to all_documents.
+    docs_to_use = relevant_documents
 
-    logger.info("synthesizing_answer_stream", doc_count=len(docs_to_use))
+    logger.info(
+        "synthesizing_answer_stream",
+        doc_count=len(docs_to_use),
+        retrieved_total=len(all_documents),
+        retries=retry_count,
+    )
 
     if not docs_to_use:
-        generation = (
-            "I was unable to find relevant documents to answer your question. "
-            "Please try rephrasing your query or check that the relevant "
-            "documents have been ingested."
-        )
+        if not all_documents:
+            refuse_reason = "no_documents_retrieved"
+            generation = (
+                "I was unable to find any documents matching your question. "
+                "Please check that the relevant documents have been ingested "
+                "and that you have permission to access them."
+            )
+        else:
+            refuse_reason = "all_documents_off_topic"
+            generation = (
+                "I retrieved documents but none were judged relevant to your "
+                "question after corrective retries. Please try rephrasing the "
+                "query with more specific terms, or confirm that the indexed "
+                "corpus actually covers this topic."
+            )
         yield {"type": "token", "text": generation}
         yield {
             "type": "final",
@@ -502,8 +546,11 @@ async def synthesize_answer_stream(state: GraphState) -> AsyncGenerator[dict, No
             "confidence_score": 0.0,
             "audit_entry": {
                 "node": "synthesizer",
-                "action": "synthesize_answer_stream",
+                "action": "refuse",
+                "reason": refuse_reason,
                 "doc_count": 0,
+                "retrieved_total": len(all_documents),
+                "retries": retry_count,
                 "generation_len": len(generation),
                 "timestamp": datetime.now(UTC).isoformat(),
             },

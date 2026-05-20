@@ -135,6 +135,30 @@ class TestSynthesizeAnswer:
         assert "unable to find" in result["generation"].lower()
         assert result["citations"] == []
         mock_llm.assert_not_called()
+        # Audit must record the real reason, not just "no docs"
+        assert result["audit_trail"][0]["reason"] == "no_documents_retrieved"
+        assert result["audit_trail"][0]["action"] == "refuse"
+
+    @patch("core.agents.synthesizer.call_llm_with_decision")
+    def test_synthesize_answer_refuses_when_all_docs_off_topic(self, mock_llm, synth_state):
+        """Retrieved documents exist but grader rejected all of them.
+
+        Previously the synthesizer silently fell back to ``documents`` and
+        generated from off-topic text. The corrective loop must refuse here.
+        """
+        # Keep the original documents list populated, clear relevant_documents
+        synth_state["relevant_documents"] = []
+        synth_state["retry_count"] = synth_state.get("max_retries", 2)
+
+        result = run_async(synthesize_answer(synth_state))
+
+        assert "none were judged relevant" in result["generation"].lower()
+        assert result["citations"] == []
+        assert result["confidence_score"] == 0.0
+        mock_llm.assert_not_called()
+        assert result["audit_trail"][0]["reason"] == "all_documents_off_topic"
+        assert result["audit_trail"][0]["action"] == "refuse"
+        assert result["audit_trail"][0]["retrieved_total"] > 0
 
     @patch("core.agents.synthesizer.call_llm_with_decision")
     def test_synthesize_answer_empty_llm_response(self, mock_llm, synth_state):
