@@ -11,8 +11,8 @@ import streamlit as st
 from ingestion.metadata import IngestRequest, SensitivityLevel
 from ingestion.pipeline import IngestionPipeline
 from retrieval.embeddings import EmbeddingService
-from retrieval.hybrid_search import BM25Index
 from retrieval.qdrant_client import QdrantManager
+from retrieval.sparse_embeddings import SparseEmbeddingService
 from utils.async_helpers import run_async
 from utils.logging import get_logger
 from utils.rate_limiter import check_upload_rate_limit
@@ -323,11 +323,11 @@ def _process_upload(
         try:
             qdrant = _get_qdrant_manager()
             embeddings = _get_embedding_service()
-            bm25_index = BM25Index()
+            sparse_service = SparseEmbeddingService()
             pipeline = IngestionPipeline(
                 qdrant_manager=qdrant,
                 embedding_service=embeddings,
-                bm25_index=bm25_index,
+                sparse_service=sparse_service,
             )
 
             result = run_async(pipeline.ingest_document(request))

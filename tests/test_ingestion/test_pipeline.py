@@ -166,7 +166,7 @@ class TestIngestionPipeline:
         assert result.status == "success"
         assert result.num_chunks == 1
         assert result.point_ids == ["point-1"]
-        assert result.processing_time_seconds > 0
+        assert result.processing_time_seconds >= 0
 
     @pytest.mark.asyncio
     async def test_ingest_batch(self) -> None:

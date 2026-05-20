@@ -1,4 +1,4 @@
-"""Tests for hybrid search module — BM25, RRF, and HybridSearcher."""
+"""Tests for hybrid search module — sparse vectors, RRF, and HybridSearcher."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import pytest
 
 from ingestion.metadata import UserContext
 from retrieval.hybrid_search import (
-    BM25Index,
     HybridSearcher,
     SearchResult,
     reciprocal_rank_fusion,
@@ -113,85 +112,6 @@ class TestReciprocalRankFusion:
         assert abs(fused[0][1] - 3.0 / 61) < 1e-6
 
 
-class TestBM25Index:
-    """Tests for the BM25Index class."""
-
-    def test_initial_state(self):
-        """Newly created index with nonexistent path is not built."""
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            index = BM25Index(index_path=f"{tmpdir}/nonexistent.pkl")
-            assert not index.is_built()
-
-    def test_build_index(self):
-        """Building index marks it as built."""
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            index = BM25Index(index_path=f"{tmpdir}/test_bm25.pkl")
-            docs = ["hello world", "foo bar baz", "hello foo"]
-            ids = ["d1", "d2", "d3"]
-
-            index.build_index(docs, ids)
-
-            assert index.is_built()
-
-    def test_build_index_length_mismatch(self):
-        """build_index raises ValueError on length mismatch."""
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            index = BM25Index(index_path=f"{tmpdir}/test_bm25.pkl")
-            with pytest.raises(ValueError, match="Length mismatch"):
-                index.build_index(["doc1", "doc2"], ["id1"])
-
-    def test_search_returns_relevant(self):
-        """Search returns documents matching the query."""
-        index = BM25Index()
-        docs = [
-            "machine learning algorithms",
-            "deep learning neural networks",
-            "cooking recipes for dinner",
-        ]
-        ids = ["d1", "d2", "d3"]
-        index.build_index(docs, ids)
-
-        results = index.search("learning", top_k=2)
-
-        # Should return d1 and d2 (both contain "learning")
-        result_ids = [doc_id for doc_id, _ in results]
-        assert "d1" in result_ids
-        assert "d2" in result_ids
-        assert "d3" not in result_ids
-
-    def test_search_respects_top_k(self):
-        """Search returns at most top_k results."""
-        index = BM25Index()
-        docs = ["word " * 10 for _ in range(20)]
-        ids = [f"d{i}" for i in range(20)]
-        index.build_index(docs, ids)
-
-        results = index.search("word", top_k=5)
-        assert len(results) <= 5
-
-    def test_search_empty_index(self):
-        """Searching un-built index returns empty list."""
-        index = BM25Index()
-        results = index.search("hello")
-        assert results == []
-
-    def test_search_no_match(self):
-        """Search with no matching terms returns empty."""
-        index = BM25Index()
-        docs = ["alpha beta gamma", "delta epsilon"]
-        ids = ["d1", "d2"]
-        index.build_index(docs, ids)
-
-        results = index.search("zzz_nonexistent_xyz")
-        assert results == []
-
-
 class TestHybridSearcher:
     """Tests for the HybridSearcher class."""
 
@@ -200,10 +120,9 @@ class TestHybridSearcher:
         """Create a mock QdrantManager."""
         mock = MagicMock()
         mock.search_with_rbac.return_value = []
-        # The searcher now calls qdrant.for_org(user_context.org_id) before
-        # search to support multi-tenancy. In single-tenant mode the real
-        # implementation returns self; the mock must do the same.
+        mock.search_sparse_with_rbac.return_value = []
         mock.for_org.return_value = mock
+        mock.collection_name = "test_collection"
         return mock
 
     @pytest.fixture()
@@ -211,6 +130,13 @@ class TestHybridSearcher:
         """Create a mock EmbeddingService."""
         mock = MagicMock()
         mock.embed_text = AsyncMock(return_value=[0.1] * 1024)
+        return mock
+
+    @pytest.fixture()
+    def mock_sparse(self):
+        """Create a mock SparseEmbeddingService."""
+        mock = MagicMock()
+        mock.embed_text.return_value = MagicMock()
         return mock
 
     @pytest.fixture()
@@ -263,8 +189,8 @@ class TestHybridSearcher:
         assert results[0].text == "Hello world"
 
     @pytest.mark.asyncio
-    async def test_dense_only_search(self, mock_qdrant, mock_embedder, user_context):
-        """dense_only_search skips BM25."""
+    async def test_search_dense_only(self, mock_qdrant, mock_embedder, user_context):
+        """search_dense_only skips sparse."""
         mock_point = MagicMock()
         mock_point.id = "p1"
         mock_point.score = 0.85
@@ -273,7 +199,7 @@ class TestHybridSearcher:
         mock_qdrant.search_with_rbac.return_value = [mock_point]
         searcher = HybridSearcher(mock_qdrant, mock_embedder)
 
-        results = await searcher.dense_only_search("test", user_context, top_k=5)
+        results = await searcher.search_dense_only("test", user_context, top_k=5)
 
         assert len(results) == 1
         assert results[0].source == "dense"
@@ -290,97 +216,77 @@ class TestHybridSearcher:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_with_bm25(self, mock_qdrant, mock_embedder, user_context):
-        """Search uses BM25 when index is available."""
-        # Set up BM25 index
-        bm25 = BM25Index()
-        bm25.build_index(
-            ["machine learning models", "deep learning networks"],
-            ["p1", "p2"],
-        )
-
-        # Set up dense results
+    async def test_search_with_sparse(self, mock_qdrant, mock_embedder, mock_sparse, user_context):
+        """Search uses sparse vectors when service is available."""
+        # Dense results
         mock_point = MagicMock()
         mock_point.id = "p1"
         mock_point.score = 0.8
         mock_point.payload = {"text": "machine learning models", "org_id": "org-1"}
         mock_qdrant.search_with_rbac.return_value = [mock_point]
 
-        searcher = HybridSearcher(mock_qdrant, mock_embedder, bm25_index=bm25)
+        # Sparse results from Qdrant
+        sparse_point = MagicMock()
+        sparse_point.id = "p2"
+        sparse_point.score = 0.7
+        sparse_point.payload = {"text": "deep learning networks", "org_id": "org-1"}
+        mock_qdrant.search_sparse_with_rbac.return_value = [sparse_point]
+
+        searcher = HybridSearcher(mock_qdrant, mock_embedder, sparse_service=mock_sparse)
         results = await searcher.search("machine learning", user_context, top_k=5)
 
         # Should have results from fusion
         assert len(results) >= 1
+        mock_qdrant.search_sparse_with_rbac.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_bm25_drops_unauthorised_when_dense_returns_zero(
-        self, mock_qdrant, mock_embedder, user_context
+    async def test_sparse_drops_unauthorised_when_dense_returns_zero(
+        self, mock_qdrant, mock_embedder, mock_sparse, user_context
     ):
-        """REGRESSION: when a user has zero access (Qdrant rejects every dense
-        candidate) BM25-only hits must still be RBAC-rechecked. The previous
-        implementation skipped that branch when ``dense_doc_ids`` was empty,
-        which turned BM25 into a full RBAC bypass for cross-org / over-
-        clearance / role-mismatch users. Reproduces the live finding: a
-        cross-org user got every doc back via BM25.
-        """
+        """REGRESSION: when a user has zero access, sparse search with RBAC
+        filter must also return nothing. Qdrant applies the same payload
+        filter on sparse vectors natively, but we verify the contract."""
         # Dense returns nothing (Qdrant filter rejects everything for this user).
         mock_qdrant.search_with_rbac.return_value = []
-        # BM25 needs varied corpus so IDF doesn't zero-out (an all-docs-share-
-        # all-terms corpus collapses to score 0). Only the forbidden docs
-        # mention "compensation", the noise doc doesn't.
-        bm25 = BM25Index()
-        bm25.build_index(
-            [
-                "executive compensation memo confidential",
-                "compensation policy internal",
-                "unrelated noise about other topics",
-            ],
-            ["forbidden-1", "forbidden-2", "noise-3"],
-        )
-        # The RBAC re-check scrolls Qdrant with the user's filter; that
-        # second scroll must also return nothing for an unauthorised user.
-        mock_qdrant.client.scroll.return_value = ([], None)
 
-        searcher = HybridSearcher(mock_qdrant, mock_embedder, bm25_index=bm25)
+        # Sparse search also returns nothing when RBAC-filtered
+        mock_qdrant.search_sparse_with_rbac.return_value = []
+
+        searcher = HybridSearcher(mock_qdrant, mock_embedder, sparse_service=mock_sparse)
         results = await searcher.search("compensation", user_context, top_k=5)
 
         assert results == [], (
-            "RBAC re-check must drop BM25-only hits when dense returns zero "
-            "(cross-org / over-clearance / role-mismatch user). Found: "
-            f"{[r.id for r in results]}"
+            "Sparse search with RBAC filter must return zero docs for "
+            "unauthorised users (cross-org / over-clearance / role-mismatch)."
         )
-        mock_qdrant.client.scroll.assert_called_once()
+        # Both dense and sparse paths were queried with RBAC
+        mock_qdrant.search_with_rbac.assert_called_once()
+        mock_qdrant.search_sparse_with_rbac.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_bm25_admits_only_authorised_when_dense_returns_some(
-        self, mock_qdrant, mock_embedder, user_context
+    async def test_sparse_admits_only_authorised_when_dense_returns_some(
+        self, mock_qdrant, mock_embedder, mock_sparse, user_context
     ):
-        """Companion to the regression test: when dense returns one doc and
-        BM25 surfaces an extra unauthorised doc, only the authorised pair
-        survive."""
+        """When dense returns one doc and sparse surfaces an extra doc,
+        both are already RBAC-authorised by Qdrant."""
         # Dense returns one authorised doc.
         mock_point = MagicMock()
         mock_point.id = "ok-1"
         mock_point.score = 0.8
         mock_point.payload = {"text": "ok doc compensation", "org_id": "org-1"}
         mock_qdrant.search_with_rbac.return_value = [mock_point]
-        # BM25 surfaces both the authorised doc and an unauthorised one,
-        # plus a noise doc so IDF doesn't collapse to zero.
-        bm25 = BM25Index()
-        bm25.build_index(
-            [
-                "ok doc compensation",
-                "secret compensation memo",
-                "totally unrelated noise text",
-            ],
-            ["ok-1", "secret-2", "noise-3"],
-        )
-        # Scroll under user RBAC returns NO additional authorised IDs.
-        mock_qdrant.client.scroll.return_value = ([], None)
 
-        searcher = HybridSearcher(mock_qdrant, mock_embedder, bm25_index=bm25)
+        # Sparse returns the same doc + another authorised doc
+        sparse_point = MagicMock()
+        sparse_point.id = "ok-2"
+        sparse_point.score = 0.75
+        sparse_point.payload = {"text": "another ok doc", "org_id": "org-1"}
+        mock_qdrant.search_sparse_with_rbac.return_value = [mock_point, sparse_point]
+        mock_qdrant.client.retrieve.return_value = [sparse_point]
+
+        searcher = HybridSearcher(mock_qdrant, mock_embedder, sparse_service=mock_sparse)
         results = await searcher.search("compensation", user_context, top_k=5)
 
         ids = {r.id for r in results}
         assert "ok-1" in ids
-        assert "secret-2" not in ids
+        assert "ok-2" in ids

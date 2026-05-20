@@ -1,0 +1,373 @@
+{
+  "timestamp": "2026-05-20T20:25:16.132644+00:00",
+  "configuration": {
+    "embedding_model": "bge-m3",
+    "sparse_backend": "bm25",
+    "collection": "documents",
+    "document_count": 141
+  },
+  "summary": {
+    "dense": {
+      "count": 10,
+      "mean_latency_ms": 541.3,
+      "median_latency_ms": 535.1,
+      "min_latency_ms": 524.8,
+      "max_latency_ms": 599.7,
+      "avg_top3_score": 0.528,
+      "avg_top5_score": 0.507,
+      "avg_max_score": 0.875
+    },
+    "sparse": {
+      "count": 10,
+      "mean_latency_ms": 9.8,
+      "median_latency_ms": 8.5,
+      "min_latency_ms": 5.3,
+      "max_latency_ms": 14.7,
+      "avg_top3_score": 0.223,
+      "avg_top5_score": 0.228,
+      "avg_max_score": 0.625
+    },
+    "hybrid": {
+      "count": 10,
+      "mean_latency_ms": 21.9,
+      "median_latency_ms": 21.8,
+      "min_latency_ms": 16.7,
+      "max_latency_ms": 27.4,
+      "avg_top3_score": 0.425,
+      "avg_top5_score": 0.397,
+      "avg_max_score": 0.825
+    }
+  },
+  "raw_results": [
+    {
+      "query": "What are the four functions of the AI Risk Management Framework?",
+      "mode": "dense",
+      "latency_ms": 599.74,
+      "result_count": 10,
+      "avg_keyword_score": 0.575,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.75,
+      "top5_score": 0.7,
+      "success": true
+    },
+    {
+      "query": "What are the four functions of the AI Risk Management Framework?",
+      "mode": "sparse",
+      "latency_ms": 7.73,
+      "result_count": 10,
+      "avg_keyword_score": 0.35,
+      "max_keyword_score": 0.5,
+      "top3_score": 0.333,
+      "top5_score": 0.35,
+      "success": true
+    },
+    {
+      "query": "What are the four functions of the AI Risk Management Framework?",
+      "mode": "hybrid",
+      "latency_ms": 18.16,
+      "result_count": 10,
+      "avg_keyword_score": 0.5,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.583,
+      "top5_score": 0.5,
+      "success": true
+    },
+    {
+      "query": "How does NIST define trustworthy AI?",
+      "mode": "dense",
+      "latency_ms": 533.75,
+      "result_count": 10,
+      "avg_keyword_score": 0.26,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.4,
+      "top5_score": 0.44,
+      "success": true
+    },
+    {
+      "query": "How does NIST define trustworthy AI?",
+      "mode": "sparse",
+      "latency_ms": 14.65,
+      "result_count": 10,
+      "avg_keyword_score": 0.14,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.0,
+      "top5_score": 0.04,
+      "success": true
+    },
+    {
+      "query": "How does NIST define trustworthy AI?",
+      "mode": "hybrid",
+      "latency_ms": 18.32,
+      "result_count": 10,
+      "avg_keyword_score": 0.24,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.4,
+      "top5_score": 0.4,
+      "success": true
+    },
+    {
+      "query": "What is the purpose of the Govern function?",
+      "mode": "dense",
+      "latency_ms": 542.22,
+      "result_count": 10,
+      "avg_keyword_score": 0.625,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.833,
+      "top5_score": 0.7,
+      "success": true
+    },
+    {
+      "query": "What is the purpose of the Govern function?",
+      "mode": "sparse",
+      "latency_ms": 5.31,
+      "result_count": 10,
+      "avg_keyword_score": 0.15,
+      "max_keyword_score": 0.25,
+      "top3_score": 0.083,
+      "top5_score": 0.15,
+      "success": true
+    },
+    {
+      "query": "What is the purpose of the Govern function?",
+      "mode": "hybrid",
+      "latency_ms": 25.95,
+      "result_count": 10,
+      "avg_keyword_score": 0.4,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.417,
+      "top5_score": 0.5,
+      "success": true
+    },
+    {
+      "query": "What does the Map function involve?",
+      "mode": "dense",
+      "latency_ms": 526.04,
+      "result_count": 10,
+      "avg_keyword_score": 0.475,
+      "max_keyword_score": 0.75,
+      "top3_score": 0.417,
+      "top5_score": 0.45,
+      "success": true
+    },
+    {
+      "query": "What does the Map function involve?",
+      "mode": "sparse",
+      "latency_ms": 7.09,
+      "result_count": 10,
+      "avg_keyword_score": 0.3,
+      "max_keyword_score": 0.5,
+      "top3_score": 0.417,
+      "top5_score": 0.4,
+      "success": true
+    },
+    {
+      "query": "What does the Map function involve?",
+      "mode": "hybrid",
+      "latency_ms": 25.71,
+      "result_count": 10,
+      "avg_keyword_score": 0.425,
+      "max_keyword_score": 0.5,
+      "top3_score": 0.417,
+      "top5_score": 0.4,
+      "success": true
+    },
+    {
+      "query": "How should AI risks be measured and evaluated?",
+      "mode": "dense",
+      "latency_ms": 528.5,
+      "result_count": 10,
+      "avg_keyword_score": 0.375,
+      "max_keyword_score": 0.75,
+      "top3_score": 0.167,
+      "top5_score": 0.35,
+      "success": true
+    },
+    {
+      "query": "How should AI risks be measured and evaluated?",
+      "mode": "sparse",
+      "latency_ms": 5.6,
+      "result_count": 10,
+      "avg_keyword_score": 0.1,
+      "max_keyword_score": 0.25,
+      "top3_score": 0.083,
+      "top5_score": 0.05,
+      "success": true
+    },
+    {
+      "query": "How should AI risks be measured and evaluated?",
+      "mode": "hybrid",
+      "latency_ms": 27.43,
+      "result_count": 10,
+      "avg_keyword_score": 0.225,
+      "max_keyword_score": 0.75,
+      "top3_score": 0.25,
+      "top5_score": 0.25,
+      "success": true
+    },
+    {
+      "query": "What is the Manage function responsible for?",
+      "mode": "dense",
+      "latency_ms": 542.01,
+      "result_count": 10,
+      "avg_keyword_score": 0.7,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.75,
+      "top5_score": 0.75,
+      "success": true
+    },
+    {
+      "query": "What is the Manage function responsible for?",
+      "mode": "sparse",
+      "latency_ms": 9.23,
+      "result_count": 10,
+      "avg_keyword_score": 0.475,
+      "max_keyword_score": 0.75,
+      "top3_score": 0.5,
+      "top5_score": 0.45,
+      "success": true
+    },
+    {
+      "query": "What is the Manage function responsible for?",
+      "mode": "hybrid",
+      "latency_ms": 19.0,
+      "result_count": 10,
+      "avg_keyword_score": 0.6,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.583,
+      "top5_score": 0.6,
+      "success": true
+    },
+    {
+      "query": "What are the key characteristics of trustworthy AI systems?",
+      "mode": "dense",
+      "latency_ms": 554.37,
+      "result_count": 10,
+      "avg_keyword_score": 0.44,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.8,
+      "top5_score": 0.68,
+      "success": true
+    },
+    {
+      "query": "What are the key characteristics of trustworthy AI systems?",
+      "mode": "sparse",
+      "latency_ms": 14.24,
+      "result_count": 10,
+      "avg_keyword_score": 0.18,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.067,
+      "top5_score": 0.04,
+      "success": true
+    },
+    {
+      "query": "What are the key characteristics of trustworthy AI systems?",
+      "mode": "hybrid",
+      "latency_ms": 18.16,
+      "result_count": 10,
+      "avg_keyword_score": 0.36,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.6,
+      "top5_score": 0.52,
+      "success": true
+    },
+    {
+      "query": "How does the AI RMF address bias and fairness?",
+      "mode": "dense",
+      "latency_ms": 536.36,
+      "result_count": 10,
+      "avg_keyword_score": 0.25,
+      "max_keyword_score": 1.0,
+      "top3_score": 0.333,
+      "top5_score": 0.25,
+      "success": true
+    },
+    {
+      "query": "How does the AI RMF address bias and fairness?",
+      "mode": "sparse",
+      "latency_ms": 14.04,
+      "result_count": 10,
+      "avg_keyword_score": 0.1,
+      "max_keyword_score": 0.75,
+      "top3_score": 0.25,
+      "top5_score": 0.15,
+      "success": true
+    },
+    {
+      "query": "How does the AI RMF address bias and fairness?",
+      "mode": "hybrid",
+      "latency_ms": 24.59,
+      "result_count": 10,
+      "avg_keyword_score": 0.125,
+      "max_keyword_score": 0.75,
+      "top3_score": 0.25,
+      "top5_score": 0.15,
+      "success": true
+    },
+    {
+      "query": "What is the AI RMF Playbook?",
+      "mode": "dense",
+      "latency_ms": 524.78,
+      "result_count": 10,
+      "avg_keyword_score": 0.2,
+      "max_keyword_score": 0.75,
+      "top3_score": 0.417,
+      "top5_score": 0.35,
+      "success": true
+    },
+    {
+      "query": "What is the AI RMF Playbook?",
+      "mode": "sparse",
+      "latency_ms": 13.8,
+      "result_count": 10,
+      "avg_keyword_score": 0.225,
+      "max_keyword_score": 0.75,
+      "top3_score": 0.167,
+      "top5_score": 0.3,
+      "success": true
+    },
+    {
+      "query": "What is the AI RMF Playbook?",
+      "mode": "hybrid",
+      "latency_ms": 25.2,
+      "result_count": 10,
+      "avg_keyword_score": 0.225,
+      "max_keyword_score": 0.75,
+      "top3_score": 0.417,
+      "top5_score": 0.3,
+      "success": true
+    },
+    {
+      "query": "What are AI impacts and how are they assessed?",
+      "mode": "dense",
+      "latency_ms": 525.08,
+      "result_count": 10,
+      "avg_keyword_score": 0.375,
+      "max_keyword_score": 0.5,
+      "top3_score": 0.417,
+      "top5_score": 0.4,
+      "success": true
+    },
+    {
+      "query": "What are AI impacts and how are they assessed?",
+      "mode": "sparse",
+      "latency_ms": 5.88,
+      "result_count": 10,
+      "avg_keyword_score": 0.225,
+      "max_keyword_score": 0.5,
+      "top3_score": 0.333,
+      "top5_score": 0.35,
+      "success": true
+    },
+    {
+      "query": "What are AI impacts and how are they assessed?",
+      "mode": "hybrid",
+      "latency_ms": 16.67,
+      "result_count": 10,
+      "avg_keyword_score": 0.325,
+      "max_keyword_score": 0.5,
+      "top3_score": 0.333,
+      "top5_score": 0.35,
+      "success": true
+    }
+  ]
+}

@@ -53,8 +53,8 @@ from ingestion.metadata import (  # noqa: E402
 )
 from ingestion.pipeline import IngestionPipeline  # noqa: E402
 from retrieval.embeddings import EmbeddingService  # noqa: E402
-from retrieval.hybrid_search import BM25Index  # noqa: E402
 from retrieval.qdrant_client import QdrantManager  # noqa: E402
+from retrieval.sparse_embeddings import SparseEmbeddingService  # noqa: E402
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
@@ -184,7 +184,7 @@ def _reset_collection() -> QdrantManager:
 async def _ingest_samples(
     qdrant: QdrantManager,
     embedder: EmbeddingService,
-    bm25: BM25Index,
+    sparse: SparseEmbeddingService,
     report: Reporter,
 ) -> None:
     """Ingest the three sample docs at three sensitivities."""
@@ -192,7 +192,7 @@ async def _ingest_samples(
     pipeline = IngestionPipeline(
         qdrant_manager=qdrant,
         embedding_service=embedder,
-        bm25_index=bm25,
+        sparse_service=sparse,
     )
 
     for path, sensitivity, roles, org_id in DOC_PLAN:
@@ -348,10 +348,10 @@ async def main() -> int:
 
     qdrant = _reset_collection()
     embedder = EmbeddingService()
-    bm25 = BM25Index(index_path=str(_ROOT / "data" / f"bm25_{E2E_COLLECTION}.pkl"))
+    sparse = SparseEmbeddingService()
 
     try:
-        await _ingest_samples(qdrant, embedder, bm25, report)
+        await _ingest_samples(qdrant, embedder, sparse, report)
         await _rbac_scenarios(report)
         await _streaming_scenario(report)
         await _security_block_scenario(report)

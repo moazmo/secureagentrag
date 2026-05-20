@@ -13,7 +13,7 @@ import pytest
 from ingestion.loaders import SUPPORTED_EXTENSIONS, load_document, load_text
 from ingestion.metadata import IngestRequest, SensitivityLevel
 from ingestion.pipeline import IngestionPipeline
-from retrieval.hybrid_search import BM25Index
+from retrieval.sparse_embeddings import SparseEmbeddingService
 
 
 @pytest.fixture()
@@ -68,14 +68,14 @@ async def test_full_ingestion_pipeline_txt(
     1. Loads the text file correctly
     2. Chunks the text
     3. Generates embeddings
-    4. Upserts to Qdrant
-    5. Updates BM25 index
+    4. Generates sparse vectors
+    5. Upserts to Qdrant
     """
-    bm25_index = BM25Index()
+    sparse = SparseEmbeddingService(backend="bm25")
     pipeline = IngestionPipeline(
         qdrant_manager=mock_qdrant_manager,
         embedding_service=mock_embedding_service,
-        bm25_index=bm25_index,
+        sparse_service=sparse,
     )
 
     request = IngestRequest(
@@ -88,8 +88,8 @@ async def test_full_ingestion_pipeline_txt(
 
     result = await pipeline.ingest_document(request)
 
-    # Status may be 'partial' if BM25 index build fails due to mock point_ids
-    # not matching chunk count (mock returns 3 point_ids but chunking may produce 1)
+    # Status may be 'partial' if sparse vector upsert fails due to mock
+    # point_ids not matching chunk count (mock returns 3 point_ids but chunking may produce 1)
     assert result.status in ("success", "partial")
     assert result.num_chunks > 0
     assert result.processing_time_seconds > 0

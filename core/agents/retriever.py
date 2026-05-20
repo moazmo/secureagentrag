@@ -17,29 +17,26 @@ from utils.observability import trace_retrieval
 logger = get_logger(__name__)
 
 # Module-level lazy singletons.
-# RLock (reentrant) is required because _get_hybrid_searcher holds the lock
-# while calling _get_bm25_index, which acquires the same lock recursively.
-# A plain Lock would deadlock the calling thread on first invocation.
 _hybrid_searcher = None
 _reranker = None
-_bm25_index = None
+_sparse_service = None
 _init_lock = threading.RLock()
 
 
-def _get_bm25_index():
-    """Lazily initialize and return the shared BM25Index instance.
+def _get_sparse_service():
+    """Lazily initialize and return the shared SparseEmbeddingService instance.
 
     Returns:
-        A BM25Index that gets populated during document ingestion.
+        A SparseEmbeddingService for generating query sparse vectors.
     """
-    global _bm25_index
-    if _bm25_index is None:
+    global _sparse_service
+    if _sparse_service is None:
         with _init_lock:
-            if _bm25_index is None:
-                from retrieval.hybrid_search import BM25Index
+            if _sparse_service is None:
+                from retrieval.sparse_embeddings import SparseEmbeddingService
 
-                _bm25_index = BM25Index()
-    return _bm25_index
+                _sparse_service = SparseEmbeddingService()
+    return _sparse_service
 
 
 def _get_hybrid_searcher():
@@ -49,7 +46,7 @@ def _get_hybrid_searcher():
 
     Returns:
         A configured HybridSearcher with QdrantManager, EmbeddingService,
-        and shared BM25Index.
+        and SparseEmbeddingService.
     """
     global _hybrid_searcher
     if _hybrid_searcher is None:
@@ -61,11 +58,11 @@ def _get_hybrid_searcher():
 
                 qdrant_manager = QdrantManager()
                 embedding_service = EmbeddingService()
-                bm25_index = _get_bm25_index()
+                sparse_service = _get_sparse_service()
                 _hybrid_searcher = HybridSearcher(
                     qdrant_manager=qdrant_manager,
                     embedding_service=embedding_service,
-                    bm25_index=bm25_index,
+                    sparse_service=sparse_service,
                 )
     return _hybrid_searcher
 
@@ -329,6 +326,7 @@ async def retrieve_documents(state: GraphState) -> dict:
             logger.info("self_query_applied", filters=list(sq_filters.keys()))
 
     start = time.perf_counter()
+    documents: list[DocumentGrade] = []
     try:
         # RAG Fusion: parallel search across multiple query reformulations.
         if settings.rag_fusion_enabled and settings.rag_fusion_n_queries > 1:
@@ -389,7 +387,6 @@ async def retrieve_documents(state: GraphState) -> dict:
 
     except Exception as exc:
         logger.error("retrieve_documents_failed", error=str(exc))
-        documents = []
     finally:
         elapsed_ms = (time.perf_counter() - start) * 1000
         trace_retrieval(

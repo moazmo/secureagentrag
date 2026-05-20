@@ -97,8 +97,10 @@ class Settings(BaseSettings):
     # ── Observability (Phoenix) ──────────────────────────────────────────────────
     phoenix_endpoint: str | None = None
 
-    # ── BM25 Persistence ──────────────────────────────────────────────────────────
-    bm25_index_path: str = "data/bm25_index.pkl"
+    # ── Sparse Vectors (Qdrant native, replaces rank_bm25 pickle) ────────────────
+    sparse_backend: str = "bm25"  # "bm25" | "splade"
+    sparse_vector_name: str = "sparse"
+    sparse_model: str = "naver/splade-cocondenser-ensembledistil"
 
     # ── Audit + Conversation Storage ──────────────────────────────────────────────
     audit_log_dir: str = "audit_logs"
@@ -136,6 +138,11 @@ class Settings(BaseSettings):
     jwt_audience: str = "secureagentrag-api"
     jwt_ttl_seconds: int = 3600
     jwt_algorithm: str = "HS256"
+    # JWKS endpoint for RS256 verification (e.g. Keycloak, Auth0).
+    # When set and jwt_algorithm == "RS256", tokens are verified against
+    # the cached JWKS instead of jwt_secret.
+    jwks_url: str | None = None
+    jwks_cache_ttl_seconds: int = 300
 
     # ── Citation Faithfulness Gate (NLI) ─────────────────────────────────────────
     # After synthesis, run a per-sentence NLI check: for each sentence that

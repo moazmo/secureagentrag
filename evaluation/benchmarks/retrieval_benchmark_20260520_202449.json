@@ -1,0 +1,232 @@
+{
+  "timestamp": "2026-05-20T20:24:48.966982+00:00",
+  "configuration": {
+    "embedding_model": "bge-m3",
+    "sparse_backend": "bm25",
+    "collection": "documents",
+    "document_count": 141
+  },
+  "summary": {
+    "dense": {
+      "error": "All queries failed"
+    },
+    "sparse": {
+      "error": "All queries failed"
+    },
+    "hybrid": {
+      "error": "All queries failed"
+    }
+  },
+  "raw_results": [
+    {
+      "query": "What are the four functions of the AI Risk Management Framework?",
+      "mode": "dense",
+      "latency_ms": 608.06,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What are the four functions of the AI Risk Management Framework?",
+      "mode": "sparse",
+      "latency_ms": 15.88,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What are the four functions of the AI Risk Management Framework?",
+      "mode": "hybrid",
+      "latency_ms": 19.59,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "How does NIST define trustworthy AI?",
+      "mode": "dense",
+      "latency_ms": 541.06,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "How does NIST define trustworthy AI?",
+      "mode": "sparse",
+      "latency_ms": 6.05,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "How does NIST define trustworthy AI?",
+      "mode": "hybrid",
+      "latency_ms": 27.37,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What is the purpose of the Govern function?",
+      "mode": "dense",
+      "latency_ms": 549.48,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What is the purpose of the Govern function?",
+      "mode": "sparse",
+      "latency_ms": 5.24,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What is the purpose of the Govern function?",
+      "mode": "hybrid",
+      "latency_ms": 16.05,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What does the Map function involve?",
+      "mode": "dense",
+      "latency_ms": 556.27,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What does the Map function involve?",
+      "mode": "sparse",
+      "latency_ms": 14.61,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What does the Map function involve?",
+      "mode": "hybrid",
+      "latency_ms": 16.69,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "How should AI risks be measured and evaluated?",
+      "mode": "dense",
+      "latency_ms": 536.37,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "How should AI risks be measured and evaluated?",
+      "mode": "sparse",
+      "latency_ms": 4.9,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "How should AI risks be measured and evaluated?",
+      "mode": "hybrid",
+      "latency_ms": 28.85,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What is the Manage function responsible for?",
+      "mode": "dense",
+      "latency_ms": 519.98,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What is the Manage function responsible for?",
+      "mode": "sparse",
+      "latency_ms": 6.15,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What is the Manage function responsible for?",
+      "mode": "hybrid",
+      "latency_ms": 25.83,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What are the key characteristics of trustworthy AI systems?",
+      "mode": "dense",
+      "latency_ms": 537.24,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What are the key characteristics of trustworthy AI systems?",
+      "mode": "sparse",
+      "latency_ms": 6.91,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What are the key characteristics of trustworthy AI systems?",
+      "mode": "hybrid",
+      "latency_ms": 28.87,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "How does the AI RMF address bias and fairness?",
+      "mode": "dense",
+      "latency_ms": 536.12,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "How does the AI RMF address bias and fairness?",
+      "mode": "sparse",
+      "latency_ms": 5.47,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "How does the AI RMF address bias and fairness?",
+      "mode": "hybrid",
+      "latency_ms": 27.23,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What is the AI RMF Playbook?",
+      "mode": "dense",
+      "latency_ms": 527.67,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What is the AI RMF Playbook?",
+      "mode": "sparse",
+      "latency_ms": 5.56,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What is the AI RMF Playbook?",
+      "mode": "hybrid",
+      "latency_ms": 18.11,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What are AI impacts and how are they assessed?",
+      "mode": "dense",
+      "latency_ms": 570.38,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What are AI impacts and how are they assessed?",
+      "mode": "sparse",
+      "latency_ms": 5.57,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    },
+    {
+      "query": "What are AI impacts and how are they assessed?",
+      "mode": "hybrid",
+      "latency_ms": 16.2,
+      "success": false,
+      "error": "'SearchResult' object has no attribute 'page_content'"
+    }
+  ]
+}

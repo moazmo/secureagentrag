@@ -43,8 +43,8 @@ from core.graph import run_rag_pipeline, run_rag_pipeline_stream  # noqa: E402
 from ingestion.metadata import IngestRequest, SensitivityLevel, UserContext  # noqa: E402
 from ingestion.pipeline import IngestionPipeline  # noqa: E402
 from retrieval.embeddings import EmbeddingService  # noqa: E402
-from retrieval.hybrid_search import BM25Index  # noqa: E402
 from retrieval.qdrant_client import QdrantManager  # noqa: E402
+from retrieval.sparse_embeddings import SparseEmbeddingService  # noqa: E402
 from utils.audit import audit_logger  # noqa: E402
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -194,8 +194,8 @@ async def _seed_corpus(run: DemoRun) -> bool:
 
     qdrant = QdrantManager()
     embeddings = EmbeddingService()
-    bm25 = BM25Index()
-    pipeline = IngestionPipeline(qdrant, embeddings, bm25)
+    sparse = SparseEmbeddingService()
+    pipeline = IngestionPipeline(qdrant, embeddings, sparse_service=sparse)
 
     t0 = time.perf_counter()
     for fname, text, sens, roles in seeds:

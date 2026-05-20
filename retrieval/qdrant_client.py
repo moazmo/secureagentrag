@@ -9,6 +9,8 @@ from qdrant_client import QdrantClient, models
 from qdrant_client.http.models import (
     Distance,
     PointStruct,
+    SparseVector,
+    SparseVectorParams,
     VectorParams,
 )
 
@@ -102,7 +104,8 @@ class QdrantManager:
     def ensure_collection(self, vector_size: int | None = None) -> None:
         """Create the collection if it does not already exist.
 
-        Uses Cosine distance metric and the configured vector size.
+        Creates both dense and sparse vector configurations so that hybrid
+        search (dense + sparse) works out of the box.
 
         Args:
             vector_size: Dimension of the embedding vectors.
@@ -121,18 +124,21 @@ class QdrantManager:
                 )
                 return
 
+            sparse_name = getattr(settings, "sparse_vector_name", "sparse")
             self._client.create_collection(
                 collection_name=self._collection_name,
                 vectors_config=VectorParams(
                     size=size,
                     distance=Distance.COSINE,
                 ),
+                sparse_vectors_config={sparse_name: SparseVectorParams()},
             )
             logger.info(
                 "collection_created",
                 collection=self._collection_name,
                 vector_size=size,
                 distance="Cosine",
+                sparse_vector=sparse_name,
             )
 
         except Exception as exc:
@@ -148,16 +154,20 @@ class QdrantManager:
         chunks: list[str],
         embeddings: list[list[float]],
         metadatas: list[dict],
+        sparse_vectors: list[SparseVector] | None = None,
     ) -> list[str]:
         """Upsert document chunks with embeddings and metadata into Qdrant.
 
         Generates UUID for each point and stores the chunk text in the payload
-        alongside the provided metadata.
+        alongside the provided metadata. When *sparse_vectors* are supplied
+        they are written to the named sparse vector field configured by
+        ``settings.sparse_vector_name``.
 
         Args:
             chunks: List of text chunks.
-            embeddings: Corresponding embedding vectors.
+            embeddings: Corresponding dense embedding vectors.
             metadatas: Corresponding metadata dictionaries.
+            sparse_vectors: Optional sparse vectors for hybrid search.
 
         Returns:
             List of point ID strings (UUIDs).
@@ -171,14 +181,22 @@ class QdrantManager:
                 f"Input length mismatch: chunks={len(chunks)}, "
                 f"embeddings={len(embeddings)}, metadatas={len(metadatas)}"
             )
+        if sparse_vectors is not None and len(sparse_vectors) != len(chunks):
+            raise ValueError(
+                f"Sparse vector length mismatch: sparse={len(sparse_vectors)}, chunks={len(chunks)}"
+            )
 
         if not chunks:
             return []
 
         point_ids: list[str] = []
         points: list[PointStruct] = []
+        sparse_name = getattr(settings, "sparse_vector_name", "sparse")
+        has_sparse = sparse_vectors is not None
 
-        for chunk_text, embedding, metadata in zip(chunks, embeddings, metadatas, strict=False):
+        for idx, (chunk_text, embedding, metadata) in enumerate(
+            zip(chunks, embeddings, metadatas, strict=False)
+        ):
             point_id = str(uuid.uuid4())
             point_ids.append(point_id)
 
@@ -197,10 +215,17 @@ class QdrantManager:
                     except (ValueError, KeyError):
                         payload["sensitivity_level_int"] = 1
 
+            vector: dict[str, Any] | list[float] = embedding
+            if has_sparse:
+                vector = {
+                    "": embedding,
+                    sparse_name: sparse_vectors[idx],
+                }
+
             points.append(
                 PointStruct(
                     id=point_id,
-                    vector=embedding,
+                    vector=vector,
                     payload=payload,
                 )
             )
@@ -214,6 +239,7 @@ class QdrantManager:
                 "documents_upserted",
                 collection=self._collection_name,
                 count=len(points),
+                has_sparse=has_sparse,
             )
         except Exception as exc:
             logger.error(
@@ -376,6 +402,56 @@ class QdrantManager:
         except Exception as exc:
             logger.error(
                 "search_with_rbac_failed",
+                collection=self._collection_name,
+                error=str(exc),
+            )
+            return []
+
+    def search_sparse_with_rbac(
+        self,
+        sparse_vector: models.SparseVector,
+        user_context: UserContext,
+        top_k: int | None = None,
+        score_threshold: float | None = None,
+        extra_filter: models.Filter | None = None,
+    ) -> list[models.ScoredPoint]:
+        """Search the sparse vector field with RBAC filter applied.
+
+        Args:
+            sparse_vector: Query sparse vector (indices + values).
+            user_context: Authenticated user context for RBAC filtering.
+            top_k: Maximum number of results. Defaults to settings.top_k.
+            score_threshold: Minimum score threshold. Defaults to None.
+            extra_filter: Optional additional Qdrant filter.
+
+        Returns:
+            List of scored points from the sparse vector index.
+        """
+        k = top_k if top_k is not None else settings.top_k
+        rbac_filter = extra_filter or self.build_rbac_filter(user_context)
+        sparse_name = getattr(settings, "sparse_vector_name", "sparse")
+
+        try:
+            response = self._client.query_points(
+                collection_name=self._collection_name,
+                query=sparse_vector,
+                using=sparse_name,
+                query_filter=rbac_filter,
+                limit=k,
+                score_threshold=score_threshold,
+            )
+            results = response.points
+            logger.info(
+                "search_sparse_with_rbac_completed",
+                collection=self._collection_name,
+                results_count=len(results),
+                user_id=user_context.user_id,
+                org_id=user_context.org_id,
+            )
+            return results
+        except Exception as exc:
+            logger.error(
+                "search_sparse_with_rbac_failed",
                 collection=self._collection_name,
                 error=str(exc),
             )

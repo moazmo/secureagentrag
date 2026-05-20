@@ -160,31 +160,25 @@ async def test_inference_router_integration() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bm25_index_populated_during_ingestion() -> None:
-    """Test that BM25 index is built during document ingestion."""
-    import tempfile
+async def test_sparse_vectors_generated_during_ingestion() -> None:
+    """Test that sparse vectors are generated during document ingestion."""
+    from retrieval.sparse_embeddings import SparseEmbeddingService
 
-    from retrieval.hybrid_search import BM25Index
+    sparse = SparseEmbeddingService(backend="bm25")
+    texts = [
+        "the quick brown fox jumps over the lazy dog",
+        "the lazy dog sleeps in the sun all day long",
+        "a fox is a clever animal that hunts at night",
+        "dogs and foxes are both members of the canidae family",
+    ]
+    vectors = sparse.embed_texts(texts)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        bm25_index = BM25Index(index_path=f"{tmpdir}/test_bm25.pkl")
-        assert not bm25_index.is_built()
-
-        # Simulate index population with enough documents for BM25 to score
-        bm25_index.build_index(
-            documents=[
-                "the quick brown fox jumps over the lazy dog",
-                "the lazy dog sleeps in the sun all day long",
-                "a fox is a clever animal that hunts at night",
-                "dogs and foxes are both members of the canidae family",
-            ],
-            doc_ids=["id_1", "id_2", "id_3", "id_4"],
-        )
-
-        assert bm25_index.is_built()
-        # Use a rare term ("canidae") that appears in only 1 document to get non-zero BM25 scores
-        results = bm25_index.search("canidae", top_k=5)
-        assert len(results) > 0
+    assert len(vectors) == len(texts)
+    # At least one vector should have non-empty indices
+    assert any(len(v.indices) > 0 for v in vectors)
+    # The "canidae" doc should have distinct indices
+    canidae_vector = vectors[-1]
+    assert len(canidae_vector.indices) > 0
 
 
 @pytest.mark.asyncio

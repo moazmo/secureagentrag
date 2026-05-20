@@ -30,8 +30,8 @@ if str(_ROOT) not in sys.path:
 from ingestion.metadata import IngestRequest, SensitivityLevel  # noqa: E402
 from ingestion.pipeline import IngestionPipeline  # noqa: E402
 from retrieval.embeddings import EmbeddingService  # noqa: E402
-from retrieval.hybrid_search import BM25Index  # noqa: E402
 from retrieval.qdrant_client import QdrantManager  # noqa: E402
+from retrieval.sparse_embeddings import SparseEmbeddingService  # noqa: E402
 
 # Bundled sample-docs mode — (path, sensitivity, allowed_roles).
 BUNDLED_SEEDS: list[tuple[str, SensitivityLevel, list[str]]] = [
@@ -169,8 +169,8 @@ async def _seed_rbac(pipeline: IngestionPipeline) -> int:
 async def _amain(mode: str) -> int:
     qdrant = QdrantManager()
     embeddings = EmbeddingService()
-    bm25 = BM25Index()
-    pipeline = IngestionPipeline(qdrant, embeddings, bm25_index=bm25)
+    sparse = SparseEmbeddingService()
+    pipeline = IngestionPipeline(qdrant, embeddings, sparse_service=sparse)
 
     print(f"Dropping collection '{qdrant.collection_name}'...")
     qdrant.delete_collection()

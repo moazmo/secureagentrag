@@ -21,8 +21,8 @@ from utils.logging import get_logger
 if TYPE_CHECKING:
     from ingestion.multimodal import ImageDescriptor
     from retrieval.embeddings import EmbeddingService
-    from retrieval.hybrid_search import BM25Index
     from retrieval.qdrant_client import QdrantManager
+    from retrieval.sparse_embeddings import SparseEmbeddingService
 
 logger = get_logger(__name__)
 
@@ -51,15 +51,15 @@ class IngestionPipeline:
     """Orchestrates the end-to-end document ingestion workflow.
 
     Coordinates document loading, OCR processing, text chunking,
-    embedding generation, vector storage with RBAC metadata, and BM25
-    sparse index maintenance.
+    embedding generation, vector storage with RBAC metadata, and sparse
+    vector generation for hybrid search.
 
     Args:
         qdrant_manager: Qdrant vector store manager instance.
         embedding_service: Embedding generation service instance.
         chunker: Optional text chunker. Creates default if not provided.
         ocr_processor: Optional OCR processor. Creates default if not provided.
-        bm25_index: Optional shared BM25Index to populate during ingestion.
+        sparse_service: Optional sparse embedding service for hybrid search.
     """
 
     def __init__(
@@ -68,7 +68,7 @@ class IngestionPipeline:
         embedding_service: EmbeddingService,
         chunker: TextChunker | None = None,
         ocr_processor: OCRProcessor | None = None,
-        bm25_index: BM25Index | None = None,
+        sparse_service: SparseEmbeddingService | None = None,
         image_descriptor: ImageDescriptor | None = None,
     ) -> None:
         """Initialize the ingestion pipeline with its dependencies.
@@ -78,14 +78,14 @@ class IngestionPipeline:
             embedding_service: Service for generating text embeddings.
             chunker: Text chunker instance. Uses default settings if None.
             ocr_processor: OCR processor instance. Creates new one if None.
-            bm25_index: Shared BM25Index to populate with chunk texts.
+            sparse_service: SparseEmbeddingService for hybrid search vectors.
             image_descriptor: Optional VLM-based image describer for multi-modal RAG.
         """
         self._qdrant = qdrant_manager
         self._embeddings = embedding_service
         self._chunker = chunker or TextChunker()
         self._ocr = ocr_processor or OCRProcessor()
-        self._bm25 = bm25_index
+        self._sparse = sparse_service
         self._image_descriptor = image_descriptor
 
         logger.info("ingestion_pipeline_initialized")
@@ -259,13 +259,27 @@ class IngestionPipeline:
                 processing_time_seconds=time.time() - start_time,
             )
 
-        # Step 7: Upsert to Qdrant
+        # Step 7: Generate sparse vectors (optional, for hybrid search)
+        sparse_vectors = None
+        if self._sparse is not None:
+            try:
+                sparse_vectors = self._sparse.embed_texts(embed_inputs)
+                logger.info(
+                    "sparse_vectors_generated",
+                    backend=self._sparse.backend,
+                    chunks=len(sparse_vectors),
+                )
+            except Exception as exc:
+                logger.warning("sparse_vector_generation_failed", error=str(exc))
+
+        # Step 8: Upsert to Qdrant
         try:
             qdrant_for_org.ensure_collection()
             point_ids = await qdrant_for_org.upsert_documents(
                 chunks=chunk_texts,
                 embeddings=embeddings,
                 metadatas=metadatas,
+                sparse_vectors=sparse_vectors,
             )
         except Exception as exc:
             logger.error("ingestion_upsert_failed", file=file_path, error=str(exc))
@@ -276,24 +290,6 @@ class IngestionPipeline:
                 errors=[f"Vector store upsert failed: {exc}"],
                 processing_time_seconds=time.time() - start_time,
             )
-
-        # Step 7: Append to BM25 index. Previously this called build_index
-        # which WIPED the existing corpus on every upload — so only the last
-        # ingested document was searchable via BM25. add_documents extends
-        # in place.
-        if self._bm25 is not None and point_ids:
-            try:
-                # Index the same augmented text we embedded so BM25 + dense
-                # see the same surface form (Anthropic recommends parity for
-                # contextual retrieval — context tokens help BM25 too).
-                self._bm25.add_documents(
-                    documents=embed_inputs,
-                    doc_ids=point_ids,
-                )
-                logger.info("bm25_index_updated", chunks=len(point_ids))
-            except Exception as exc:
-                logger.warning("bm25_index_update_failed", error=str(exc))
-                errors.append(f"BM25 index update failed: {exc}")
 
         # Step 8: Record audit event and return result
         processing_time = time.time() - start_time
