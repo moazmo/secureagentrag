@@ -119,10 +119,22 @@ def _render_document_manager() -> None:
                     ),
                     key=f"sens_{source_file}",
                 )
+                # The role options must be a superset of every role
+                # currently stamped on the doc, otherwise Streamlit
+                # raises when a stored role like 'engineer' or
+                # 'finance_manager' isn't in the dropdown. Take the
+                # union of the canonical roles and whatever the seed
+                # corpus actually wrote.
+                canonical_roles = ["admin", "analyst", "viewer", "engineer", "finance_manager"]
+                _stored_roles = list(first_payload.get("roles", ["viewer"]))
+                _role_options = sorted(set(canonical_roles) | set(_stored_roles))
+                # Default is the intersection so unknown roles do not
+                # become persistent edit-state surprises.
+                _role_default = [r for r in _stored_roles if r in _role_options]
                 new_roles = st.multiselect(
                     "Roles",
-                    ["admin", "analyst", "viewer"],
-                    default=first_payload.get("roles", ["viewer"]),
+                    _role_options,
+                    default=_role_default,
                     key=f"roles_{source_file}",
                 )
                 if st.button("Update", key=f"upd_{source_file}", width="stretch"):
