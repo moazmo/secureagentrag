@@ -1,0 +1,99 @@
+{
+  "realm": "secureagentrag",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["admin", "analyst"],
+      "attributes": {
+        "org_id": "acme_corp",
+        "clearance_level": "3"
+      }
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["viewer"],
+      "attributes": {
+        "org_id": "acme_corp",
+        "clearance_level": "1"
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Full system access"
+      },
+      {
+        "name": "analyst",
+        "description": "Can read internal documents"
+      },
+      {
+        "name": "viewer",
+        "description": "Can read public documents only"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "secureagentrag-api",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "secureagentrag-client-secret",
+      "redirectUris": ["http://localhost:8000/*"],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "access.token.lifespan": "3600",
+        "id.token.as.detached.signature": "false"
+      }
+    }
+  ],
+  "keys": {
+    "providers": [
+      {
+        "providerId": "rsa-generated",
+        "enabled": true,
+        "priority": 100,
+        "config": {
+          "keySize": "2048"
+        }
+      }
+    ]
+  },
+  "browserSecurityHeaders": {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "xXSSProtection": "1; mode=block",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+  }
+}
