@@ -311,3 +311,76 @@ class TestHybridSearcher:
 
         # Should have results from fusion
         assert len(results) >= 1
+
+    @pytest.mark.asyncio
+    async def test_bm25_drops_unauthorised_when_dense_returns_zero(
+        self, mock_qdrant, mock_embedder, user_context
+    ):
+        """REGRESSION: when a user has zero access (Qdrant rejects every dense
+        candidate) BM25-only hits must still be RBAC-rechecked. The previous
+        implementation skipped that branch when ``dense_doc_ids`` was empty,
+        which turned BM25 into a full RBAC bypass for cross-org / over-
+        clearance / role-mismatch users. Reproduces the live finding: a
+        cross-org user got every doc back via BM25.
+        """
+        # Dense returns nothing (Qdrant filter rejects everything for this user).
+        mock_qdrant.search_with_rbac.return_value = []
+        # BM25 needs varied corpus so IDF doesn't zero-out (an all-docs-share-
+        # all-terms corpus collapses to score 0). Only the forbidden docs
+        # mention "compensation", the noise doc doesn't.
+        bm25 = BM25Index()
+        bm25.build_index(
+            [
+                "executive compensation memo confidential",
+                "compensation policy internal",
+                "unrelated noise about other topics",
+            ],
+            ["forbidden-1", "forbidden-2", "noise-3"],
+        )
+        # The RBAC re-check scrolls Qdrant with the user's filter; that
+        # second scroll must also return nothing for an unauthorised user.
+        mock_qdrant.client.scroll.return_value = ([], None)
+
+        searcher = HybridSearcher(mock_qdrant, mock_embedder, bm25_index=bm25)
+        results = await searcher.search("compensation", user_context, top_k=5)
+
+        assert results == [], (
+            "RBAC re-check must drop BM25-only hits when dense returns zero "
+            "(cross-org / over-clearance / role-mismatch user). Found: "
+            f"{[r.id for r in results]}"
+        )
+        mock_qdrant.client.scroll.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bm25_admits_only_authorised_when_dense_returns_some(
+        self, mock_qdrant, mock_embedder, user_context
+    ):
+        """Companion to the regression test: when dense returns one doc and
+        BM25 surfaces an extra unauthorised doc, only the authorised pair
+        survive."""
+        # Dense returns one authorised doc.
+        mock_point = MagicMock()
+        mock_point.id = "ok-1"
+        mock_point.score = 0.8
+        mock_point.payload = {"text": "ok doc compensation", "org_id": "org-1"}
+        mock_qdrant.search_with_rbac.return_value = [mock_point]
+        # BM25 surfaces both the authorised doc and an unauthorised one,
+        # plus a noise doc so IDF doesn't collapse to zero.
+        bm25 = BM25Index()
+        bm25.build_index(
+            [
+                "ok doc compensation",
+                "secret compensation memo",
+                "totally unrelated noise text",
+            ],
+            ["ok-1", "secret-2", "noise-3"],
+        )
+        # Scroll under user RBAC returns NO additional authorised IDs.
+        mock_qdrant.client.scroll.return_value = ([], None)
+
+        searcher = HybridSearcher(mock_qdrant, mock_embedder, bm25_index=bm25)
+        results = await searcher.search("compensation", user_context, top_k=5)
+
+        ids = {r.id for r in results}
+        assert "ok-1" in ids
+        assert "secret-2" not in ids

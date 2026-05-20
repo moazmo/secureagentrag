@@ -403,33 +403,52 @@ class HybridSearcher:
             }
 
         # Step 5: RBAC filtering AFTER fusion
-        # Dense results already have RBAC applied by Qdrant.
-        # BM25 results may include unauthorized docs — filter them out.
-        # We keep docs that either came from dense (already RBAC-filtered)
-        # or we can verify exist in Qdrant with proper metadata.
+        #
+        # Dense results already pass Qdrant's RBAC filter. BM25 has no
+        # native payload filter, so BM25-only hits MUST be re-checked
+        # against RBAC — regardless of whether dense returned anything.
+        #
+        # CRITICAL: the previous guard `if dense_doc_ids:` was a hard
+        # security bug. When a user has zero access (dense filter rejects
+        # everything → dense_doc_ids empty), the guard skipped the entire
+        # re-check and every BM25 hit was admitted as authorised. That
+        # turned the BM25-only branch into an RBAC bypass. Always
+        # initialise `allowed_doc_ids` when RBAC is on so the result-
+        # building loop drops unauthorised BM25 hits even when dense is
+        # empty (cross-org / over-clearance / role-mismatch users).
         allowed_doc_ids: set[str] | None = None
-        if settings.enable_rbac and dense_doc_ids:
-            # Only allow doc_ids that passed Qdrant's RBAC filter
-            # OR fetch metadata for BM25-only results and check RBAC
-            allowed_doc_ids = dense_doc_ids.copy()
+        if settings.enable_rbac:
+            allowed_doc_ids = set(dense_doc_ids)
 
-            # For BM25-only results, fetch from Qdrant and apply RBAC
             bm25_only_ids = [doc_id for doc_id, _ in bm25_ranking if doc_id not in dense_doc_ids]
             if bm25_only_ids:
                 try:
                     rbac_filter = tenant_qdrant.build_rbac_filter(user_context)
-                    # Scroll Qdrant to find which BM25 doc_ids are authorized
+                    # Scroll Qdrant under the same RBAC filter to discover
+                    # which of the BM25-only IDs the user is actually
+                    # authorised to see. Limit is bounded by the size of
+                    # the BM25 hit list (x2 to account for pagination).
                     filter_results = tenant_qdrant.client.scroll(
                         collection_name=tenant_qdrant.collection_name,
                         scroll_filter=rbac_filter,
-                        limit=len(bm25_only_ids) * 2,
+                        limit=max(1, len(bm25_only_ids)) * 2,
                         with_payload=False,
                     )[0]
                     rbac_allowed_ids = {str(p.id) for p in filter_results}
-                    allowed_doc_ids.update(rbac_allowed_ids)
-                except Exception:
-                    # If RBAC check fails, fall back to dense-only doc_ids
-                    pass
+                    # Intersect with the BM25 ID set so we never admit a
+                    # random doc the user happens to be allowed to see
+                    # but BM25 did not surface.
+                    allowed_doc_ids.update(rbac_allowed_ids & set(bm25_only_ids))
+                except Exception as exc:
+                    logger.error(
+                        "rbac_recheck_failed",
+                        error=str(exc),
+                        user_id=user_context.user_id,
+                        org_id=user_context.org_id,
+                    )
+                    # Fail closed: on RBAC re-check error, drop ALL
+                    # BM25-only hits rather than letting them through.
+                    # allowed_doc_ids stays as just the dense IDs.
 
         # Step 6: Build final results, filtering unauthorized BM25 docs
         results: list[SearchResult] = []
