@@ -89,6 +89,10 @@ class GraphState(TypedDict):
     synth_usage: dict  # {prompt_tokens, completion_tokens, total_tokens}
     synth_latency_ms: float
 
+    # Faithfulness (NLI-gated)
+    faithfulness_ratio: float  # entailed sentences / total cited sentences
+    faithfulness_unsupported: list[dict]  # [{"sentence": str, "cited": [int], "verdict": str}]
+
     # Evaluation
     needs_human_review: bool
     evaluation_notes: str

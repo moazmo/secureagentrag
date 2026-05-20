@@ -307,36 +307,53 @@ async def evaluate_response(state: GraphState) -> dict:
     completeness_score = _parse_score(completeness_response)
 
     # ── Calibrated Confidence Score ─────────────────────────────────────────
-    # Weights chosen to reward what local 8B-class models actually do well:
-    # citing sources and producing complete answers. The hallucination check
-    # is a weak signal at this model size (false positives are common), so
-    # it contributes a milder penalty than before, and only ≥2 unsupported
-    # claims are treated as flagged.
+    # Weights reward what local 8B-class models actually do well: citing
+    # sources, producing complete answers, and (when the NLI gate is on)
+    # producing sentences the cited chunks actually entail.
     #
-    # Citation coverage:   35%  (strongest signal of grounding)
+    # When SAR_FAITHFULNESS_GATE_ENABLED=true the NLI ratio replaces the
+    # weaker self-fact-check signal because faithfulness has been measured
+    # against the actual source, not the LLM's recollection of it.
+    #
+    # Citation coverage:   30%  (strongest grounding signal)
     # Evidence strength:   15%  (source-coverage breadth)
-    # Completeness:        35%  (LLM-graded against the query)
-    # Hallucination check: 15%  (penalty: -0.15 per claim, floor 0)
+    # Completeness:        30%  (LLM-graded against the query)
+    # Faithfulness:        25%  (NLI gate or hallucination penalty)
     hallucination_penalty = max(0.0, 1.0 - (hallucination_count * 0.15))
+    faithfulness_ratio = float(state.get("faithfulness_ratio", 1.0))
+    if settings.faithfulness_gate_enabled:
+        faithfulness_signal = faithfulness_ratio
+    else:
+        faithfulness_signal = hallucination_penalty
 
     confidence_score = (
-        citation_coverage * 0.35
+        citation_coverage * 0.30
         + evidence_strength * 0.15
-        + completeness_score * 0.35
-        + hallucination_penalty * 0.15
+        + completeness_score * 0.30
+        + faithfulness_signal * 0.25
     )
     confidence_score = round(max(0.0, min(1.0, confidence_score)), 3)
 
-    # Human review triggers only on overall low confidence. Hallucination
-    # count is intentionally NOT a direct trigger — the fact-check LLM
-    # produces variable results at 8B scale (1-5 spurious "claims" on
-    # identical answers). It feeds into the confidence score via the mild
-    # penalty above and is surfaced in the notes, but the actual gate is the
-    # composite confidence threshold.
-    needs_human_review = confidence_score < settings.confidence_threshold
+    # Human review triggers on low overall confidence OR (when the gate is
+    # on) faithfulness ratio below threshold. The NLI gate is a deterministic
+    # source-grounded signal, so a failure there is reliable enough to flag
+    # by itself.
+    faithfulness_below_threshold = (
+        settings.faithfulness_gate_enabled and faithfulness_ratio < settings.faithfulness_threshold
+    )
+    needs_human_review = (
+        confidence_score < settings.confidence_threshold or faithfulness_below_threshold
+    )
 
     # Build detailed evaluation notes
     notes_parts: list[str] = []
+    if faithfulness_below_threshold:
+        unsupported_count = len(state.get("faithfulness_unsupported", []) or [])
+        notes_parts.append(
+            f"🛡️ Faithfulness {faithfulness_ratio:.0%} < threshold "
+            f"{settings.faithfulness_threshold:.0%} "
+            f"({unsupported_count} unsupported claim(s))."
+        )
     if hallucination_count > 0:
         notes_parts.append(
             f"⚠️ {hallucination_count} potentially unsupported claim(s) detected. "
@@ -374,6 +391,8 @@ async def evaluate_response(state: GraphState) -> dict:
         evidence_strength=round(evidence_strength, 3),
         completeness=round(completeness_score, 3),
         hallucinations=hallucination_count,
+        faithfulness_ratio=round(faithfulness_ratio, 3),
+        faithfulness_gated=settings.faithfulness_gate_enabled,
         needs_human_review=needs_human_review,
     )
 
@@ -390,6 +409,9 @@ async def evaluate_response(state: GraphState) -> dict:
                 "evidence_strength": round(evidence_strength, 3),
                 "completeness": round(completeness_score, 3),
                 "hallucinations": hallucination_count,
+                "faithfulness_ratio": round(faithfulness_ratio, 3),
+                "faithfulness_gated": settings.faithfulness_gate_enabled,
+                "faithfulness_below_threshold": faithfulness_below_threshold,
                 "needs_human_review": needs_human_review,
                 "evaluation_notes": evaluation_notes,
                 "timestamp": datetime.now(UTC).isoformat(),
