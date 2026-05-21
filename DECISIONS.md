@@ -583,3 +583,47 @@ disk, behind a `FileLock` for concurrent writes. Two problems:
   install). The default `bm25` backend keeps the slim profile.
 - (-) Existing collections need re-indexing via the migration script
   before sparse queries return results.
+
+## ADR-021: LlamaGuard 3 as drop-in escalation backend
+
+**Status:** Accepted (2026-05-21)
+
+**Context:**
+ADR-equivalent `guardrails_strict` mode escalated regex-passed queries
+to the synth-grade `qwen3:8b` with a free-form "respond SAFE or UNSAFE"
+prompt (`core/agents/guardrails_llm.py`). That works but is loose: the
+synth model is not fine-tuned for content classification, and any prompt
+the model rephrases on its way to a token ends up scored SAFE. Modern
+deployments expect a purpose-built classifier with a well-known
+taxonomy.
+
+**Decision:**
+1. Add `core/agents/guardrails_llamaguard.py` (~165 LOC, including the
+   Meta-published chat template + S1-S14 category map). Calls Ollama with
+   the `llama-guard3:8b` model (`ollama pull llama-guard3:8b`).
+2. New flag `SAR_GUARDRAILS_BACKEND` with values `"llm"` (default,
+   legacy) and `"llamaguard"`. Selector lives in
+   `core/agents/guardrails.py::guardrails_check`. Regex always runs
+   first; only regex-passed queries reach the escalation in strict mode.
+3. Parsed category codes (`S1-S14`) map to a stable
+   `guardrails_reason` value (e.g. `S2 → non_violent_crimes`). Unknown
+   codes degrade to `llamaguard_s<n>` so unparsed model output still
+   yields a meaningful audit row.
+4. Fail-open on transport errors (Ollama outage, model not pulled). The
+   regex gate already ran ahead of us; we never drop user content on
+   infrastructure flakes.
+
+**Consequences:**
+- (+) Tighter classification — LlamaGuard 3 was fine-tuned for exactly
+  this task, and the S1-S14 taxonomy gives recruiters a credible
+  "industry-standard guardrail" answer.
+- (+) Same Ollama inference path as the rest of the stack. No new
+  Python dependency, no new download infra. ~165 LOC of new code total.
+- (+) Backward-compatible. `SAR_GUARDRAILS_BACKEND` defaults to `"llm"`
+  so existing deployments don't change behaviour without opt-in.
+- (-) Adds another model to pull (~5 GB). For deployments that don't
+  enable strict mode, this cost is never paid.
+- (-) Category granularity exposes more vocabulary in the audit log
+  (the previous binary `llm_escalation_unsafe` was simpler to grep).
+  Net win because the categories let policy reviews trace blocked
+  queries to the specific Meta policy clause that fired.

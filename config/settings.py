@@ -176,6 +176,15 @@ class Settings(BaseSettings):
     # to a local LLM-based classifier for a second opinion. Adds one LLM call
     # per query but catches adversarial inputs that evade regex patterns.
     guardrails_strict: bool = False
+    # Escalation backend used in strict mode. Options:
+    #   "llm"        — legacy SAFE/UNSAFE prompt on the synth-grade model
+    #                  (core.agents.guardrails_llm). Default for backward
+    #                  compatibility.
+    #   "llamaguard" — Meta's LlamaGuard 3 8B via Ollama. Use with
+    #                  ``ollama pull llama-guard3:8b``. More accurate on
+    #                  the standard S1-S14 taxonomy.
+    guardrails_backend: str = "llm"
+    llamaguard_model: str = "llama-guard3:8b"
 
     # ── Contextual Retrieval (Anthropic 2024 technique) ──────────────────────────
     # Prepend a short LLM-generated context summary to each chunk before

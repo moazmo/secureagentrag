@@ -146,13 +146,21 @@ async def guardrails_check(state: GraphState) -> dict:
 
     passed, reason = check_query(state["query"])
 
-    # Strict mode: escalate to an LLM-based classifier for a second opinion.
-    # Regex-blocked queries are blocked immediately; regex-passed queries get
-    # the LLM check when strict mode is on.
+    # Strict mode: escalate to the configured classifier for a second
+    # opinion. Regex-blocked queries are blocked immediately; regex-passed
+    # queries get the escalation. The backend is selected by
+    # SAR_GUARDRAILS_BACKEND ("llm" — legacy, "llamaguard" — Meta's
+    # LlamaGuard 3 via Ollama).
     if passed and settings.guardrails_strict:
-        from core.agents.guardrails_llm import llm_guardrails_check
+        backend = (settings.guardrails_backend or "llm").lower()
+        if backend == "llamaguard":
+            from core.agents.guardrails_llamaguard import check as llamaguard_check
 
-        passed, reason = await llm_guardrails_check(state["query"])
+            passed, reason = await llamaguard_check(state["query"])
+        else:
+            from core.agents.guardrails_llm import llm_guardrails_check
+
+            passed, reason = await llm_guardrails_check(state["query"])
 
     if not passed:
         user = state.get("user_context", {}) or {}
