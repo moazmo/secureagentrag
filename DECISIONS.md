@@ -627,3 +627,57 @@ taxonomy.
   (the previous binary `llm_escalation_unsafe` was simpler to grep).
   Net win because the categories let policy reviews trace blocked
   queries to the specific Meta policy clause that fired.
+
+## ADR-022: Fine-tuned domain reranker as opt-in checkpoint
+
+**Status:** Accepted — implementation shipped, training run deferred (2026-05-21)
+
+**Context:**
+The retrieval stack ships three reranker modes today (none / cross-encoder /
+ColBERTv2). All three use off-the-shelf checkpoints — strong baselines but
+not aware of the project's actual document corpus (NIST AI RMF policy
+text + ACME synthetic docs). On in-domain queries the off-the-shelf
+rerankers can rank a tangentially-relevant chunk above the one a SME
+would pick.
+
+**Decision:**
+1. Add a `fine_tuned` mode to `settings.reranker_type` plus a new flag
+   `SAR_FINETUNED_RERANKER_PATH` (default `data/checkpoints/reranker-domain-v1`).
+   The factory in `core/agents/retriever.py::_get_reranker` loads the
+   path via the existing `retrieval.reranker.Reranker` class —
+   sentence-transformers' `CrossEncoder` already loads from a local
+   directory the same way it loads from HuggingFace.
+2. New `scripts/train_reranker.py` (~220 LOC). Pulls MS-MARCO Passage
+   Ranking small split from HuggingFace, optionally mines hard negatives
+   from the local Qdrant index, fine-tunes from BGE-Reranker-v2-M3 with
+   `CrossEncoder.fit`. Writes the checkpoint and a `train_meta.json`
+   alongside it for reproducibility.
+3. New `scripts/bench_reranker.py` (~200 LOC). Computes NDCG@10 hold-out
+   on MS-MARCO and on the optional `evaluation/nist_rerank_gold.jsonl`
+   in-domain gold set. Writes a Markdown report at
+   `evaluation/benchmarks/reranker_finetune.md` + a timestamped JSON.
+   Acceptance bar: fine-tuned must beat baseline by ≥1pp on MS-MARCO
+   and win on the NIST gold set.
+
+**Why "implementation shipped, training run deferred":**
+A real training pass takes 1-2 GPU hours on an RTX 3060. Adding that to
+CI is heavy and irrelevant for most contributors. The script is the
+deliverable; running it is left to whoever owns the GPU box. The bench
+script accepts any checkpoint path (or HuggingFace model id), so the
+infrastructure is fully ready — only the actual `data/checkpoints/
+reranker-domain-v1/` artefact is missing.
+
+**Consequences:**
+- (+) Domain-specific reranker is now a one-flag flip away. The
+  retrieval factory + bench harness + training script are all in tree.
+- (+) Reproducible: `train_meta.json` next to every checkpoint records
+  base model, sample sizes, epochs, hard-negative mining flag.
+- (+) Bench works against any cross-encoder, so even without running our
+  own training we can compare BGE-Reranker-v2-M3 vs CrossEncoder-MiniLM
+  vs anyone else with one command.
+- (-) Actual fine-tuned checkpoint is not committed — it would be
+  >100MB and changes per training run. Users must run the training
+  script themselves before flipping `SAR_RERANKER_TYPE=fine_tuned`.
+- (-) `[embeddings-local]` extra is required (sentence-transformers +
+  torch ~2GB). Same cost as the existing cross_encoder mode, so this is
+  not a new tax for users who already opted into local rerankers.

@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     reranker_type: str = "none"
     reranker_checkpoint: str = "BAAI/bge-reranker-v2-m3"
     colbert_checkpoint: str = "colbert-ir/colbertv2.0"
+    # Path to a locally fine-tuned cross-encoder checkpoint produced by
+    # scripts/train_reranker.py. Used when reranker_type == "fine_tuned".
+    finetuned_reranker_path: str = "data/checkpoints/reranker-domain-v1"
 
     # ── Inference Providers ──────────────────────────────────────────────────────
     default_provider: str = "ollama"

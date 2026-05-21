@@ -94,6 +94,16 @@ def _get_reranker():
                     _reranker = Reranker(
                         model_name=settings.reranker_checkpoint,
                     )
+                elif reranker_type == "fine_tuned":
+                    # Local fine-tuned cross-encoder, produced by
+                    # scripts/train_reranker.py. The checkpoint is a
+                    # filesystem path (e.g. data/checkpoints/reranker-domain-v1)
+                    # that sentence-transformers can load directly.
+                    from retrieval.reranker import Reranker
+
+                    _reranker = Reranker(
+                        model_name=settings.finetuned_reranker_path,
+                    )
                 else:
                     # No-op reranker for "none"
                     from retrieval.reranker import Reranker
