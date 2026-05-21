@@ -1,0 +1,13 @@
+ACME Corp Employee Handbook (Public)
+
+Our policy on data sharing applies to all employees and contractors.
+External sharing of any company document requires written approval from
+your manager. Personal data of customers must never be transmitted via
+unencrypted channels. All employees complete annual privacy training.
+
+Data classification levels at ACME are:
+- Public: marketing materials, press releases, this handbook
+- Internal: engineering runbooks, project plans
+- Confidential: financial records, customer PII, M&A discussions
+
+When in doubt about whether a document can be shared, escalate to legal.

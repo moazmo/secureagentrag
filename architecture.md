@@ -18,7 +18,7 @@ graph TB
     subgraph Core Orchestration
         Graph[LangGraph State Machine]
         Router[Query Router Agent]
-        Guardrails[Prompt-Injection Guardrails Agent]
+        Guardrails[Guardrails: regex + optional LLM or LlamaGuard 3 escalation]
         Security[Security Gate Agent]
         Retriever[Retrieval Agent + HyDE + RAG-Fusion]
         Grader[Document Grader Agent]
@@ -43,7 +43,7 @@ graph TB
         EmbedService[Embedding Service BGE-M3]
         Sparse[Qdrant Native Sparse Vectors BM25 or SPLADE]
         RRF[Reciprocal Rank Fusion]
-        Reranker[Cross-Encoder Reranker]
+        Reranker[Reranker: cross-encoder / ColBERTv2 / fine-tuned]
         QdrantClient[Qdrant Client + RBAC Filters]
     end
 

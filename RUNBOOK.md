@@ -171,9 +171,10 @@ curl -sf http://localhost:6333/collections && echo "Qdrant OK"
 curl -sf http://localhost:11434/api/tags  && echo "Ollama OK"
 
 # Tests
-uv run pytest -q                            # unit/integ (~20 s)
+uv run pytest -q                            # unit/integ (497 tests, ~30 s)
 uv run python -m scripts.e2e_smoke          # real end-to-end (~2-5 min)
-uv run python -m evaluation.benchmark       # latency benchmark
+uv run python -m scripts.interview_demo     # PASS/FAIL grid for hero features
+uv run python -m scripts.h2_gate            # 12 advanced real-world UI scenarios
 
 # Lint
 uv run ruff check .
@@ -181,6 +182,86 @@ uv run ruff format --check .
 
 # Run UI
 uv run streamlit run app/main.py
+
+# Bench
+uv run python -m scripts.quick_bench          # local latency
+uv run python -m scripts.cloud_bench --quick  # cloud-only (~2 min)
+uv run python -m scripts.cloud_bench          # local+cloud comparison
+uv run python -m scripts.benchmark_retrieval  # dense / sparse / hybrid retrieval
+
+# Audit
+uv run python -m scripts.verify_audit_chain
 ```
 
-That's the full test surface.
+## 8. Optional feature toggles (env vars)
+
+```bash
+# Faithfulness gate (NLI per cited sentence)
+SAR_FAITHFULNESS_GATE_ENABLED=true
+SAR_FAITHFULNESS_GATE_MODE=flag           # or "drop"
+SAR_FAITHFULNESS_THRESHOLD=0.7
+
+# SLO deadline
+SAR_REQUEST_TIMEOUT_S=60
+
+# Sparse vector backend
+SAR_SPARSE_BACKEND=bm25                   # or "splade" (needs [embeddings-local])
+
+# Reranker mode
+SAR_RERANKER_TYPE=cross_encoder           # none | cross_encoder | colbert | fine_tuned
+SAR_FINETUNED_RERANKER_PATH=data/checkpoints/reranker-domain-v1
+
+# Guardrails escalation backend
+SAR_GUARDRAILS_STRICT=true
+SAR_GUARDRAILS_BACKEND=llamaguard         # regex | llm | llamaguard
+SAR_LLAMAGUARD_MODEL=llama-guard3:8b
+
+# Auth — flip to RS256 for IdP-driven verification
+SAR_JWT_SECRET=change-me                  # required for HS256
+SAR_JWT_ALGORITHM=RS256
+SAR_JWKS_URL=http://keycloak:8080/realms/secureagentrag/protocol/openid-connect/certs
+
+# Multi-tenant collections (per-org Qdrant collections)
+SAR_MULTI_TENANT_COLLECTIONS=true
+
+# Persistent checkpointer (LangGraph)
+SAR_USE_PERSISTENT_CHECKPOINTER=true
+SAR_POSTGRES_URL=postgresql://sar_user:sar_password@localhost:5433/secureagentrag
+```
+
+## 9. Reranker training (P4 — opt-in GPU work)
+
+```bash
+# Quick smoke (1000 rows, 100 hold-out)
+uv run python -m scripts.train_reranker --smoke
+
+# Full run (~1-2 h on RTX 3060)
+uv run python -m scripts.train_reranker \
+    --train-size 100000 --epochs 1 \
+    --output data/checkpoints/reranker-domain-v1 \
+    --mine-hard-negatives
+
+# Bench the checkpoint vs baseline
+uv run python -m scripts.bench_reranker \
+    --baseline BAAI/bge-reranker-v2-m3 \
+    --candidate data/checkpoints/reranker-domain-v1
+
+# Flip the flag to use the fine-tuned checkpoint at retrieval time
+SAR_RERANKER_TYPE=fine_tuned
+```
+
+## 10. Keycloak (RS256 + JWKS, ADR-019)
+
+```bash
+# Bring up Keycloak (auto-imports deploy/keycloak-realm.json)
+docker compose --profile auth up -d keycloak
+
+# Mint a real RS256 token (via Keycloak admin CLI or python-keycloak)
+# then point SAR at the JWKS endpoint:
+export SAR_JWT_ALGORITHM=RS256
+export SAR_JWKS_URL=http://localhost:8081/realms/secureagentrag/protocol/openid-connect/certs
+
+uv run uvicorn interfaces.api:app --port 8080
+```
+
+That's the full operating surface.

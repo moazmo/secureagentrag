@@ -1,0 +1,12 @@
+ACME Engineering Runbook — Service Reliability (Internal)
+
+Our policy on data sharing across services follows zero-trust principles.
+All inter-service traffic is mTLS-authenticated. Production database
+credentials live in HashiCorp Vault and rotate every 90 days. Logs
+exported to the central SIEM are pre-scrubbed of customer PII via the
+data redaction pipeline.
+
+Incident response: page the on-call engineer via PagerDuty for any
+Sev-1 or Sev-2 event. Customer data exfiltration suspicion is always
+Sev-1 regardless of confirmed impact. Engineering managers must run
+post-incident reviews within 48 hours.

@@ -123,25 +123,26 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ## 5. State of the codebase (as of this commit)
 
-- **485 tests pass**, 0 skipped. Lint + format clean.
-- **~26.5k Python LOC** across 131 files (net -200 LOC after SPLADE migration).
+- **497 tests pass**, 0 skipped. Lint + format clean.
+- **~28.5k Python LOC** across 138 files.
 - **9 graph nodes:** router → guardrails → security → retriever → grader → rewriter → synthesizer → faithfulness → evaluator.
 - Streamlit, FastAPI, MCP all share `core.schemas.QueryResponse`.
-- **Hybrid search** now uses Qdrant native sparse vectors. The `rank_bm25` pickle, `utils/file_lock.py`, and the post-fusion RBAC re-check are all gone. Sparse runs under the same RBAC filter as dense — cross-tenant bypass is structurally impossible.
+- **Hybrid search** uses Qdrant native sparse vectors (BM25 or SPLADE backend). The legacy `rank_bm25` pickle, `utils/file_lock.py`, and the post-fusion RBAC re-check are all gone. Sparse runs under the same RBAC filter as dense — cross-tenant bypass is structurally impossible.
 - **Auth** dispatches HS256 (default, dev) ↔ RS256 (Keycloak/Auth0 via JWKS) on `SAR_JWT_ALGORITHM`.
-- Recent commits (chronological):
-  - `b43bc66` feat(ops): Keycloak under docker-compose `auth` profile + realm export
+- **Guardrails** escalation routes through `regex` → `llm` → `llamaguard` per `SAR_GUARDRAILS_BACKEND`. LlamaGuard 3 maps S1-S14 categories to audit-friendly reasons.
+- **Reranker** factory accepts `none` / `cross_encoder` / `colbert` / `fine_tuned`. Training + bench scripts in tree; actual fine-tune is opt-in GPU work.
+- **24-scenario UI gate (H.1 + H.2) is 24/24 PASS** on this HEAD, evidence under `data/agent_evidence/`.
+- Recent commits (chronological, newest first):
+  - `1bcde26` test(h2-gate): 12/12 advanced real-world scenarios PASS
+  - `2f0e28d` feat(retrieval): fine-tuned reranker scaffolding (P4)
+  - `45ebfde` refactor(inference): consolidate Groq + OpenAI clients via shared parent (-203 LOC)
+  - `6722772` refactor(ui): extract chat service helpers into app/chat_service.py (-162 LOC in view)
+  - `038fdae` feat(guardrails): LlamaGuard 3 as drop-in escalation backend (P3)
+  - `5cda492` docs(evidence): 24-scenario UI gate H.1 PASS (H.2 was deferred at the time)
+  - `1a22ab8` docs: README + CLAUDE.md + architecture + ADR-019/020 (SPLADE + RS256)
+  - `b43bc66` feat(ops): Keycloak under docker-compose auth profile + realm export
   - `e80a519` feat(auth): RS256 + JWKS verification path with in-memory key cache
-  - `a8c43b6` feat(scripts): SPLADE migration + retrieval benchmark tooling
   - `26500ae` feat(retrieval): Qdrant native sparse vectors replace rank_bm25 pickle
-  - `17069ac` docs(agents): add 12 advanced real-world scenarios (#13-24) to UI gate
-  - `092a06f` docs(agents): mandate end-of-mission Streamlit browser test with evidence
-  - `18a66d5` docs: add CLAUDE.md (project brief) + AGENTS.md (operating manual)
-  - `b8cdaa2` fix(ui): role multiselect expanded to all seeded roles
-  - `3b2cab7` fix(security): close BM25-bypass RBAC leak when dense returns zero
-  - `9c39229` refactor(streaming): unify via graph.astream(stream_mode=updates+custom)
-  - `a75dd33` feat(faithfulness): NLI gate + evaluator integration
-  - `025ce73` feat(auth): HS256 JWT replacing unsigned base64
 
 ---
 
@@ -149,15 +150,20 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 In priority order. Each one is its own commit/PR-worthy unit.
 
-1. **LlamaGuard / NeMo Guardrails classifier** — drop-in classifier as an alternative to the local-LLM escalation path in `core/agents/guardrails_llm.py`. New `core/agents/guardrails_llamaguard.py`, new flag `SAR_GUARDRAILS_BACKEND=regex|llm|llamaguard`. Risk: low. Real-data: score on `jailbreakbench/JBB-Behaviors`.
-2. **Fine-tuned domain reranker** — train a cross-encoder on MS-MARCO triplets + hard-negative mining on NIST corpus. New `scripts/train_reranker.py`, checkpoint under `data/checkpoints/reranker-domain-v1/`. Risk: low (off-the-shelf fallback always works).
-3. **Slim `app/views/chat.py`** (currently 783 LOC) — extract a `chat_service.py` so the view is UI-only. Less code, easier review.
-4. **Slim `inference/cloud_clients.py`** (735 LOC) — one ≤80-LOC class per provider, shared retry/timeout in parent.
-5. **Calibrate confidence + faithfulness thresholds** against a labeled gold set (Ragas). Wire into CI so >5pp regression fails the build.
+1. **Actually run the fine-tune** — P4 scaffolding is in tree (`scripts/train_reranker.py` + `scripts/bench_reranker.py`). The 1-2 GPU-hour training run is left to whoever owns the GPU box. Output: `data/checkpoints/reranker-domain-v1/`. Bench against baseline must show ≥1pp NDCG@10 lift.
+2. **Calibrate confidence + faithfulness thresholds** against a labeled gold set (Ragas). Wire into CI so >5pp regression fails the build. Needs the gold set to exist first.
+3. **Deeper `app/views/chat.py` slim** — currently 621 LOC. The streaming state machine, thread sidebar, and cached-render helpers could extract next to land it under 300.
+4. **Per-tenant SPLADE indexes** — when `SAR_MULTI_TENANT_COLLECTIONS=true`, each org should get its own sparse index slot in its Qdrant collection. Today the SPLADE vector field is shared across the multi-tenant boundary.
+5. **`evaluation/nist_rerank_gold.jsonl`** — hand-labelled 20-query subset for `scripts/bench_reranker.py`'s in-domain bench. Not present yet; the script gracefully skips when absent.
 
 **Recently shipped** (was in this section, now done):
 - ✅ Qdrant native sparse vectors (ADR-020, commit `26500ae`)
 - ✅ RS256 + JWKS auth (ADR-019, commit `e80a519`)
+- ✅ LlamaGuard 3 escalation backend (ADR-021, commit `038fdae`)
+- ✅ Fine-tuned reranker scaffolding (ADR-022, commit `2f0e28d`)
+- ✅ Cloud-client consolidation (-203 LOC, commit `45ebfde`)
+- ✅ Chat-service extraction (-162 LOC, commit `6722772`)
+- ✅ 24-scenario UI gate H.1 + H.2 (24/24 PASS, commit `1bcde26`)
 
 ---
 

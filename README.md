@@ -575,11 +575,13 @@ Delivered:
 - [x] **Pipeline SLO deadline** — wall-clock budget via `SAR_REQUEST_TIMEOUT_S`.
 - [x] **Signed JWT auth — HS256 + RS256/JWKS** — `utils/auth.py` dispatches on `SAR_JWT_ALGORITHM`. RS256 mode pulls public keys from `SAR_JWKS_URL` with a TTL cache in `utils/jwks_cache.py`. Keycloak realm export at `deploy/keycloak-realm.json`; `docker compose --profile auth up -d keycloak` brings it up.
 - [x] **Qdrant native sparse vectors** — replaces the `rank_bm25` pickle. `retrieval/sparse_embeddings.py` supports `bm25` (default, no new deps) and `splade` (`naver/splade-cocondenser-ensembledistil` via transformers) backends. Sparse search hits Qdrant under the same RBAC filter as dense — entire BM25-bypass class of bugs is structurally impossible. Benchmark in `evaluation/benchmarks/splade_vs_bm25.md`. Migrate existing collections with `uv run python -m scripts.migrate_to_splade`.
+- [x] **LlamaGuard 3 escalation backend** — `core/agents/guardrails_llamaguard.py` wraps Meta's `llama-guard3:8b` via Ollama. Maps the S1-S14 category taxonomy to audit-friendly `guardrails_reason` values. Selector via `SAR_GUARDRAILS_BACKEND` (`regex` / `llm` / `llamaguard`); regex always runs first, escalation kicks in for strict-mode passes.
+- [x] **Fine-tuned reranker scaffolding** — `scripts/train_reranker.py` fine-tunes from BGE-Reranker-v2-M3 on MS-MARCO triplets with optional hard-negative mining from the local Qdrant index. `scripts/bench_reranker.py` measures NDCG@10 on MS-MARCO hold-out + optional in-domain NIST gold set. New flag `SAR_RERANKER_TYPE=fine_tuned`. Actual training run is opt-in GPU work; the bench harness accepts any cross-encoder so the baseline is reproducible without it.
 
 Planned (not yet implemented):
 
-- [ ] **LlamaGuard / NeMo Guardrails classifier** — drop-in classifier as an alternative to the local-LLM escalation path. Model integration not yet wired (the framework hook in `core/agents/guardrails_llm.py` exists).
-- [ ] **Fine-tuned reranker** — domain-specific cross-encoder training. Current rerankers use off-the-shelf BGE-Reranker-v2-M3 or ColBERTv2 checkpoints.
+- [ ] **Run the fine-tune + publish the checkpoint** — scaffolding shipped, the actual 1-2 GPU-hour training pass is left to whoever owns the box. Acceptance: candidate beats baseline by ≥1pp NDCG@10 on MS-MARCO hold-out.
+- [ ] **Threshold calibration** — confidence + faithfulness thresholds are picked by intuition today. A labeled gold set + Ragas-driven calibration is the next quality lift.
 
 ---
 

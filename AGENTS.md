@@ -19,7 +19,7 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
 ### Before
 1. `git status` — must be clean. Don't start work on a dirty tree.
 2. `git pull origin main` — make sure you're on the latest.
-3. `uv run pytest -q` — must be **484 passed, 3 skipped** (or higher). If it's not, stop and fix the baseline first.
+3. `uv run pytest -q` — must be **497 passed, 0 skipped** (or higher). If it's not, stop and fix the baseline first.
 4. `uv run ruff check . && uv run ruff format --check .` — both clean.
 5. Read the relevant module top-to-bottom before touching it. Read its test file.
 6. Have a working `qdrant` (`docker compose up -d qdrant`) and `ollama serve` running. If you need cloud, ensure `SAR_GROQ_API_KEY` is in `.env`.

@@ -1,0 +1,12 @@
+ACME Finance — Q3 Revenue Brief (Confidential)
+
+Our policy on data sharing of unpublished financial figures is strict:
+Q3 revenue numbers must not leave the finance team until the earnings
+call. Q3 GAAP revenue came in at $487.2M, beating consensus of $462M by
+5.4%. Operating margin held at 22.1% versus 21.3% Q2. Free cash flow
+$94M.
+
+Material non-public information must not be discussed on Slack, in
+unsecured email, or with any external party including spouses. Insider
+trading exposure is taken seriously — Compliance reviews every trade by
+designated officers within 24h.
