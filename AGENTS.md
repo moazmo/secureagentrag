@@ -35,6 +35,10 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
    - structlog must be configured **at import time** (already done in `utils/logging.py`), otherwise module-level loggers crash under Streamlit's stdout capture.
    - Qdrant payload roles need integer sensitivity (`sensitivity_level_int`). Don't accidentally write the string version into the filter.
    - The audit chain breaks on any in-place edit. If you must alter audit semantics, change the schema and re-genesis.
+   - **Sparse + dense share one Qdrant collection** since ADR-020. Adding a third vector field (e.g. ColBERTv2-style multi-vector) means re-indexing the entire corpus — `scripts/migrate_to_splade.py` is the template.
+   - **HS256 ↔ RS256 dispatch** is keyed on `settings.jwt_algorithm`. `_verify_jwt` resolves the verification key once at the top — don't sniff the algorithm again deeper in the call stack.
+   - **LlamaGuard 3 wants its exact chat template.** If you change the prompt string in `core/agents/guardrails_llamaguard.py::_prompt`, score against `jailbreakbench/JBB-Behaviors` to confirm you didn't regress recall.
+   - **`data/agent_evidence/` is committed; `data/agent_evidence/real_corpus/` is NOT** (large arXiv PDFs). The h2_gate script re-downloads on demand.
 
 ### After
 1. `uv run pytest -q` — green.
@@ -69,13 +73,13 @@ A task is **not** done until **all** of these are true:
 
 ## 3. Quality bar: less code, simplicity
 
-The repo has been deliberately trimmed (`-80 LOC` in the streaming refactor alone). Future work must maintain this.
+The repo has been deliberately trimmed: -80 LOC in the streaming refactor (`9c39229`), -200 LOC in the SPLADE migration (`26500ae`), -203 LOC in the Groq+OpenAI client consolidation (`45ebfde`), -162 LOC of chat-view plumbing extracted to a service module (`6722772`). Future work must maintain this trend.
 
 **Rules:**
 
 - **Prefer deletion.** Every PR that adds >100 LOC of net code needs justification in the commit body.
 - **No new dependencies without justification.** Adding a package is a permanent cost. If `httpx + asyncio` covers it, don't pull in a framework.
-- **No re-implementing what's already there.** If you need rate limiting, use `utils/rate_limiter.py`. If you need a logger, `utils/logging.get_logger`. If you need to call an LLM, `core/agents/router::call_llm_with_decision` or `call_llm_stream`.
+- **No re-implementing what's already there.** If you need rate limiting, use `utils/rate_limiter.py`. If you need a logger, `utils/logging.get_logger`. If you need to call an LLM, `core/agents/router::call_llm_with_decision` or `call_llm_stream`. If you need a sparse vector, `retrieval/sparse_embeddings.SparseEmbeddingService` (bm25 or splade). If you need to verify a JWT, `utils/auth.verify_token` (HS256 or RS256 dispatch). If you need a guardrails escalation, the regex+LLM+LlamaGuard selector lives in `core/agents/guardrails.guardrails_check`.
 - **No premature abstractions.** Don't add an interface for one implementation.
 - **Inline anything used once.** Helpers that are called from a single place don't earn their own function unless they're >20 LOC and have a clear name.
 - **Comments explain *why*, not *what*.** The code says what. Tell future-you why.
@@ -110,12 +114,12 @@ Toy fixtures are fine for parser-level unit tests. **For anything that touches r
 Each feature has its own bar. Use the most demanding subset that applies.
 
 #### A. Retrieval / RBAC / ranking changes
-1. **Cross-org isolation:** External(org=partner_inc) gets 0 docs. *Must fail closed on every retrieval path.*
+1. **Cross-org isolation:** External(org=partner_inc) gets 0 docs. *Must fail closed on every retrieval path including sparse-only.*
 2. **Role mismatch:** Analyst gets 0 engineering-runbook docs.
 3. **Clearance underflow:** Viewer (clearance=1) gets 0 HIGH-sensitivity docs.
 4. **Permission spill:** Run 50 queries across 4 personas, count docs by `sensitivity_level`. Tabulate. No persona above their clearance.
-5. **BM25-only branch:** Disable embeddings (mock failure) and re-run (1)–(4). RBAC must still hold.
-6. **Real corpus:** Ingest the NIST AI RMF PDF (147 chunks), confirm 5 standard queries return cited answers.
+5. **Sparse-only branch:** Disable embeddings (mock failure) and re-run (1)–(4). RBAC must still hold via the Qdrant native sparse path under the same RBAC filter as dense.
+6. **Real corpus:** Ingest the NIST AI RMF PDF (147 chunks) AND the bundled arXiv set in `data/agent_evidence/real_corpus/` when scripts/h2_gate.py has been run. Confirm 5 standard queries return cited answers.
 
 #### B. Faithfulness / NLI gate changes
 1. **Synthetic injection:** Insert a sentence the LLM hallucinates (use a doc that doesn't support a known claim). Confirm `*[unsupported]*` annotation in flag mode, removal in drop mode.
@@ -133,24 +137,39 @@ Each feature has its own bar. Use the most demanding subset that applies.
 6. **RS256 + Keycloak (if implementing #4):** spin up Keycloak in docker, configure realm, mint via Keycloak, verify via JWKS endpoint. Test with rotated keys.
 
 #### D. Guardrails / LlamaGuard changes
+(LlamaGuard 3 escalation shipped in commit `038fdae` — ADR-021. The
+`core/agents/guardrails_llamaguard.py` module wraps `llama-guard3:8b` via
+Ollama and maps S1-S14 → `guardrails_reason`. Backend selector is
+`SAR_GUARDRAILS_BACKEND=regex|llm|llamaguard`.)
+
 1. **JBB-Behaviors corpus:** Score the regex gate vs the LLM escalation vs LlamaGuard on the full set. Compare detection rates.
 2. **False positive set:** Normal queries that contain trigger words ("how do I drop a database column" — should NOT block). Confirm low FP rate.
-3. **Latency:** Per-query overhead under 500 ms median.
-4. **Strict mode escalation path:** Confirm the regex hit triggers the LLM/LlamaGuard escalation, not the other way around.
+3. **Latency:** Per-query overhead under 500 ms median; LlamaGuard ≤ qwen3 escalation + 30%.
+4. **Strict mode escalation path:** Confirm the regex hit triggers the configured backend (LLM or LlamaGuard), not the other way around. Regex-blocked queries are blocked immediately.
+5. **Fail-open on transport errors:** Mock Ollama unreachable for LlamaGuard — `check()` must return `(True, "llamaguard_check_failed")` and the user query must still flow downstream.
 
-#### E. Sparse vector / SPLADE migration
-1. **Recall parity:** SPLADE vs BM25 on TREC-COVID — SPLADE recall@10 must be ≥ BM25 recall@10 + 2pp.
-2. **Per-tenant isolation:** Multi-tenant collection with two orgs — query in org A returns zero org B docs even with SPLADE-only retrieval.
-3. **Re-index time:** 147 NIST chunks → SPLADE indexed in < 2 min on RTX 3060.
-4. **Storage:** SPLADE index size vs BM25 pickle size — report.
-5. **End-to-end:** All RBAC tests (A1-A6 above) pass with SPLADE swapped for BM25.
+#### E. Sparse vector / SPLADE regression guard
+(The SPLADE migration shipped in commit `26500ae` — ADR-020. These are the
+regression tests for any change that touches `retrieval/sparse_embeddings.py`,
+`retrieval/hybrid_search.py`, or the Qdrant sparse-vector schema.)
+
+1. **Backend swap parity:** Run the same query under `SAR_SPARSE_BACKEND=bm25` and `SAR_SPARSE_BACKEND=splade`. Both should return non-empty results when the embedding service is reachable; both honor the dense+sparse RRF fusion.
+2. **Recall:** Optional — SPLADE vs BM25 on BEIR TREC-COVID, target SPLADE recall@10 ≥ BM25 + 2pp.
+3. **Per-tenant isolation:** Multi-tenant collection with two orgs — query in org A returns zero org B docs even when only the sparse path returns hits.
+4. **Migration script:** `uv run python -m scripts.migrate_to_splade --collection documents` is idempotent (safe to re-run; preserves dense vectors).
+5. **End-to-end:** All RBAC tests (A1-A6 above) pass with both sparse backends.
 
 #### F. Reranker fine-tuning
-1. **Train set:** MS-MARCO small triplets (~500K). Hold out 5K for eval.
-2. **Baseline:** off-the-shelf BGE-Reranker-v2-M3 on hold-out.
-3. **Fine-tuned:** train on MS-MARCO + NIST corpus pairs, eval on hold-out.
-4. **Acceptance:** fine-tuned NDCG@10 ≥ baseline + 1pp on hold-out.
-5. **In-domain:** Both checkpoints evaluated on a hand-labeled 20-query NIST subset.
+(Training script + bench harness shipped in commit `2f0e28d` — ADR-022.
+Actual training run is opt-in GPU work — owner runs it on the box that
+has the model.)
+
+1. **Train set:** MS-MARCO small triplets (~500K) via `scripts/train_reranker.py`. Hold out 500 for eval.
+2. **Hard negatives:** Use `--mine-hard-negatives` to replace random MS-MARCO negatives with lowest-scored dense top-10 hits from the local Qdrant index.
+3. **Baseline:** off-the-shelf BGE-Reranker-v2-M3 (`scripts/bench_reranker.py` defaults).
+4. **Acceptance:** fine-tuned NDCG@10 ≥ baseline + 1pp on hold-out (per ADR-022).
+5. **In-domain:** Both checkpoints evaluated on `evaluation/nist_rerank_gold.jsonl` (hand-labelled 20-query NIST subset). Skipped when the gold file is absent.
+6. **Flag flip:** Set `SAR_RERANKER_TYPE=fine_tuned` + `SAR_FINETUNED_RERANKER_PATH=data/checkpoints/reranker-domain-v1` to plug the checkpoint into the live retrieval factory.
 
 #### G. Anything that changes the streaming or graph topology
 1. **Streaming contract test** in `tests/test_agents/test_graph.py::test_streaming_emits_token_events_via_writer` still passes.
@@ -292,7 +311,21 @@ roll back to the last green state, and ping the owner.
 The 12 scenarios above (H.1) are the owner's baseline. They are necessary
 but not sufficient. **A real user would put the system through 12 more
 demanding scenarios** before trusting it. Run all of these against real
-data downloaded from the internet (not synthetic fixtures):
+data downloaded from the internet (not synthetic fixtures).
+
+**Automated runner:** `scripts/h2_gate.py` drives all 12 scenarios
+programmatically and writes a PASS/FAIL grid to
+`data/agent_evidence/results_h2.md`. Run with:
+
+```bash
+uv run python -m scripts.h2_gate
+```
+
+It downloads arXiv papers on demand (cached under
+`data/agent_evidence/real_corpus/` — gitignored), so re-runs are cheap.
+Last full-bar run on this HEAD: **12/12 PASS** (see commit `1bcde26`).
+The manual scenario specs below remain authoritative for what each
+test must demonstrate; the script is the convenience wrapper.
 
 13. **Real-world PDF ingestion.** Download an arXiv paper (e.g.
     `https://arxiv.org/pdf/2310.06825.pdf` — Mistral 7B paper, ~10 MB,
@@ -532,8 +565,12 @@ When in doubt: open an issue with a one-paragraph proposal and the trade-offs.
 2. **Streamlit blank with `OSError [Errno 22]`.** structlog wasn't bootstrapped. Confirm `utils/logging.py` ends with `with contextlib.suppress(Exception): setup_logging()`.
 3. **Streamlit blank with `engineer not in options`.** Role multiselect dropdown narrower than payload. See `app/views/upload.py`.
 4. **Postgres checkpointer fails on Windows.** Confirm `core/graph.py` pins selector loop at import. `SAR_USE_PERSISTENT_CHECKPOINTER=false` is the safe fallback.
-5. **External user sees ACME docs.** RBAC re-check guard regressed. Read `retrieval/hybrid_search.py` ~line 411 — the `allowed_doc_ids` must always be initialised when RBAC is on. Run `tests/test_retrieval/test_hybrid_search.py::test_bm25_drops_unauthorised_when_dense_returns_zero`.
+5. **External user sees ACME docs.** RBAC bypass regressed. With Qdrant native sparse (ADR-020) this should be structurally impossible — sparse calls go through `tenant_qdrant.search_sparse_with_rbac` which uses the same `build_rbac_filter` as dense. If you see a leak, the bug is upstream of the filter. Run `tests/test_retrieval/test_hybrid_search.py::test_bm25_drops_unauthorised_when_dense_returns_zero` (kept under the old name as a regression guard).
 6. **Audit chain verifier reports `broken=1`.** Someone edited a past entry. `audit_logs/*.jsonl` is append-only. Revert the file or accept that the chain is broken from that index forward and re-genesis.
+7. **`SparseEmbeddingService` returns empty vectors.** When `SAR_SPARSE_BACKEND=splade` and the `[embeddings-local]` extra isn't installed, the service silently falls back to bm25 and logs `splade_failed_falling_back_to_bm25`. Either install the extra or pin `SAR_SPARSE_BACKEND=bm25` so the behaviour is intentional.
+8. **`auth_unsigned_token` warning on every API request.** `SAR_JWT_SECRET` is not set, so the verifier falls back to legacy base64. Fine for local smoke; never for prod. Set the secret OR switch to `SAR_JWT_ALGORITHM=RS256` + `SAR_JWKS_URL`.
+9. **LlamaGuard 3 returns "safe" for everything.** Either the model wasn't pulled (`ollama pull llama-guard3:8b`) and Ollama 404s — check the `llamaguard_check_failed` audit reason. Or the prompt template drifted from Meta's chat template; revert `core/agents/guardrails_llamaguard.py::_prompt`.
+10. **`scripts/h2_gate.py` scenario #14 returns 0 citations.** The multi-doc query needs content-specific phrasing for the grader to keep retrieved docs. Use one that mentions a topic actually in the papers (e.g. "What attention or sliding-window mechanisms…"), not a generic "summarise" query.
 
 ---
 
