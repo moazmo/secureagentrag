@@ -49,6 +49,9 @@ ollama_data/
 data/*
 # Exception: UI-gate evidence is the formal PR acceptance artifact per AGENTS.md.
 !data/agent_evidence/
+# But not the bulky downloaded PDFs — those are reproducible from the
+# URLs in scripts/h2_gate.py and the README.
+data/agent_evidence/real_corpus/
 audit_logs/
 conversations/
 
