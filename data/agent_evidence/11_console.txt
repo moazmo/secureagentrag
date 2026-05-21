@@ -1,0 +1,11 @@
+# Scenario 11 — Browser console (after visiting Chat, Upload, Audit, Evaluation tabs)
+# captured 2026-05-21
+
+Zero errors. Zero warnings.
+
+---
+Service health (Evaluation tab):
+  Qdrant  : Healthy (255 ms, 2 collections)
+  Ollama  : Healthy (490 ms, 5 models)
+  Postgres: Healthy
+  Redis   : Healthy (in-memory fallback)

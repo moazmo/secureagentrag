@@ -1,0 +1,10 @@
+# Scenario 2 — RBAC Matrix Verification
+# Query: "What is our policy on data sharing?"
+# Date: 2026-05-21
+
+Admin (acme, clr=3, all)       -> 3 docs: ['demo_engineering_runbook.txt', 'demo_public_handbook.txt', 'demo_finance_q3.txt']
+Finance Manager (acme, clr=3)  -> 2 docs: ['demo_public_handbook.txt', 'demo_finance_q3.txt']
+Engineer (acme, clr=2)         -> 2 docs: ['demo_public_handbook.txt', 'demo_engineering_runbook.txt']
+Senior Analyst (acme, clr=2)   -> 1 docs: ['demo_public_handbook.txt']
+Viewer (acme, clr=1)           -> 1 docs: ['demo_public_handbook.txt']
+External (partner_inc, clr=1)  -> 0 docs: []

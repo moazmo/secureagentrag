@@ -1,0 +1,10 @@
+{"event": "Recognizer not added to registry because language is not supported by registry - EsNieRecognizer supported languages: es, registry supported languages: en"}
+{"event": "Recognizer not added to registry because language is not supported by registry - ItDriverLicenseRecognizer supported languages: it, registry supported languages: en"}
+{"event": "Recognizer not added to registry because language is not supported by registry - ItFiscalCodeRecognizer supported languages: it, registry supported languages: en"}
+{"event": "Recognizer not added to registry because language is not supported by registry - ItVatCodeRecognizer supported languages: it, registry supported languages: en"}
+{"event": "Recognizer not added to registry because language is not supported by registry - ItIdentityCardRecognizer supported languages: it, registry supported languages: en"}
+{"event": "Recognizer not added to registry because language is not supported by registry - ItPassportRecognizer supported languages: it, registry supported languages: en"}
+{"event": "Recognizer not added to registry because language is not supported by registry - PlPeselRecognizer supported languages: pl, registry supported languages: en"}
+{"event": "Loaded recognizer: SpacyRecognizer"}
+OK  chain valid  entries_checked=311
+    last_hash=bf4c19d9cc1bf4b6a8f0d748e60075358851f1e5608b8f2aa000bed9ce6fb5ea

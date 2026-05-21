@@ -46,7 +46,9 @@ coverage.xml
 # ── Data / Storage (local volumes) ──────────────────────────────────────────
 qdrant_storage/
 ollama_data/
-data/
+data/*
+# Exception: UI-gate evidence is the formal PR acceptance artifact per AGENTS.md.
+!data/agent_evidence/
 audit_logs/
 conversations/
 
