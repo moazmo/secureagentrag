@@ -66,7 +66,8 @@ test_final_summary*.txt
 # ── Evaluation runtime artifacts ─────────────────────────────────────────────
 evaluation/results/
 
-# ── Personal / private notes (not for public repo) ───────────────────────────
+# ── Local working dir (notes, scratch, untracked artifacts) ──────────────────
+private/
 INTERVIEW_DEFENSE.md
 NOTES.md
 TODO.md
