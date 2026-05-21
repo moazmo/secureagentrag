@@ -4,21 +4,23 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import UTC, datetime
 
 import streamlit as st
 
+from app.chat_service import (
+    log_audit_entry,
+    run_ragas_evaluation,
+    store_evaluation_data,
+)
 from app.components.chat_message import (
     render_assistant_message,
     render_security_blocked,
 )
 from app.components.sidebar import get_current_user_context
 from core.graph import run_rag_pipeline, run_rag_pipeline_stream
-from evaluation.ragas_eval import EvalSample, RagasEvaluator
 from utils.async_helpers import run_async
 from utils.conversation_store import ConversationMessage, conversation_store
 from utils.logging import correlation_id_scope, get_logger
-from utils.metrics_store import store_metric
 from utils.query_cache import get_cached_result, set_cached_result
 from utils.rate_limiter import check_query_rate_limit
 from utils.validation import validate_query
@@ -336,7 +338,7 @@ def _process_query_streaming(query: str) -> None:
             render_security_blocked(blocked_message)
             st.session_state.chat_history.append({"role": "blocked", "content": blocked_message})
             _persist_message("blocked", blocked_message)
-            _log_audit_entry(
+            log_audit_entry(
                 action="query_blocked",
                 query=query,
                 details=blocked_message,
@@ -429,14 +431,14 @@ def _process_query_streaming(query: str) -> None:
                 "routing_info": routing_info,
             },
         )
-        _log_audit_entry(
+        log_audit_entry(
             action="query",
             query=query,
             details=f"confidence={confidence:.2f}, citations={len(citations)}, streamed=True",
             latency_ms=latency_ms,
             confidence=confidence,
         )
-        _store_evaluation_data(
+        store_evaluation_data(
             query=query,
             confidence=confidence,
             latency_ms=latency_ms,
@@ -448,7 +450,7 @@ def _process_query_streaming(query: str) -> None:
             tokens=total_tokens,
         )
 
-        _run_ragas_evaluation(query, generation, citations)
+        run_ragas_evaluation(query, generation, citations)
 
         set_cached_result(
             user_id=user_context.user_id,
@@ -531,7 +533,7 @@ def _process_query(query: str) -> None:
                 "blocked",
                 security_message or "Query blocked by security policy.",
             )
-            _log_audit_entry(
+            log_audit_entry(
                 action="query_blocked",
                 query=query,
                 details=security_message,
@@ -569,7 +571,7 @@ def _process_query(query: str) -> None:
                     "routing_info": routing_info,
                 },
             )
-            _log_audit_entry(
+            log_audit_entry(
                 action="query",
                 query=query,
                 details=f"confidence={confidence:.2f}, citations={len(citations)}",
@@ -590,7 +592,7 @@ def _process_query(query: str) -> None:
             )
 
         # Store evaluation data
-        _store_evaluation_data(
+        store_evaluation_data(
             query=query,
             confidence=confidence,
             latency_ms=latency_ms,
@@ -603,7 +605,7 @@ def _process_query(query: str) -> None:
         )
 
         # Run Ragas evaluation asynchronously (non-blocking)
-        _run_ragas_evaluation(query, generation, citations)
+        run_ragas_evaluation(query, generation, citations)
 
     except Exception as exc:
         error_msg = f"An error occurred while processing your query: {exc}"
@@ -617,167 +619,3 @@ def _process_query(query: str) -> None:
                 "confidence": 0.0,
             }
         )
-
-
-def _log_audit_entry(
-    action: str,
-    query: str,
-    details: str,
-    latency_ms: float,
-    confidence: float = 0.0,
-) -> None:
-    """Add an entry to the session audit log.
-
-    Args:
-        action: Type of action (query, query_blocked, upload).
-        query: The query text.
-        details: Additional details string.
-        latency_ms: Processing time in milliseconds.
-        confidence: Confidence score if applicable.
-    """
-    user = st.session_state.current_user
-    entry = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "user": user.get("display_name", user.get("user_id", "unknown")),
-        "user_id": user.get("user_id", "unknown"),
-        "action": action,
-        "query": query[:100],
-        "details": details,
-        "sensitivity": f"Level {user.get('clearance_level', 1)}",
-        "status": "blocked" if "blocked" in action else "success",
-        "latency_ms": round(latency_ms, 1),
-        "confidence": confidence,
-    }
-    st.session_state.audit_log.append(entry)
-
-
-def _run_ragas_evaluation(
-    query: str,
-    generation: str,
-    citations: list[dict],
-) -> None:
-    """Run Ragas evaluation in the background (non-blocking).
-
-    Stores results in session state for display in the evaluation dashboard.
-    Gracefully handles missing ragas dependency.
-
-    Args:
-        query: The user's query.
-        generation: The generated response.
-        citations: List of citation dicts with chunk_text.
-    """
-    try:
-        contexts = [c.get("chunk_text", "") for c in citations if c.get("chunk_text")]
-        if not contexts:
-            return
-
-        sample = EvalSample(
-            query=query,
-            response=generation,
-            contexts=contexts,
-        )
-
-        evaluator = RagasEvaluator()
-        if not evaluator.is_available():
-            logger.debug("ragas_not_available_skipping")
-            return
-
-        # Run async evaluation via run_async
-        result = run_async(evaluator.evaluate_single(sample))
-
-        # Store Ragas scores in session state
-        if "ragas_scores" not in st.session_state:
-            st.session_state.ragas_scores = []
-
-        st.session_state.ragas_scores.append(
-            {
-                "timestamp": datetime.now(UTC).isoformat(),
-                "query": query[:80],
-                "faithfulness": result.faithfulness,
-                "answer_relevancy": result.answer_relevancy,
-                "context_precision": result.context_precision,
-                "overall_score": result.overall_score,
-                "latency_ms": result.latency_ms,
-            }
-        )
-
-        logger.info(
-            "ragas_evaluation_completed",
-            query_len=len(query),
-            overall_score=result.overall_score,
-        )
-    except Exception as exc:
-        logger.debug("ragas_evaluation_failed", error=str(exc))
-
-
-def _store_evaluation_data(
-    query: str,
-    confidence: float,
-    latency_ms: float,
-    query_type: str,
-    security_passed: bool,
-    provider: str | None = None,
-    model: str | None = None,
-    synth_latency_ms: float | None = None,
-    tokens: int | None = None,
-) -> None:
-    """Store query evaluation data for the evaluation dashboard.
-
-    Persists to both in-memory session state (for immediate UI display)
-    and SQLite (for long-term persistence across restarts).
-
-    Args:
-        query: The user query.
-        confidence: Confidence score.
-        latency_ms: End-to-end processing latency in milliseconds.
-        query_type: Type of query (simple, complex, etc.).
-        security_passed: Whether security check passed.
-        provider: Actual provider used by the synthesizer.
-        model: Actual model used by the synthesizer.
-        synth_latency_ms: Synth-only latency (excludes router/security/retrieval).
-        tokens: Total token usage from the synth call.
-    """
-    if "evaluation_data" not in st.session_state:
-        st.session_state.evaluation_data = []
-
-    actual_model = model or st.session_state.selected_model
-    actual_provider = provider or (
-        "ollama" if st.session_state.inference_mode == "local" else "cloud"
-    )
-
-    entry = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "query": query[:80],
-        "confidence": confidence,
-        "latency_ms": round(latency_ms, 1),
-        "synth_latency_ms": round(synth_latency_ms or 0.0, 1),
-        "tokens": tokens or 0,
-        "query_type": query_type,
-        "security_passed": security_passed,
-        "user": st.session_state.current_user.get("display_name", "unknown"),
-        "provider": actual_provider,
-        "model": actual_model,
-        "mode": st.session_state.inference_mode,
-    }
-
-    st.session_state.evaluation_data.append(entry)
-
-    # Persist to SQLite for long-term storage
-    try:
-        store_metric(
-            query=query[:200],
-            confidence=confidence,
-            latency_ms=latency_ms,
-            query_type=query_type,
-            user_id=st.session_state.current_user.get("display_name", "unknown"),
-            model=actual_model,
-            security_passed=security_passed,
-            metadata={
-                "mode": st.session_state.inference_mode,
-                "provider": actual_provider,
-                "synth_latency_ms": synth_latency_ms,
-                "tokens": tokens,
-            },
-        )
-    except Exception as exc:
-        logger.debug("metric_persistence_failed", error=str(exc))
