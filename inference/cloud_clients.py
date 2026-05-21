@@ -139,14 +139,143 @@ class BaseCloudClient(ABC):
         await self.close()
 
 
-class GroqClient(BaseCloudClient):
-    """Groq cloud LLM client using their OpenAI-compatible API.
+class OpenAICompatibleClient(BaseCloudClient):
+    """Shared client for OpenAI Chat Completions-compatible APIs.
 
-    Args:
-        api_key: Groq API key.
-        model: Model identifier. Defaults to "llama-3.3-70b-versatile".
-        timeout: Request timeout in seconds.
+    Both Groq and OpenAI implement the same wire format
+    (``POST /chat/completions`` + SSE streaming). Subclasses supply only
+    the ``api_base`` URL and the ``provider`` tag — every method on
+    ``BaseCloudClient`` is implemented once, here, and inherited.
     """
+
+    #: Subclasses override these two class attrs.
+    api_base: str = ""
+    provider_name: str = ""
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    @staticmethod
+    def _messages(prompt: str, system_prompt: str) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        if system_prompt:
+            out.append({"role": "system", "content": system_prompt})
+        out.append({"role": "user", "content": prompt})
+        return out
+
+    @_retry_on_connection
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        return await self.chat(
+            messages=self._messages(prompt, system_prompt),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+
+    @_retry_on_connection
+    async def chat(
+        self,
+        messages: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        start = time.perf_counter()
+        response = await self._client.post(
+            f"{self.api_base}/chat/completions",
+            headers=self._headers(),
+            json=payload,
+        )
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        response.raise_for_status()
+
+        data = response.json()
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
+        usage = data.get("usage", {})
+
+        return LLMResponse(
+            text=message.get("content", ""),
+            model=data.get("model", self.model),
+            provider=self.provider_name,
+            usage={
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            },
+            latency_ms=elapsed_ms,
+        )
+
+    @_retry_on_connection
+    async def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[str, None]:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": self._messages(prompt, system_prompt),
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        async with self._client.stream(
+            "POST",
+            f"{self.api_base}/chat/completions",
+            headers={**self._headers(), "Accept": "text/event-stream"},
+            json=payload,
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+                choice = data.get("choices", [{}])[0]
+                token = choice.get("delta", {}).get("content", "")
+                if token:
+                    yield token
+
+    @_retry_on_connection
+    async def health_check(self) -> bool:
+        try:
+            response = await self._client.get(f"{self.api_base}/models", headers=self._headers())
+            return response.status_code in (200, 401)
+        except (httpx.ConnectError, httpx.TimeoutException):
+            return False
+
+
+class GroqClient(OpenAICompatibleClient):
+    """Groq cloud LLM client (OpenAI-compatible API at api.groq.com)."""
+
+    provider_name = "groq"
 
     def __init__(
         self,
@@ -155,181 +284,13 @@ class GroqClient(BaseCloudClient):
         timeout: float = 60.0,
     ) -> None:
         super().__init__(api_key=api_key, model=model, timeout=timeout)
-        self._api_base = settings.groq_api_base
-
-    def _headers(self) -> dict[str, str]:
-        """Build request headers with authorization."""
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-    @_retry_on_connection
-    async def generate(
-        self,
-        prompt: str,
-        system_prompt: str = "",
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        json_mode: bool = False,
-    ) -> LLMResponse:
-        """Generate a completion via Groq's OpenAI-compatible API.
-
-        Args:
-            prompt: The user prompt text.
-            system_prompt: Optional system context.
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens to generate.
-            json_mode: When True, request JSON-formatted output.
-
-        Returns:
-            LLMResponse with generated text and metadata.
-        """
-        messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        return await self.chat(
-            messages=messages, temperature=temperature, max_tokens=max_tokens, json_mode=json_mode
-        )
-
-    @_retry_on_connection
-    async def chat(
-        self,
-        messages: list[dict],
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        json_mode: bool = False,
-    ) -> LLMResponse:
-        """Send a chat request to Groq's API.
-
-        Args:
-            messages: List of message dicts with 'role' and 'content' keys.
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens to generate.
-            json_mode: When True, request JSON-formatted output.
-
-        Returns:
-            LLMResponse with generated text and metadata.
-        """
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
-
-        start = time.perf_counter()
-        response = await self._client.post(
-            f"{self._api_base}/chat/completions",
-            headers=self._headers(),
-            json=payload,
-        )
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        response.raise_for_status()
-
-        data = response.json()
-        choice = data.get("choices", [{}])[0]
-        message = choice.get("message", {})
-        usage = data.get("usage", {})
-
-        return LLMResponse(
-            text=message.get("content", ""),
-            model=data.get("model", self.model),
-            provider="groq",
-            usage={
-                "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-            },
-            latency_ms=elapsed_ms,
-        )
-
-    @_retry_on_connection
-    async def generate_stream(
-        self,
-        prompt: str,
-        system_prompt: str = "",
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-    ) -> AsyncGenerator[str, None]:
-        """Stream a completion via Groq's OpenAI-compatible API.
-
-        Uses SSE (Server-Sent Events) streaming to yield tokens in real-time.
-
-        Args:
-            prompt: The user prompt text.
-            system_prompt: Optional system context.
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens to generate.
-
-        Yields:
-            Token strings as they are generated.
-        """
-        messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True,
-        }
-
-        async with self._client.stream(
-            "POST",
-            f"{self._api_base}/chat/completions",
-            headers={**self._headers(), "Accept": "text/event-stream"},
-            json=payload,
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(data_str)
-                        choice = data.get("choices", [{}])[0]
-                        delta = choice.get("delta", {})
-                        token = delta.get("content", "")
-                        if token:
-                            yield token
-                    except json.JSONDecodeError:
-                        continue
-
-    @_retry_on_connection
-    async def health_check(self) -> bool:
-        """Check if the Groq API is reachable.
-
-        Returns:
-            True if the API responds (even with auth error means it's reachable).
-        """
-        try:
-            response = await self._client.get(
-                f"{self._api_base}/models",
-                headers=self._headers(),
-            )
-            return response.status_code in (200, 401)
-        except (httpx.ConnectError, httpx.TimeoutException):
-            return False
+        self.api_base = settings.groq_api_base
 
 
-class OpenAIClient(BaseCloudClient):
-    """OpenAI cloud LLM client using the Chat Completions API.
+class OpenAIClient(OpenAICompatibleClient):
+    """OpenAI cloud LLM client (Chat Completions API at api.openai.com)."""
 
-    Args:
-        api_key: OpenAI API key.
-        model: Model identifier. Defaults to "gpt-4o-mini".
-        timeout: Request timeout in seconds.
-    """
+    provider_name = "openai"
 
     def __init__(
         self,
@@ -338,171 +299,7 @@ class OpenAIClient(BaseCloudClient):
         timeout: float = 60.0,
     ) -> None:
         super().__init__(api_key=api_key, model=model, timeout=timeout)
-        self._api_base = settings.openai_api_base
-
-    def _headers(self) -> dict[str, str]:
-        """Build request headers with authorization."""
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-    @_retry_on_connection
-    async def generate(
-        self,
-        prompt: str,
-        system_prompt: str = "",
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        json_mode: bool = False,
-    ) -> LLMResponse:
-        """Generate a completion via OpenAI's Chat Completions API.
-
-        Args:
-            prompt: The user prompt text.
-            system_prompt: Optional system context.
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens to generate.
-            json_mode: When True, request JSON-formatted output.
-
-        Returns:
-            LLMResponse with generated text and metadata.
-        """
-        messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        return await self.chat(
-            messages=messages, temperature=temperature, max_tokens=max_tokens, json_mode=json_mode
-        )
-
-    @_retry_on_connection
-    async def chat(
-        self,
-        messages: list[dict],
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        json_mode: bool = False,
-    ) -> LLMResponse:
-        """Send a chat request to OpenAI's API.
-
-        Args:
-            messages: List of message dicts with 'role' and 'content' keys.
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens to generate.
-            json_mode: When True, request JSON-formatted output.
-
-        Returns:
-            LLMResponse with generated text and metadata.
-        """
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
-
-        start = time.perf_counter()
-        response = await self._client.post(
-            f"{self._api_base}/chat/completions",
-            headers=self._headers(),
-            json=payload,
-        )
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        response.raise_for_status()
-
-        data = response.json()
-        choice = data.get("choices", [{}])[0]
-        message = choice.get("message", {})
-        usage = data.get("usage", {})
-
-        return LLMResponse(
-            text=message.get("content", ""),
-            model=data.get("model", self.model),
-            provider="openai",
-            usage={
-                "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-            },
-            latency_ms=elapsed_ms,
-        )
-
-    @_retry_on_connection
-    async def generate_stream(
-        self,
-        prompt: str,
-        system_prompt: str = "",
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-    ) -> AsyncGenerator[str, None]:
-        """Stream a completion via OpenAI's Chat Completions API.
-
-        Uses SSE (Server-Sent Events) streaming to yield tokens in real-time.
-
-        Args:
-            prompt: The user prompt text.
-            system_prompt: Optional system context.
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens to generate.
-
-        Yields:
-            Token strings as they are generated.
-        """
-        messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True,
-        }
-
-        async with self._client.stream(
-            "POST",
-            f"{self._api_base}/chat/completions",
-            headers={**self._headers(), "Accept": "text/event-stream"},
-            json=payload,
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(data_str)
-                        choice = data.get("choices", [{}])[0]
-                        delta = choice.get("delta", {})
-                        token = delta.get("content", "")
-                        if token:
-                            yield token
-                    except json.JSONDecodeError:
-                        continue
-
-    @_retry_on_connection
-    async def health_check(self) -> bool:
-        """Check if the OpenAI API is reachable.
-
-        Returns:
-            True if the API responds.
-        """
-        try:
-            response = await self._client.get(
-                f"{self._api_base}/models",
-                headers=self._headers(),
-            )
-            return response.status_code in (200, 401)
-        except (httpx.ConnectError, httpx.TimeoutException):
-            return False
+        self.api_base = settings.openai_api_base
 
 
 class AnthropicClient(BaseCloudClient):
