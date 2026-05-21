@@ -50,7 +50,7 @@ Runs in ~20 seconds, no external services needed.
 uv run pytest -q
 ```
 
-Expected: **274 passed** (use `--maxfail=1 -x` if you want to bail on first fail).
+Expected: **497 passed** (use `--maxfail=1 -x` if you want to bail on first fail).
 
 This is what CI runs on every push. Use it after you change code.
 
@@ -151,7 +151,7 @@ If you ever push this to a real server:
   - Point `SAR_POSTGRES_URL` at the real DB (default is `postgresql://sar_user:sar_password@localhost:5433/secureagentrag` — the docker-compose Postgres on host port 5433).
   - On startup the graph chooses `AsyncPostgresSaver` first, falls back to `AsyncSqliteSaver` (`SAR_CHECKPOINT_DB_PATH`), then in-memory if both fail.
   - Verify with `docker exec secureagentrag-postgres psql -U sar_user -d secureagentrag -c "SELECT thread_id, COUNT(*) FROM checkpoints GROUP BY thread_id;"` after running a query.
-- [ ] Pin absolute paths via `SAR_AUDIT_LOG_DIR`, `SAR_CONVERSATION_DIR`, `SAR_CHECKPOINT_DB_PATH`, `SAR_BM25_INDEX_PATH` to a persistent volume.
+- [ ] Pin absolute paths via `SAR_AUDIT_LOG_DIR`, `SAR_CONVERSATION_DIR`, `SAR_CHECKPOINT_DB_PATH` to a persistent volume. (Sparse vectors live in Qdrant now — no BM25 pickle to mount.)
 - [ ] Set `SAR_PHOENIX_ENDPOINT` and run Phoenix as a sidecar.
 - [ ] Run Qdrant with replication; back up the `qdrant_storage/` volume regularly.
 - [ ] Run Ollama on a host with at least 12 GB VRAM if you want to keep both the LLM and embedding model resident.

@@ -27,13 +27,15 @@ Owner: `moazmo` / `moazmo27@gmail.com`. License: MIT.
 | Vector DB | Qdrant (docker, `:6333` REST) | `retrieval/qdrant_client.py` |
 | Local LLM | Ollama (`qwen3:8b` Q4_K_M) | `inference/ollama_client.py` |
 | Embeddings | BGE-M3 multilingual via Ollama | `retrieval/embeddings.py` |
-| Sparse | rank_bm25 pickle (per-process) | `retrieval/hybrid_search.py` |
-| Rerankers | BGE-Reranker-v2-M3 / ColBERTv2 (optional) | `retrieval/reranker.py`, `retrieval/colbert_reranker.py` |
-| Cloud LLMs | Groq / OpenAI / Anthropic via httpx | `inference/cloud_clients.py` |
+| Sparse | Qdrant native sparse vectors — `bm25` (default) / `splade` | `retrieval/sparse_embeddings.py`, `retrieval/hybrid_search.py` |
+| Rerankers | `none` / `cross_encoder` / `colbert` / `fine_tuned` | `retrieval/reranker.py`, `retrieval/colbert_reranker.py`, `core/agents/retriever.py::_get_reranker` |
+| Cloud LLMs | Groq / OpenAI (shared `OpenAICompatibleClient`) / Anthropic | `inference/cloud_clients.py` |
 | Persistence | AsyncPostgres → AsyncSqlite → MemorySaver | `core/graph.py::_get_*_checkpointer` |
-| UI | Streamlit (sidebar + 4 tabs) | `app/main.py`, `app/views/*` |
+| UI | Streamlit (sidebar + 4 tabs) | `app/main.py`, `app/views/*`, `app/chat_service.py` |
 | API | FastAPI (`:8080`) + MCP stdio | `interfaces/api.py`, `interfaces/mcp_server.py` |
-| Auth | HS256 JWT via python-jose | `utils/auth.py` |
+| Auth | HS256 (default) / RS256 + JWKS dispatch | `utils/auth.py`, `utils/jwks_cache.py` |
+| Guardrails | regex → `llm` → `llamaguard` (S1-S14 taxonomy) | `core/agents/guardrails.py`, `core/agents/guardrails_llm.py`, `core/agents/guardrails_llamaguard.py` |
+| Faithfulness | Per-sentence NLI entailment gate | `core/agents/faithfulness.py` |
 | Observability | structlog + Arize Phoenix | `utils/logging.py`, `utils/observability.py` |
 | Eval | Ragas + custom metrics | `evaluation/*` |
 | Audit | SHA-256 hash chain, JSONL, PII-redacted | `utils/audit.py`, `utils/pii.py` |
@@ -56,13 +58,14 @@ secureagentrag/
 │   ├── schemas.py      # Pydantic v2 request/response schemas
 │   └── agents/         # 9 nodes
 ├── retrieval/
-│   ├── qdrant_client.py    # RBAC filter, multi-tenant for_org
-│   ├── hybrid_search.py    # dense+BM25+RRF, RBAC re-check on BM25
+│   ├── qdrant_client.py        # RBAC filter, multi-tenant for_org, sparse upsert/search
+│   ├── hybrid_search.py        # dense + Qdrant native sparse + RRF, one RBAC filter shared
+│   ├── sparse_embeddings.py    # bm25 / splade backends, SparseVector emitter
 │   ├── embeddings.py
 │   ├── reranker.py / colbert_reranker.py
-│   ├── self_query.py       # NL → structured filter
+│   ├── self_query.py           # NL → structured filter
 │   ├── hyde.py
-│   └── multitenancy.py     # get_collection_name
+│   └── multitenancy.py         # get_collection_name
 ├── ingestion/
 │   ├── pipeline.py
 │   ├── chunker.py          # Arabic-aware
@@ -76,13 +79,23 @@ secureagentrag/
 ├── interfaces/
 │   ├── api.py              # FastAPI + /token endpoint
 │   └── mcp_server.py
+├── app/chat_service.py     # extracted audit + ragas eval helpers
+├── core/agents/
+│   ├── faithfulness.py     # NLI per-sentence entailment gate
+│   ├── guardrails.py       # regex + backend dispatch
+│   ├── guardrails_llm.py   # legacy SAFE/UNSAFE escalation on qwen3:8b
+│   └── guardrails_llamaguard.py  # llama-guard3:8b (S1-S14 taxonomy)
 ├── evaluation/             # ragas, cost dashboard, benchmark, nightly
-├── utils/                  # auth, audit, pii, logging, rate_limiter, ...
-├── scripts/                # smoke, seed, interview_demo, bench
-├── tests/                  # pytest, 484 passing
+├── utils/                  # auth, jwks_cache, audit, pii, logging, rate_limiter, ...
+├── scripts/                # smoke, seed_corpus, interview_demo, quick_bench,
+│                           # cloud_bench, h2_gate, migrate_to_splade,
+│                           # train_reranker, bench_reranker, verify_audit_chain
+├── tests/                  # pytest, 497 passing
 ├── helm/secureagentrag/    # Kubernetes manifests
+├── deploy/                 # docker-compose auth profile + keycloak-realm.json
+├── data/agent_evidence/    # 24-scenario gate evidence (results.md, screenshots)
 ├── sample_docs/            # PDF + txt corpus (incl. real NIST AI RMF)
-├── DECISIONS.md            # ADR-001..018
+├── DECISIONS.md            # ADR-001..022
 ├── architecture.md         # Mermaid diagrams
 ├── RUNBOOK.md              # ops + troubleshooting
 ├── README.md               # public face

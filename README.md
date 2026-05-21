@@ -30,7 +30,7 @@ Designed for deployment on consumer-grade hardware (8GB+ VRAM), SecureAgentRAG u
 Most RAG demos retrieve docs and ask an LLM to cite them. SecureAgentRAG goes four steps further — and these are the only things you need to read about the project:
 
 1. **Corrective RAG + NLI citation faithfulness.** Cited sentences are checked back against the source chunk with a local-model entailment pass. Unsupported claims are flagged (`*[unsupported]*`) or dropped. Citation present ≠ claim entailed; we enforce the gap.
-2. **RBAC at the vector layer + multi-tenant collections + signed JWT auth.** Qdrant payload filters enforce role/clearance on every search. Multi-tenant flag scopes each org to its own collection. HS256-signed bearer tokens replace the dev base64 shape; every audit entry carries the `jti`.
+2. **RBAC at the vector layer + multi-tenant collections + signed JWT auth.** Qdrant payload filters enforce role/clearance on every search — dense and sparse share the same filter, so the cross-tenant bypass class is structurally impossible. Multi-tenant flag scopes each org to its own collection. HS256 (default) or RS256 + JWKS bearer tokens replace the dev base64 shape; every audit entry carries the `jti`.
 3. **Privacy-first hybrid inference.** A sensitivity router forces HIGH-sensitivity work to local Ollama regardless of the caller's `prefer_cloud`. LOW work can opt into Groq / OpenAI / Anthropic. Provenance is recorded in the audit trail.
 4. **Tamper-evident audit chain with SLO deadlines.** Every operation lands in a SHA-256 hash-chained JSONL log; the chain verifier detects edits/insertions/deletions. The pipeline respects a configurable wall-clock budget and refuses gracefully on timeout.
 
@@ -50,11 +50,12 @@ uv run python -m scripts.interview_demo
 | **Multi-Agent Corrective RAG** | LangGraph workflow: router, guardrails, security, retriever, grader, rewriter, synthesizer, faithfulness, evaluator. Rewrite loop refines the query when relevance drops; the synthesizer refuses instead of synthesizing from off-topic context. Async Postgres / SQLite checkpointer persists thread state. |
 | **NLI Faithfulness Gate** | Per-sentence entailment check after synthesis. Annotates or drops unsupported claims. Local model — no extra download. Threshold gates `needs_human_review` and feeds the confidence score. |
 | **RBAC at Vector DB Level** | Role + clearance enforced via Qdrant metadata filters; unauthorized docs never returned regardless of similarity. |
-| **Multi-Tenant Collections** | Each org optionally gets its own `documents_{org_id}` collection; cross-tenant queries return zero results, BM25 is still RBAC-checked post-fusion. |
-| **Signed JWT Auth** | HS256 bearer tokens (`python-jose`) replace the dev base64 fallback. `/token` endpoint mints dev tokens; production drops a Keycloak/Auth0 JWKS verifier into the same hook. |
+| **Multi-Tenant Collections** | Each org optionally gets its own `documents_{org_id}` collection; cross-tenant queries return zero results. Sparse vectors live alongside dense in the same collection under the same RBAC filter — no post-fusion re-check needed. |
+| **Signed JWT Auth (HS256 + RS256/JWKS)** | `utils/auth.py` dispatches on `SAR_JWT_ALGORITHM`. HS256 stays the dev default; RS256 mode pulls public keys from `SAR_JWKS_URL` with a TTL cache in `utils/jwks_cache.py`. Keycloak realm export ships under `deploy/keycloak-realm.json`. |
 | **Pipeline SLO Deadline** | `SAR_REQUEST_TIMEOUT_S` bounds the whole graph; on overflow the caller gets a graceful refusal + audit entry. |
 | **Hybrid Inference Routing** | Sensitivity-based routing forces HIGH to local; LOW/MEDIUM may opt into Groq / OpenAI / Anthropic. Provider + model recorded in audit. |
-| **Hybrid Search + Reranking** | Dense (BGE-M3) + BM25 fused via RRF, then cross-encoder or ColBERTv2 reranker. Self-query and HyDE retrieval modes available. |
+| **Hybrid Search + Reranking** | Dense (BGE-M3) + Qdrant native sparse vectors (`bm25` default, `splade` opt-in) fused via RRF, then reranker (`none` / `cross_encoder` / `colbert` / `fine_tuned`). Self-query and HyDE retrieval modes available. |
+| **Prompt-Injection Guardrails (3 backends)** | Regex always runs first. `SAR_GUARDRAILS_BACKEND` flips escalation between `llm` (legacy SAFE/UNSAFE on qwen3:8b) and `llamaguard` (Meta `llama-guard3:8b`, S1-S14 taxonomy → audit-friendly reason). Fail-open on Ollama transport errors. |
 | **True Token Streaming** | Synthesis tokens stream end-to-end. Works for Ollama, Groq, OpenAI, Anthropic. |
 | **Arabic + Multilingual** | BGE-M3 multilingual embeddings + PaddleOCR / Qwen-VL OCR for English + Arabic. |
 | **Observability** | Structured `structlog`, Phoenix / OpenTelemetry tracing, per-stage latency in the audit trail. |
@@ -93,10 +94,10 @@ graph TB
 
     subgraph Retrieval Layer
         Retriever --> Dense[Dense Search BGE-M3]
-        Retriever --> Sparse[BM25 Sparse Search]
+        Retriever --> Sparse[Qdrant Native Sparse BM25 or SPLADE]
         Dense --> RRF[Reciprocal Rank Fusion]
         Sparse --> RRF
-        RRF --> Reranker[Cross-Encoder Reranker]
+        RRF --> Reranker[Reranker cross-encoder / ColBERT / fine-tuned]
         Reranker --> Grader
         Dense --> Qdrant[(Qdrant Vector DB :6333)]
     end
@@ -162,8 +163,8 @@ graph TB
 | **Vector Store** | Qdrant | Native payload filtering enables RBAC at DB level; production-grade with gRPC API |
 | **LLM (Local)** | Ollama + Qwen3-8B | Multilingual, fits in 8GB VRAM (Q4_K_M), Apache 2.0 license |
 | **Embeddings** | BGE-M3 (1024d) | State-of-the-art multilingual dense embeddings supporting 100+ languages |
-| **Sparse Search** | BM25 (rank-bm25) | Lexical matching to complement semantic search via Reciprocal Rank Fusion |
-| **Reranking** | Cross-Encoder | Precision reranking of top-K results for maximum relevance |
+| **Sparse Search** | Qdrant native sparse vectors (`bm25` / `splade`) | Same RBAC filter as dense — cross-tenant BM25 bypass is structurally impossible |
+| **Reranking** | Cross-encoder / ColBERTv2 / fine-tuned domain checkpoint | Four-mode factory (`none` / `cross_encoder` / `colbert` / `fine_tuned`) selected by `SAR_RERANKER_TYPE` |
 | **OCR** | PaddleOCR | High-accuracy multilingual OCR for scanned documents and images |
 | **UI** | Streamlit | Rapid prototyping with rich interactive widgets (chat, file upload, admin) |
 | **Observability** | Arize Phoenix + structlog | OpenTelemetry-compatible distributed tracing + structured JSON logging |
@@ -474,6 +475,19 @@ All settings are managed via environment variables (prefix: `SAR_`):
 | `SAR_ANTHROPIC_API_KEY` | — | Anthropic API key |
 | `SAR_ENABLE_RBAC` | `true` | Enable RBAC enforcement |
 | `SAR_PHOENIX_ENDPOINT` | — | Arize Phoenix collector URL |
+| `SAR_JWT_ALGORITHM` | `HS256` | `HS256` (dev/HMAC) or `RS256` (production, JWKS) |
+| `SAR_JWKS_URL` | — | IdP JWKS endpoint when `SAR_JWT_ALGORITHM=RS256` |
+| `SAR_JWKS_CACHE_TTL_SECONDS` | `300` | TTL for cached JWKS public keys |
+| `SAR_SPARSE_BACKEND` | `bm25` | `bm25` (default, no deps) or `splade` (needs `[embeddings-local]`) |
+| `SAR_RERANKER_TYPE` | `cross_encoder` | `none` / `cross_encoder` / `colbert` / `fine_tuned` |
+| `SAR_FINETUNED_RERANKER_PATH` | `data/checkpoints/reranker-domain-v1` | Local checkpoint dir when `SAR_RERANKER_TYPE=fine_tuned` |
+| `SAR_GUARDRAILS_STRICT` | `false` | Enable escalation past the regex gate |
+| `SAR_GUARDRAILS_BACKEND` | `llm` | `llm` (legacy) or `llamaguard` (S1-S14 classifier) |
+| `SAR_LLAMAGUARD_MODEL` | `llama-guard3:8b` | Ollama tag for the LlamaGuard backend |
+| `SAR_FAITHFULNESS_GATE_ENABLED` | `false` | Per-sentence NLI entailment gate after synthesis |
+| `SAR_FAITHFULNESS_GATE_MODE` | `flag` | `flag` (annotate) or `drop` (remove unsupported sentences) |
+| `SAR_FAITHFULNESS_THRESHOLD` | `0.7` | Min entailment score before a sentence counts as supported |
+| `SAR_REQUEST_TIMEOUT_S` | `60` | Wall-clock SLO budget for one pipeline run (`0` disables) |
 
 ---
 
@@ -538,6 +552,11 @@ Key design choices are documented in [DECISIONS.md](DECISIONS.md). Highlights:
 | ADR-015 | MCP + FastAPI surfaces | IDE agents (MCP) + external services (REST) share schemas |
 | ADR-016 | PII redaction before persistence | Audit / cache never see raw PII; live state untouched |
 | ADR-017 | Cost model for local vs cloud | Dashboard makes the privacy / spend trade-off legible |
+| ADR-018 | AsyncPostgresSaver + Windows selector pin | LangGraph checkpointer runs in the same async loop as the pipeline |
+| ADR-019 | HS256 + RS256/JWKS dispatch | Public-key verification against any OIDC provider via `SAR_JWT_ALGORITHM` flip |
+| ADR-020 | Qdrant native sparse vectors over `rank_bm25` pickle | Sparse runs under the same RBAC filter — cross-tenant bypass structurally impossible |
+| ADR-021 | LlamaGuard 3 as drop-in escalation backend | Purpose-built classifier with S1-S14 taxonomy via `llama-guard3:8b` over Ollama |
+| ADR-022 | Fine-tuned domain reranker as opt-in checkpoint | Training + bench scripts in tree; flip `SAR_RERANKER_TYPE=fine_tuned` after training |
 
 ---
 
