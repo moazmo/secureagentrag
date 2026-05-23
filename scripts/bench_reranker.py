@@ -206,7 +206,15 @@ Acceptance bar (per ADR-022): candidate must beat baseline by ≥1pp on MS-MARCO
 """
     (out_dir / "reranker_finetune.md").write_text(md, encoding="utf-8")
     print("\n=== RESULTS ===")
-    print(md)
+    # Markdown contains the U+2265 ("≥") glyph in the acceptance bar; some
+    # Windows consoles default to cp1252 which cannot encode it. Reconfigure
+    # stdout to UTF-8 (Python 3.7+) and fall back to ASCII substitution if
+    # that fails on a very locked-down console.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        print(md)
+    except (AttributeError, OSError):
+        print(md.replace("≥", ">="))
     return 0
 
 

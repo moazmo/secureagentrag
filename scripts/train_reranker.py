@@ -212,6 +212,15 @@ def main() -> int:
         show_progress_bar=True,
     )
 
+    # ST 5.x deprecated `fit()` calls the underlying CrossEncoderTrainer with
+    # `save_strategy="no"` hard-coded, and `save_best_model` only fires when
+    # an evaluator was supplied. Persist the final weights explicitly so the
+    # bench script (and the SAR_RERANKER_TYPE=fine_tuned factory) can load
+    # the checkpoint. Without this the output dir holds only train_meta.json.
+    Path(args.output).mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(args.output)
+    logger.info("model_saved", path=args.output)
+
     # Persist a small companion JSON with reproducibility metadata so we
     # can trace any future bench number back to the right training run.
     meta = {
