@@ -690,3 +690,76 @@ bench script gracefully skips the NIST arm when the file is absent.
 - (-) `[embeddings-local]` extra is required (sentence-transformers +
   torch ~2GB). Same cost as the existing cross_encoder mode, so this is
   not a new tax for users who already opted into local rerankers.
+
+## ADR-023: Threshold calibration against a labelled gold set
+
+**Status:** Accepted (2026-05-23)
+
+**Context:**
+`settings.confidence_threshold` and `settings.faithfulness_threshold` were
+picked by intuition at 0.6 / 0.7. They gate two important pipeline
+behaviours — `needs_human_review` (UI surface) and the NLI faithfulness
+decision (annotate-or-drop unsupported sentences). Intuition-picked
+cut-offs mean a real shift in the upstream stack (new reranker, new
+guardrails backend, model upgrade) silently changes what counts as
+"low-confidence" without anyone noticing. Pre-req for shipping
+confidence-driven UX (rejecting answers, escalating to human review,
+auto-routing low-confidence queries to cloud).
+
+**Decision:**
+
+1. Hand-label a 50-row gold set at `evaluation/golden_set.jsonl`. Each
+   row carries `expected_confidence_band` and `expected_faithfulness_band`
+   ("high"/"medium"/"low") plus `expected_outcome` ("answer"/"refuse"/
+   "block"). Coverage:
+   - NIST AI RMF factual + inferential (12)
+   - ACME synthetic RBAC corpus — public, engineering, finance (15)
+   - RBAC negative tests, including cross-org External (6)
+   - Out-of-scope questions (5)
+   - Prompt-injection probes (5)
+   - Bilingual Arabic queries (2)
+   - Adversarial / unsupported-claim probes (5)
+2. New `scripts/calibrate_thresholds.py` runs every gold row through the
+   live RAG pipeline (with `SAR_FAITHFULNESS_GATE_ENABLED=true` and a
+   bumped `SAR_REQUEST_TIMEOUT_S` so the NLI gate has room to finish),
+   records the `(confidence_score, faithfulness_ratio)` pair per row,
+   sweeps thresholds across `[0.0, 1.0]` in 0.05 steps, and picks the
+   value maximising Youden's J (`TPR - FPR`) — the cut-off that best
+   separates positive-band rows from negative-band rows. Blocked rows are
+   excluded from the faithfulness sweep so their default ratio of 1.0
+   doesn't pollute the negative tail.
+3. Chosen thresholds + full sweep curves persist to
+   `evaluation/calibration.json`. `config/settings.py::_apply_calibration`
+   reads that file at import and updates the runtime thresholds — but
+   only when the env var is unset, so operators can still pin per
+   deployment via `SAR_CONFIDENCE_THRESHOLD` / `SAR_FAITHFULNESS_THRESHOLD`.
+4. The script also writes a measured baseline (Ragas if installed,
+   lexical-overlap fallback otherwise) into `evaluation/baseline.json`,
+   replacing the legacy hand-picked numbers. `evaluation/nightly.py`
+   already compares against that file and fails the build on a >5pp
+   drop, so calibration runs are simultaneously the new "good
+   known-state" for nightly regression detection.
+
+**Consequences:**
+
+- (+) Thresholds are now data-driven against real RBAC + retrieval
+  paths, not a guess. Calibration JSON keeps the full curve so a future
+  reviewer can pick a different operating point (e.g. higher precision)
+  without re-running the pipeline.
+- (+) Single source of truth: settings.py reads calibration.json once
+  at import — no code-path branching elsewhere. Env override still wins,
+  preserving the "operator can pin anything" principle.
+- (+) Nightly CI gates on the same measured baseline that calibration
+  emits — `>5pp` drop fails the build via the existing
+  `evaluation.nightly` workflow.
+- (+) Reproducible: each run writes a timestamped snapshot under
+  `evaluation/results/calibration_<ts>.json` containing per-row
+  pipeline outputs, so any future re-pick can be done offline via
+  `scripts.calibrate_thresholds --from-results <path>` without
+  re-running ~80 minutes of live pipeline.
+- (-) Gold set is 50 rows. Larger (~200-500) would tighten confidence
+  intervals on the chosen threshold; current bar is "is the cut-off
+  obviously in the right region" not "what is the exact optimum."
+- (-) Calibration takes ~80-120 minutes on local Ollama because the
+  faithfulness gate adds per-sentence LLM calls. Not in CI by default;
+  re-run when the upstream model or reranker changes.

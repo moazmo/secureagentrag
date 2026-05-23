@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -244,5 +249,50 @@ class Settings(BaseSettings):
     price_local_per_second: float = 0.000008
 
 
+def _apply_calibration(settings_obj: Settings) -> None:
+    """Override threshold defaults from ``evaluation/calibration.json`` when present.
+
+    The calibration script (``scripts/calibrate_thresholds.py``) writes the
+    chosen confidence + faithfulness cutoffs against a labelled gold set. Loading
+    them here means deployments inherit the latest tuned values automatically,
+    while an explicit ``SAR_CONFIDENCE_THRESHOLD`` / ``SAR_FAITHFULNESS_THRESHOLD``
+    env var still wins so operators can override per environment.
+
+    Silently no-ops when the file is missing, malformed, or the relevant keys
+    are absent — never blocks startup.
+    """
+    calib_path = Path(__file__).resolve().parent.parent / "evaluation" / "calibration.json"
+    if not calib_path.exists():
+        return
+    try:
+        data = json.loads(calib_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+
+    # Reject degenerate sweeps (no negatives or no positives -> the chosen
+    # threshold has no statistical meaning). Keeping the original default in
+    # that case is safer than letting a 0.0 cut-off escape into production.
+    def _sane(block: dict) -> bool:
+        try:
+            return (
+                int(block.get("n_pos", 0)) > 0
+                and int(block.get("n_neg", 0)) > 0
+                and float(block.get("chosen_threshold", 0.0)) > 0.0
+            )
+        except (TypeError, ValueError):
+            return False
+
+    conf_block = data.get("confidence", {})
+    if _sane(conf_block) and os.environ.get("SAR_CONFIDENCE_THRESHOLD") is None:
+        with contextlib.suppress(TypeError, ValueError):
+            settings_obj.confidence_threshold = float(conf_block["chosen_threshold"])
+
+    faith_block = data.get("faithfulness", {})
+    if _sane(faith_block) and os.environ.get("SAR_FAITHFULNESS_THRESHOLD") is None:
+        with contextlib.suppress(TypeError, ValueError):
+            settings_obj.faithfulness_threshold = float(faith_block["chosen_threshold"])
+
+
 # Singleton instance — import this throughout the application
 settings = Settings()
+_apply_calibration(settings)
