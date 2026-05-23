@@ -630,7 +630,7 @@ taxonomy.
 
 ## ADR-022: Fine-tuned domain reranker as opt-in checkpoint
 
-**Status:** Accepted (2026-05-23) — fine-tune trained, **+1.60pp NDCG@10 lift on MS-MARCO 500-pair hold-out** (0.7744 → 0.7904), exceeds the ≥1pp bar. Bench report at `evaluation/benchmarks/reranker_finetune.md`.
+**Status:** Accepted (2026-05-23) — fine-tune trained, **+1.60pp NDCG@10 on MS-MARCO 500-pair hold-out** (0.7744 → 0.7904) **and +0.54pp on the 20-row NIST in-domain gold** (0.9162 → 0.9215). Both ADR acceptance criteria (≥1pp on MS-MARCO + win on NIST) met. Bench report at `evaluation/benchmarks/reranker_finetune.md`; NIST gold at `evaluation/nist_rerank_gold.jsonl`.
 
 **Context:**
 The retrieval stack ships three reranker modes today (none / cross-encoder /

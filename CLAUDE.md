@@ -169,9 +169,8 @@ In priority order. Each one is its own commit/PR-worthy unit.
 
 1. **Deeper `app/views/chat.py` slim** — currently 621 LOC. The streaming state machine, thread sidebar, and cached-render helpers could extract next to land it under 300.
 2. **Per-tenant SPLADE indexes** — when `SAR_MULTI_TENANT_COLLECTIONS=true`, each org should get its own sparse index slot in its Qdrant collection. Today the SPLADE vector field is shared across the multi-tenant boundary.
-3. **`evaluation/nist_rerank_gold.jsonl`** — hand-labelled 20-query subset for `scripts/bench_reranker.py`'s in-domain bench. Not present yet; the script gracefully skips when absent. Unlocks the NIST arm of the reranker bench.
-
 **Recently shipped** (was in this section, now done):
+- ✅ **NIST in-domain rerank gold** — `evaluation/nist_rerank_gold.jsonl` (20 hand-picked triplets from the NIST AI RMF corpus). Unlocks the NIST arm of `scripts/bench_reranker.py`. Current run: candidate beats baseline by **+0.54pp NDCG@10** (0.9162 → 0.9215). ADR-022 acceptance criteria fully met.
 - ✅ **Threshold calibration shipped** — 50-row labelled gold set + `scripts/calibrate_thresholds.py` sweep; `evaluation/calibration.json` consumed by `config/settings.py::_apply_calibration` at import. Nightly CI gates on the measured baseline emitted by the same run. ADR-023 (2026-05-23).
 - ✅ **Reranker fine-tune trained** — +1.60pp NDCG@10 vs BGE-Reranker-v2-M3 on MS-MARCO 500-pair hold-out (0.7744 → 0.7904). RTX 3060, 100k rows, 1 epoch, AMP fp16, ~4 hr wall. Bench: `evaluation/benchmarks/reranker_finetune.md`. ADR-022 status → fully Accepted (2026-05-23).
 - ✅ Qdrant native sparse vectors (ADR-020, commit `26500ae`)

@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-05-23T07:52:31.558863+00:00",
+  "baseline": "BAAI/bge-reranker-v2-m3",
+  "candidate": "data/checkpoints/reranker-domain-v1",
+  "eval_size_msmarco": 500,
+  "eval_size_nist": 20,
+  "msmarco": {
+    "baseline_ndcg10": 0.7743881063446335,
+    "candidate_ndcg10": 0.7903838961034493,
+    "delta_pp": 1.599578975881577
+  },
+  "nist": {
+    "baseline_ndcg10": 0.9161732909393883,
+    "candidate_ndcg10": 0.9215338279036697,
+    "delta_pp": 0.5360536964281404
+  }
+}
