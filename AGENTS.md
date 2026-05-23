@@ -19,7 +19,7 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
 ### Before
 1. `git status` — must be clean. Don't start work on a dirty tree.
 2. `git pull origin main` — make sure you're on the latest.
-3. `uv run pytest -q` — must be **497 passed, 0 skipped** (or higher). If it's not, stop and fix the baseline first.
+3. `uv run pytest -q` — must be **484+ passed, 0 failed** (current baseline: 484 passed, 22 skipped — the skips are optional-dep gated; never regress). If it's not, stop and fix the baseline first.
 4. `uv run ruff check . && uv run ruff format --check .` — both clean.
 5. Read the relevant module top-to-bottom before touching it. Read its test file.
 6. Have a working `qdrant` (`docker compose up -d qdrant`) and `ollama serve` running. If you need cloud, ensure `SAR_GROQ_API_KEY` is in `.env`.
@@ -160,16 +160,25 @@ regression tests for any change that touches `retrieval/sparse_embeddings.py`,
 5. **End-to-end:** All RBAC tests (A1-A6 above) pass with both sparse backends.
 
 #### F. Reranker fine-tuning
-(Training script + bench harness shipped in commit `2f0e28d` — ADR-022.
-Actual training run is opt-in GPU work — owner runs it on the box that
-has the model.)
+(Scaffolding shipped in commit `2f0e28d`; live checkpoint trained in commit
+`2d6f6e3` — ADR-022. **+1.60pp NDCG@10** vs BGE-Reranker-v2-M3 on the
+500-pair MS-MARCO hold-out. `.env` pins `SAR_RERANKER_TYPE=fine_tuned`.)
+
+Re-run only when corpus or base model changes:
 
 1. **Train set:** MS-MARCO small triplets (~500K) via `scripts/train_reranker.py`. Hold out 500 for eval.
-2. **Hard negatives:** Use `--mine-hard-negatives` to replace random MS-MARCO negatives with lowest-scored dense top-10 hits from the local Qdrant index.
+2. **Hard negatives:** Use `--mine-hard-negatives` only when the local Qdrant corpus actually overlaps the train domain (skipped for the 2026-05-23 run because the 476-doc NIST set mismatches MS-MARCO queries).
 3. **Baseline:** off-the-shelf BGE-Reranker-v2-M3 (`scripts/bench_reranker.py` defaults).
-4. **Acceptance:** fine-tuned NDCG@10 ≥ baseline + 1pp on hold-out (per ADR-022).
+4. **Acceptance:** fine-tuned NDCG@10 ≥ baseline + 1pp on hold-out (per ADR-022) — **MET on current checkpoint**.
 5. **In-domain:** Both checkpoints evaluated on `evaluation/nist_rerank_gold.jsonl` (hand-labelled 20-query NIST subset). Skipped when the gold file is absent.
-6. **Flag flip:** Set `SAR_RERANKER_TYPE=fine_tuned` + `SAR_FINETUNED_RERANKER_PATH=data/checkpoints/reranker-domain-v1` to plug the checkpoint into the live retrieval factory.
+6. **Flag flip:** `.env` already pins `SAR_RERANKER_TYPE=fine_tuned` + `SAR_FINETUNED_RERANKER_PATH=data/checkpoints/reranker-domain-v1` — flip back to `cross_encoder` if a regression is detected.
+
+#### F2. Threshold calibration (ADR-023)
+1. **Gold set:** `evaluation/golden_set.jsonl` — 50 rows across 10 categories. Each row labels `expected_confidence_band` / `expected_faithfulness_band` / `expected_outcome`.
+2. **Run:** `uv run python -m scripts.calibrate_thresholds` — ~50 min on local Ollama + fine-tuned reranker. Forces faithfulness gate ON, bumps SLO timeout to 600s.
+3. **Sanity floor:** `config/settings.py::_apply_calibration` rejects degenerate sweeps (`n_pos==0` / `n_neg==0` / `chosen_threshold<=0`). The default stays in that case.
+4. **Env override:** `SAR_CONFIDENCE_THRESHOLD` / `SAR_FAITHFULNESS_THRESHOLD` win over the JSON.
+5. **CI:** `evaluation/nightly.py` already reads `evaluation/baseline.json` (refreshed by calibration) and fails the build on >5pp drop via `nightly-eval.yml`.
 
 #### G. Anything that changes the streaming or graph topology
 1. **Streaming contract test** in `tests/test_agents/test_graph.py::test_streaming_emits_token_events_via_writer` still passes.

@@ -171,7 +171,7 @@ curl -sf http://localhost:6333/collections && echo "Qdrant OK"
 curl -sf http://localhost:11434/api/tags  && echo "Ollama OK"
 
 # Tests
-uv run pytest -q                            # unit/integ (497 tests, ~30 s)
+uv run pytest -q                            # unit/integ (484 passed / 22 skipped, ~25 s)
 uv run python -m scripts.e2e_smoke          # real end-to-end (~2-5 min)
 uv run python -m scripts.interview_demo     # PASS/FAIL grid for hero features
 uv run python -m scripts.h2_gate            # 12 advanced real-world UI scenarios
@@ -229,28 +229,61 @@ SAR_USE_PERSISTENT_CHECKPOINTER=true
 SAR_POSTGRES_URL=postgresql://sar_user:sar_password@localhost:5433/secureagentrag
 ```
 
-## 9. Reranker training (P4 — opt-in GPU work)
+## 9. Reranker fine-tune (ADR-022 — already trained on 2026-05-23)
+
+Canonical checkpoint at `data/checkpoints/reranker-domain-v1/` (2.27 GB,
+gitignored). Bench: **+1.60pp NDCG@10 vs BGE-Reranker-v2-M3 baseline**
+on 500-pair MS-MARCO hold-out. Flip flag in `.env`:
+
+```bash
+SAR_RERANKER_TYPE=fine_tuned
+SAR_FINETUNED_RERANKER_PATH=data/checkpoints/reranker-domain-v1
+```
+
+Re-train (only when corpus or base model changes):
 
 ```bash
 # Quick smoke (1000 rows, 100 hold-out)
 uv run python -m scripts.train_reranker --smoke
 
-# Full run (~1-2 h on RTX 3060)
+# Full run (~4 h on RTX 3060, 100k rows, 1 epoch, AMP fp16)
 uv run python -m scripts.train_reranker \
     --train-size 100000 --epochs 1 \
-    --output data/checkpoints/reranker-domain-v1 \
-    --mine-hard-negatives
+    --output data/checkpoints/reranker-domain-v1
 
-# Bench the checkpoint vs baseline
+# Bench candidate vs baseline (writes evaluation/benchmarks/reranker_finetune.md)
 uv run python -m scripts.bench_reranker \
     --baseline BAAI/bge-reranker-v2-m3 \
     --candidate data/checkpoints/reranker-domain-v1
-
-# Flip the flag to use the fine-tuned checkpoint at retrieval time
-SAR_RERANKER_TYPE=fine_tuned
 ```
 
-## 10. Keycloak (RS256 + JWKS, ADR-019)
+## 10. Threshold calibration (ADR-023)
+
+`confidence_threshold` and `faithfulness_threshold` are data-driven via
+`evaluation/calibration.json`, populated by `scripts/calibrate_thresholds.py`
+against the 50-row gold set at `evaluation/golden_set.jsonl`. The current
+run (2026-05-23) chose `confidence=0.35`. Faithfulness landed degenerate
+(only ~4 rows produced non-trivial NLI signal) so the sanity floor in
+`config/settings.py::_apply_calibration` rejected it; default `0.7` stays.
+
+Re-run when the upstream model / reranker / guardrails backend changes:
+
+```bash
+# ~50 min on RTX 3060 with qwen3:8b + bge-m3 + fine-tuned reranker
+uv run python -m scripts.calibrate_thresholds
+
+# Cap to N rows for a quick smoke
+uv run python -m scripts.calibrate_thresholds --limit 5
+
+# Recompute thresholds from a stored snapshot without re-running the pipeline
+uv run python -m scripts.calibrate_thresholds \
+    --from-results evaluation/results/calibration_<ts>.json
+```
+
+Env override still wins — pin `SAR_CONFIDENCE_THRESHOLD` /
+`SAR_FAITHFULNESS_THRESHOLD` if your environment needs a fixed value.
+
+## 11. Keycloak (RS256 + JWKS, ADR-019)
 
 ```bash
 # Bring up Keycloak (auto-imports deploy/keycloak-realm.json)

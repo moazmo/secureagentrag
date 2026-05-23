@@ -136,8 +136,8 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ## 5. State of the codebase (as of this commit)
 
-- **497 tests pass**, 0 skipped. Lint + format clean.
-- **~28.5k Python LOC** across 138 files.
+- **484 tests pass**, 22 skipped (optional-dep gated), 0 failed. Lint + format clean.
+- **~29.5k Python LOC** across 144 files.
 - **9 graph nodes:** router → guardrails → security → retriever → grader → rewriter → synthesizer → faithfulness → evaluator.
 - Streamlit, FastAPI, MCP all share `core.schemas.QueryResponse`.
 - **Hybrid search** uses Qdrant native sparse vectors (BM25 or SPLADE backend). The legacy `rank_bm25` pickle, `utils/file_lock.py`, and the post-fusion RBAC re-check are all gone. Sparse runs under the same RBAC filter as dense — cross-tenant bypass is structurally impossible.
@@ -147,6 +147,9 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 - **Threshold calibration** — `confidence_threshold` + `faithfulness_threshold` are now data-driven via `scripts/calibrate_thresholds.py` against a 50-row labelled gold set (NIST + ACME + RBAC negatives + injection + bilingual + adversarial). Chosen cut-offs live in `evaluation/calibration.json`; `config/settings.py::_apply_calibration` loads them at import. Env override still wins. ADR-023.
 - **24-scenario UI gate (H.1 + H.2) is 24/24 PASS** on this HEAD, evidence under `data/agent_evidence/`.
 - Recent commits (chronological, newest first):
+  - `700cdc5` feat(eval): P2 threshold calibration against a labelled gold set (ADR-023)
+  - `2d6f6e3` feat(reranker): P1 fine-tune trained — +1.60pp NDCG@10 vs baseline
+  - `29ff128` fix(scripts): persist reranker fine-tune weights + UTF-8 console output
   - `1bcde26` test(h2-gate): 12/12 advanced real-world scenarios PASS
   - `2f0e28d` feat(retrieval): fine-tuned reranker scaffolding (P4)
   - `45ebfde` refactor(inference): consolidate Groq + OpenAI clients via shared parent (-203 LOC)
