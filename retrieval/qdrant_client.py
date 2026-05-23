@@ -56,6 +56,13 @@ class QdrantManager:
             api_key=self._api_key,
             timeout=30,
         )
+        # Per-tenant manager cache. In multi-tenant mode each `for_org(org_id)`
+        # call previously created a fresh QdrantManager (new HTTP client +
+        # extra `get_collections` round-trip via `ensure_collection`). Caching
+        # by collection name turns repeat calls into pure dict lookups so the
+        # per-request overhead disappears. Stays bound to *this* root manager
+        # — distinct roots (different URLs) keep distinct caches.
+        self._tenant_cache: dict[str, QdrantManager] = {}
 
         logger.info(
             "qdrant_manager_initialized",
@@ -76,15 +83,23 @@ class QdrantManager:
     def for_org(self, org_id: str) -> QdrantManager:
         """Return a QdrantManager scoped to an organization-specific collection.
 
-        When ``settings.multi_tenant_collections`` is True, this creates a
-        new manager using ``documents_{org_id}`` as the collection name,
-        providing namespace-level isolation. When False, returns ``self``.
+        When ``settings.multi_tenant_collections`` is True, this returns a
+        per-org manager bound to ``documents_{org_id}``. Each tenant collection
+        is created the first time it is requested (with the same dense + sparse
+        vector configuration as the global collection — sparse isolation is
+        therefore structural: org A's sparse vectors live in
+        ``documents_acme_corp.sparse``, org B's in ``documents_partner_inc.sparse``,
+        and Qdrant cannot cross collections in a single query) and the manager
+        is cached on the root instance so repeat requests are O(1) dict lookups
+        rather than fresh HTTP-client + ``get_collections`` round-trips.
+
+        When ``multi_tenant_collections`` is False, returns ``self``.
 
         Args:
             org_id: Organization identifier.
 
         Returns:
-            A QdrantManager instance (new or self).
+            A QdrantManager instance (new, cached, or self).
         """
         if not settings.multi_tenant_collections:
             return self
@@ -93,12 +108,21 @@ class QdrantManager:
         org_collection = get_collection_name(org_id)
         if org_collection == self._collection_name:
             return self
+        cached = self._tenant_cache.get(org_collection)
+        if cached is not None:
+            return cached
         mgr = QdrantManager(
             url=self._url,
             collection_name=org_collection,
             api_key=self._api_key,
         )
         mgr.ensure_collection()
+        self._tenant_cache[org_collection] = mgr
+        logger.info(
+            "tenant_collection_cached",
+            collection=org_collection,
+            cache_size=len(self._tenant_cache),
+        )
         return mgr
 
     def ensure_collection(self, vector_size: int | None = None) -> None:

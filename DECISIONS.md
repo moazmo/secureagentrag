@@ -763,3 +763,77 @@ auto-routing low-confidence queries to cloud).
 - (-) Calibration takes ~80-120 minutes on local Ollama because the
   faithfulness gate adds per-sentence LLM calls. Not in CI by default;
   re-run when the upstream model or reranker changes.
+
+## ADR-024: Per-tenant SPLADE isolation + manager cache
+
+**Status:** Accepted (2026-05-23)
+
+**Context:**
+ADR-020 moved the BM25 / SPLADE sparse field inside Qdrant alongside the
+dense vector — eliminating the cross-tenant bypass class that the legacy
+``rank_bm25`` pickle exposed. Multi-tenant mode
+(``SAR_MULTI_TENANT_COLLECTIONS=true``) routes each org to its own
+collection ``documents_{org_id}``, and ``QdrantManager.ensure_collection``
+provisions the named sparse field on every collection. The sparse path
+was therefore already structurally isolated per tenant.
+
+Two issues remained:
+
+1. **Per-request manager rebuild.** ``QdrantManager.for_org(org_id)`` constructed
+   a fresh ``QdrantManager`` (= new ``QdrantClient`` HTTP pool + extra
+   ``get_collections`` round-trip via ``ensure_collection``) on every
+   request when running in multi-tenant mode. At >1 req/sec that
+   produced a measurable Qdrant overhead and grew the HTTP client pool
+   unbounded.
+2. **Regression coverage was thin.** The existing
+   ``test_qdrant_manager_for_org_returns_new_in_multi_tenant`` only
+   verified that ``for_org`` did not return ``self``. Nothing pinned
+   "each tenant gets its own sparse field" or "repeat calls reuse the
+   same manager".
+
+**Decision:**
+
+1. Cache per-tenant ``QdrantManager`` instances on the root manager via
+   a ``self._tenant_cache: dict[str, QdrantManager]`` keyed by the
+   resolved org-specific collection name. First ``for_org(org_id)`` call
+   constructs + ``ensure_collection`` once; subsequent calls are O(1)
+   dict lookups. The cache stays bound to *this* root manager, so
+   distinct roots (e.g. different ``SAR_QDRANT_URL`` overrides) keep
+   distinct caches.
+2. Update the docstring on ``for_org`` to state the structural-isolation
+   guarantee explicitly: "Qdrant cannot scan across collections in a
+   single query, so a query bound to org B's manager never sees org A's
+   sparse data even if the field name is identical".
+3. Add three new tests in ``tests/test_retrieval/test_multitenancy.py``
+   pinning the contract:
+   - ``test_qdrant_manager_for_org_caches_per_tenant_managers`` —
+     repeat calls return the same instance; distinct orgs produce
+     distinct managers; ``__init__`` + ``ensure_collection`` each run
+     exactly once per distinct tenant.
+   - ``test_qdrant_manager_ensure_collection_creates_sparse_field`` —
+     ``create_collection`` is called with a ``SparseVectorParams`` entry
+     under ``settings.sparse_vector_name`` (regression guard against
+     someone deleting the sparse slot in a future refactor).
+   - ``test_qdrant_manager_for_org_distinct_tenants_isolated`` — two
+     orgs resolve to distinct collection names.
+
+**Consequences:**
+
+- (+) Multi-tenant request latency drops by one ``get_collections``
+  round-trip per request (typically 5-15 ms on local Qdrant, larger on
+  cloud). At sustained load this is the difference between a memory-
+  bounded client pool and an HTTP-connection leak.
+- (+) Sparse isolation is now pinned by regression tests, not just by
+  the structural argument in ADR-020. Future refactors that accidentally
+  drop the sparse field or share a manager across tenants will fail
+  the build.
+- (+) The cache lives on the root manager — a new
+  ``QdrantManager(...)`` instance gets a fresh cache, so test fixtures
+  that build their own root remain isolated.
+- (-) The cache has no TTL or LRU eviction. For long-running processes
+  with thousands of tenants the per-process memory grows linearly with
+  the number of orgs seen. Not a concern at current scale; flag for
+  revisit if active-tenant cardinality crosses ~1000.
+- (-) Cache invalidation on schema change requires a process restart.
+  Acceptable because schema changes are rare and the existing
+  ``scripts/migrate_to_splade.py`` already requires a full re-ingest.
