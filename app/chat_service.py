@@ -24,10 +24,46 @@ import streamlit as st
 
 from evaluation.ragas_eval import EvalSample, RagasEvaluator
 from utils.async_helpers import run_async
+from utils.conversation_store import ConversationMessage, conversation_store
 from utils.logging import get_logger
 from utils.metrics_store import store_metric
 
 logger = get_logger(__name__)
+
+
+def persist_message(role: str, content: str, metadata: dict | None = None) -> None:
+    """Append a message to the active conversation thread.
+
+    No-op when there is no ``active_thread_id`` in session state (e.g. the
+    user has not selected or created a thread yet). The disk write happens
+    inside ``conversation_store`` — failures there log but do not raise so
+    the UI never breaks on a transient FS error.
+
+    Args:
+        role: ``"user"`` / ``"assistant"`` / ``"blocked"``.
+        content: Message body.
+        metadata: Optional per-message payload (citations, confidence, etc.).
+    """
+    thread_id = st.session_state.get("active_thread_id")
+    if not thread_id:
+        return
+
+    user = st.session_state.current_user
+    msg = ConversationMessage(
+        role=role,
+        content=content,
+        metadata=metadata or {},
+    )
+    conversation_store.append_message(
+        thread_id=thread_id,
+        message=msg,
+        user_id=user["user_id"],
+        org_id=user["org_id"],
+        metadata={
+            "model": st.session_state.selected_model,
+            "mode": st.session_state.inference_mode,
+        },
+    )
 
 
 def log_audit_entry(
