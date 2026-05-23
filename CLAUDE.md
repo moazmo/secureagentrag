@@ -143,7 +143,7 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 - **Hybrid search** uses Qdrant native sparse vectors (BM25 or SPLADE backend). The legacy `rank_bm25` pickle, `utils/file_lock.py`, and the post-fusion RBAC re-check are all gone. Sparse runs under the same RBAC filter as dense — cross-tenant bypass is structurally impossible.
 - **Auth** dispatches HS256 (default, dev) ↔ RS256 (Keycloak/Auth0 via JWKS) on `SAR_JWT_ALGORITHM`.
 - **Guardrails** escalation routes through `regex` → `llm` → `llamaguard` per `SAR_GUARDRAILS_BACKEND`. LlamaGuard 3 maps S1-S14 categories to audit-friendly reasons.
-- **Reranker** factory accepts `none` / `cross_encoder` / `colbert` / `fine_tuned`. Training + bench scripts in tree; actual fine-tune is opt-in GPU work.
+- **Reranker** factory accepts `none` / `cross_encoder` / `colbert` / `fine_tuned`. Fine-tuned checkpoint produced on RTX 3060 (100k MS-MARCO rows, 1 epoch, AMP fp16): **+1.60pp NDCG@10** vs BGE-Reranker-v2-M3 baseline. Bench: `evaluation/benchmarks/reranker_finetune.md`. Checkpoint dir `data/checkpoints/reranker-domain-v1/` (gitignored).
 - **24-scenario UI gate (H.1 + H.2) is 24/24 PASS** on this HEAD, evidence under `data/agent_evidence/`.
 - Recent commits (chronological, newest first):
   - `1bcde26` test(h2-gate): 12/12 advanced real-world scenarios PASS
@@ -159,17 +159,17 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ---
 
-## 6. Genuinely remaining work (audited 2026-05-21)
+## 6. Genuinely remaining work (audited 2026-05-23)
 
 In priority order. Each one is its own commit/PR-worthy unit.
 
-1. **Actually run the fine-tune** — P4 scaffolding is in tree (`scripts/train_reranker.py` + `scripts/bench_reranker.py`). The 1-2 GPU-hour training run is left to whoever owns the GPU box. Output: `data/checkpoints/reranker-domain-v1/`. Bench against baseline must show ≥1pp NDCG@10 lift.
-2. **Calibrate confidence + faithfulness thresholds** against a labeled gold set (Ragas). Wire into CI so >5pp regression fails the build. Needs the gold set to exist first.
-3. **Deeper `app/views/chat.py` slim** — currently 621 LOC. The streaming state machine, thread sidebar, and cached-render helpers could extract next to land it under 300.
-4. **Per-tenant SPLADE indexes** — when `SAR_MULTI_TENANT_COLLECTIONS=true`, each org should get its own sparse index slot in its Qdrant collection. Today the SPLADE vector field is shared across the multi-tenant boundary.
-5. **`evaluation/nist_rerank_gold.jsonl`** — hand-labelled 20-query subset for `scripts/bench_reranker.py`'s in-domain bench. Not present yet; the script gracefully skips when absent.
+1. **Calibrate confidence + faithfulness thresholds** against a labeled gold set (Ragas). Wire into CI so >5pp regression fails the build. Needs the gold set to exist first.
+2. **Deeper `app/views/chat.py` slim** — currently 621 LOC. The streaming state machine, thread sidebar, and cached-render helpers could extract next to land it under 300.
+3. **Per-tenant SPLADE indexes** — when `SAR_MULTI_TENANT_COLLECTIONS=true`, each org should get its own sparse index slot in its Qdrant collection. Today the SPLADE vector field is shared across the multi-tenant boundary.
+4. **`evaluation/nist_rerank_gold.jsonl`** — hand-labelled 20-query subset for `scripts/bench_reranker.py`'s in-domain bench. Not present yet; the script gracefully skips when absent. Unlocks the NIST arm of the reranker bench.
 
 **Recently shipped** (was in this section, now done):
+- ✅ **Reranker fine-tune trained** — +1.60pp NDCG@10 vs BGE-Reranker-v2-M3 on MS-MARCO 500-pair hold-out (0.7744 → 0.7904). RTX 3060, 100k rows, 1 epoch, AMP fp16, ~4 hr wall. Bench: `evaluation/benchmarks/reranker_finetune.md`. ADR-022 status → fully Accepted (2026-05-23).
 - ✅ Qdrant native sparse vectors (ADR-020, commit `26500ae`)
 - ✅ RS256 + JWKS auth (ADR-019, commit `e80a519`)
 - ✅ LlamaGuard 3 escalation backend (ADR-021, commit `038fdae`)

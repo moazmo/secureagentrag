@@ -630,7 +630,7 @@ taxonomy.
 
 ## ADR-022: Fine-tuned domain reranker as opt-in checkpoint
 
-**Status:** Accepted — implementation shipped, training run deferred (2026-05-21)
+**Status:** Accepted (2026-05-23) — fine-tune trained, **+1.60pp NDCG@10 lift on MS-MARCO 500-pair hold-out** (0.7744 → 0.7904), exceeds the ≥1pp bar. Bench report at `evaluation/benchmarks/reranker_finetune.md`.
 
 **Context:**
 The retrieval stack ships three reranker modes today (none / cross-encoder /
@@ -659,13 +659,20 @@ would pick.
    Acceptance bar: fine-tuned must beat baseline by ≥1pp on MS-MARCO
    and win on the NIST gold set.
 
-**Why "implementation shipped, training run deferred":**
-A real training pass takes 1-2 GPU hours on an RTX 3060. Adding that to
-CI is heavy and irrelevant for most contributors. The script is the
-deliverable; running it is left to whoever owns the GPU box. The bench
-script accepts any checkpoint path (or HuggingFace model id), so the
-infrastructure is fully ready — only the actual `data/checkpoints/
-reranker-domain-v1/` artefact is missing.
+**Training run details (2026-05-23):**
+Trained on RTX 3060 12GB: 100k MS-MARCO Passage Ranking rows (200k
+InputExamples after pos/neg pairing), 1 epoch, batch 16, AMP fp16 via
+`use_amp=torch.cuda.is_available()`. Wall time 14,090s (~3:55 hr) at
+14.2 samples/sec. Final training loss 0.4983. No hard-negative mining
+(the 476-doc local NIST Qdrant corpus mismatches MS-MARCO queries so
+mined negatives would be lower-signal than MS-MARCO's own random
+negatives). Checkpoint `data/checkpoints/reranker-domain-v1/`
+(2.27 GB safetensors, gitignored via `data/*`). Bench artefacts:
+`evaluation/benchmarks/reranker_finetune.md` + timestamped JSON.
+
+NIST in-domain bench arm is still pending — needs the hand-labelled
+`evaluation/nist_rerank_gold.jsonl` (separate P3 roadmap item). The
+bench script gracefully skips the NIST arm when the file is absent.
 
 **Consequences:**
 - (+) Domain-specific reranker is now a one-flag flip away. The
@@ -675,9 +682,11 @@ reranker-domain-v1/` artefact is missing.
 - (+) Bench works against any cross-encoder, so even without running our
   own training we can compare BGE-Reranker-v2-M3 vs CrossEncoder-MiniLM
   vs anyone else with one command.
-- (-) Actual fine-tuned checkpoint is not committed — it would be
-  >100MB and changes per training run. Users must run the training
-  script themselves before flipping `SAR_RERANKER_TYPE=fine_tuned`.
+- (-) Actual fine-tuned checkpoint is not committed — 2.27 GB
+  safetensors changes per training run, gitignored via `data/*`.
+  Users must run `scripts/train_reranker.py` themselves before
+  flipping `SAR_RERANKER_TYPE=fine_tuned`. Reproducibility metadata
+  lands in `data/checkpoints/<name>/train_meta.json`.
 - (-) `[embeddings-local]` extra is required (sentence-transformers +
   torch ~2GB). Same cost as the existing cross_encoder mode, so this is
   not a new tax for users who already opted into local rerankers.

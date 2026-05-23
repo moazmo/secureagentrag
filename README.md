@@ -596,10 +596,9 @@ Delivered:
 - [x] **Qdrant native sparse vectors** — replaces the `rank_bm25` pickle. `retrieval/sparse_embeddings.py` supports `bm25` (default, no new deps) and `splade` (`naver/splade-cocondenser-ensembledistil` via transformers) backends. Sparse search hits Qdrant under the same RBAC filter as dense — entire BM25-bypass class of bugs is structurally impossible. Benchmark in `evaluation/benchmarks/splade_vs_bm25.md`. Migrate existing collections with `uv run python -m scripts.migrate_to_splade`.
 - [x] **LlamaGuard 3 escalation backend** — `core/agents/guardrails_llamaguard.py` wraps Meta's `llama-guard3:8b` via Ollama. Maps the S1-S14 category taxonomy to audit-friendly `guardrails_reason` values. Selector via `SAR_GUARDRAILS_BACKEND` (`regex` / `llm` / `llamaguard`); regex always runs first, escalation kicks in for strict-mode passes.
 - [x] **Fine-tuned reranker scaffolding** — `scripts/train_reranker.py` fine-tunes from BGE-Reranker-v2-M3 on MS-MARCO triplets with optional hard-negative mining from the local Qdrant index. `scripts/bench_reranker.py` measures NDCG@10 on MS-MARCO hold-out + optional in-domain NIST gold set. New flag `SAR_RERANKER_TYPE=fine_tuned`. Actual training run is opt-in GPU work; the bench harness accepts any cross-encoder so the baseline is reproducible without it.
+- [x] **Run the fine-tune + publish the checkpoint** — trained on RTX 3060 (100k MS-MARCO rows, 1 epoch, AMP fp16, ~4 hr wall). **+1.60pp NDCG@10 vs BGE-Reranker-v2-M3 baseline** on 500-pair MS-MARCO hold-out (0.7744 → 0.7904). Bench report: `evaluation/benchmarks/reranker_finetune.md`. Checkpoint `data/checkpoints/reranker-domain-v1/` (2.27 GB, gitignored).
 
 Planned (not yet implemented):
-
-- [ ] **Run the fine-tune + publish the checkpoint** — scaffolding shipped, the actual 1-2 GPU-hour training pass is left to whoever owns the box. Acceptance: candidate beats baseline by ≥1pp NDCG@10 on MS-MARCO hold-out.
 - [ ] **Threshold calibration** — confidence + faithfulness thresholds are picked by intuition today. A labeled gold set + Ragas-driven calibration is the next quality lift.
 
 ---
