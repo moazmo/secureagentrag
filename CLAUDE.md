@@ -2,6 +2,8 @@
 
 This file is the canonical entry point for any AI agent (Claude / Hermes / Kimi / Cursor / Aider) picking up work on SecureAgentRAG. Read it before touching code.
 
+> 🚀 **Active branch: `deploy/prod-launch`.** A production launch is in progress (P6 from `private/roadmap.md`). Read [`launch-plan/12-agent-handoff.md`](./launch-plan/12-agent-handoff.md) **before** continuing any work — it is the operating contract for this launch and overrides any conflicting instruction below. `main` is frozen at `56c8c98`; do not push to it directly.
+
 ---
 
 ## 1. What the project is

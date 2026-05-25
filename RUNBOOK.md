@@ -2,6 +2,8 @@
 
 Operational guide for running, testing, and debugging the platform.
 
+> 🚀 **Production launch P6 in progress on branch `deploy/prod-launch`.** This Runbook describes the **local-dev / on-prem** topology. Production-deployment procedures (HF Space, Vercel, Qdrant Cloud, Hostinger landing) are drafted in [`launch-plan/`](./launch-plan/README.md) and will land in a new "§ 14. Production failure modes" section after Phase 7 smoke is green. Until then, treat this file as the dev/staging runbook only.
+
 ---
 
 ## 1. Prerequisites

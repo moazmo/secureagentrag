@@ -4,6 +4,8 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
 
 **Prerequisite:** read `CLAUDE.md` first.
 
+> 🚀 **Active branch: `deploy/prod-launch`.** Production launch P6 in progress. Before reading section 1 below, read [`launch-plan/12-agent-handoff.md`](./launch-plan/12-agent-handoff.md) — it is the operating contract for this launch and supersedes any conflicting instruction here. `main` is frozen at `56c8c98`.
+
 ---
 
 ## 0. Identity and authorship

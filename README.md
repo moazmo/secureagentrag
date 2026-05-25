@@ -1,5 +1,7 @@
 # SecureAgentRAG
 
+> ⚙️ **Production launch in progress** (started 2026-05-25). Public BYOK demo on Next.js + Vercel + Hugging Face Spaces + Qdrant Cloud is being built on branch `deploy/prod-launch`. `main` is frozen at `56c8c98` as the last-known-good Streamlit state. Full plan and agent handoff contract in [`launch-plan/`](./launch-plan/README.md).
+
 <div align="center">
 
 **Privacy-First Multi-Agent RAG with RBAC, Corrective Retrieval, and Hybrid Inference**

@@ -1,5 +1,7 @@
 # SecureAgentRAG — Architecture Documentation
 
+> 🚀 **Production topology in progress on `deploy/prod-launch`.** The diagrams below describe the **local-dev** architecture (everything in docker-compose on one host). The public-demo production topology — Hostinger landing → Vercel Next.js → Hugging Face Space FastAPI → Qdrant Cloud + Groq — is fully specified in [`launch-plan/01-stack-decisions.md`](./launch-plan/01-stack-decisions.md) and lands here as a new "§ 13. Production topology" section once Phase 7 smoke passes. Read both when reasoning about the running system.
+
 ## 1. System Architecture
 
 Complete system component map showing all services, their communication paths, and data flow from user interaction through document processing.
