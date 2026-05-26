@@ -35,9 +35,9 @@
 3. **Egypt → Groq is fast.** Single-digit-millisecond Groq-side latency, sub-second wall clock including TLS. Acceptable for streaming UX.
 4. **`x-ratelimit-*` headers are exposed.** The BYOK throttle (phase 2) can use these to detect when the owner-key fallback is approaching exhaustion and respond with HTTP 429 + "use your own key" copy.
 
-## Security flag
+## Security note
 
-This exact `SAR_GROQ_API_KEY` value appeared in chat transcripts twice (once in the original `.env`, once as a literal in the security-checklist draft). Per the launch plan's standard hygiene, the owner will **rotate** this key after all five phase-1 smokes complete. The new key will replace the current one in `.env`; the `git` repo is unaffected since `.env` is gitignored.
+The `SAR_GROQ_API_KEY` value appeared in chat transcripts during this launch session. Owner decided **not to rotate** — the key is for the demo's Groq free-tier project and any abuse is bounded by the 14,400 req/day quota and the per-IP owner-key throttle. The `git` repo is unaffected (`.env` is gitignored); only the live HF Space secrets panel carries the production copy. Tracked as accepted residual risk; revisit only if abnormal traffic patterns appear in Groq's console.
 
 ## No artifacts changed
 
