@@ -146,21 +146,28 @@ if _FASTAPI_AVAILABLE:
         from interfaces.byok import ByokCreds, extract_byok
         from utils.rate_limiter import get_owner_key_throttle
 
+        # All demo personas share ``org_id="demo"`` so they query the same
+        # ingested corpus. RBAC differentiation is enforced via clearance
+        # level + roles at the payload-filter layer -- exactly the production
+        # invariant we want to demonstrate.
+        _DEMO_ORG_ID = "demo"
+        # Sensitivity levels are LOW=1, MEDIUM=2, HIGH=3 (see
+        # ``ingestion/metadata.py::sensitivity_to_int``). Clearance levels must
+        # be in the same range so the Qdrant range filter passes the right
+        # chunks. Engineer < Compliance == Executive, but executive carries
+        # a wider role set (sees both engineering + compliance content).
         _DEMO_PERSONAS: dict[str, dict] = {
             "engineer": {
-                "org_id": "demo-engineering",
                 "clearance_level": 2,
                 "roles": ["engineering"],
             },
             "compliance": {
-                "org_id": "demo-compliance",
-                "clearance_level": 4,
+                "clearance_level": 3,
                 "roles": ["compliance", "legal"],
             },
             "executive": {
-                "org_id": "demo-executive",
-                "clearance_level": 5,
-                "roles": ["executive", "compliance"],
+                "clearance_level": 3,
+                "roles": ["executive", "compliance", "engineering"],
             },
         }
 
@@ -172,10 +179,10 @@ if _FASTAPI_AVAILABLE:
             """
             preset = _DEMO_PERSONAS.get((creds.demo_persona or "").lower())
             if preset is None:
-                preset = {"org_id": "demo-anon", "clearance_level": 1, "roles": ["viewer"]}
+                preset = {"clearance_level": 1, "roles": ["viewer"]}
             return UserContext(
                 user_id=f"demo-{creds.session_id}",
-                org_id=preset["org_id"],
+                org_id=_DEMO_ORG_ID,
                 clearance_level=preset["clearance_level"],
                 roles=preset["roles"],
             )
