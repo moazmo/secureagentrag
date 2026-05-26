@@ -26,15 +26,15 @@ A free-tier audit run on 2026-05-25 found that the surviving options were:
 
 Use **Hugging Face Spaces with the Docker SDK on CPU Basic hardware** for the FastAPI backend.
 
-- Space URL: `huggingface.co/spaces/moazmo/secureagentrag-api`
-- Public subdomain: `moazmo-secureagentrag-api.hf.space`
+- Space URL: `huggingface.co/spaces/LeomordKaly/secureagentrag-api`
+- Public subdomain: `LeomordKaly-secureagentrag-api.hf.space`
 - Hardware: CPU Basic (2 vCPU, 16 GB RAM, $0/mo)
 - SDK: Docker
 - Container port: 7860 (HF default)
 - Dockerfile: `Dockerfile.hf` in the GitHub repo
 - Sleep mitigation: GitHub Actions cron pings `/health` every 24 hours
 - Secrets: `SAR_QDRANT_URL`, `SAR_QDRANT_API_KEY`, `SAR_GROQ_API_KEY` set via HF Space settings panel
-- Reranker checkpoint hosted on a separate **public** HF Hub model repo (`moazmo/secureagentrag-reranker-v1`) and downloaded at Docker build time
+- Reranker checkpoint hosted on a separate **public** HF Hub model repo (`LeomordKaly/secureagentrag-reranker-v1`) and downloaded at Docker build time
 
 ## Consequences
 
@@ -62,7 +62,7 @@ Use **Hugging Face Spaces with the Docker SDK on CPU Basic hardware** for the Fa
 
 - HF Space provisioned and reachable from Egypt
 - `Dockerfile.hf` builds cleanly
-- `curl https://moazmo-secureagentrag-api.hf.space/health` returns 200 from Egypt
+- `curl https://LeomordKaly-secureagentrag-api.hf.space/health` returns 200 from Egypt
 - Phase 2 BYOK backend runs successfully on the Space
 - ADR-026 moved from `launch-plan/draft-adrs/` into `DECISIONS.md` with this content
 

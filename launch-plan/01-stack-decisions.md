@@ -64,8 +64,8 @@
 │ - fine-tuned reranker on CPU (~5× slower than GPU, still <500ms) │
 │ - SQLite audit + checkpoint, wiped per session                   │
 │ - Phoenix observability disabled in BYOK mode                    │
-│ - URL: huggingface.co/spaces/moazmo/secureagentrag-api           │
-│ - Wrapped: moazmo-secureagentrag-api.hf.space                    │
+│ - URL: huggingface.co/spaces/LeomordKaly/secureagentrag-api           │
+│ - Wrapped: LeomordKaly-secureagentrag-api.hf.space                    │
 └──────────────────────────────────────────────────────────────────┘
                        │ qdrant-client (HTTPS, API key)
                        ▼

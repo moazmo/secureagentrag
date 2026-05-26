@@ -32,7 +32,7 @@ jobs:
           curl --fail --silent --show-error \
                --max-time 60 \
                --retry 3 --retry-delay 10 \
-               https://moazmo-secureagentrag-api.hf.space/health
+               https://LeomordKaly-secureagentrag-api.hf.space/health
       
       - name: Ping Vercel frontend
         run: |

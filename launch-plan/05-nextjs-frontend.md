@@ -1,7 +1,7 @@
 # 05 — Phase 4: Next.js BYOK Frontend
 
 **Owner of this phase:** AI agent.
-**Pre-requisite:** phase 3 (HF Space) live, `https://moazmo-secureagentrag-api.hf.space/health` returns 200 from Egypt.
+**Pre-requisite:** phase 3 (HF Space) live, `https://LeomordKaly-secureagentrag-api.hf.space/health` returns 200 from Egypt.
 
 ## Goal
 
@@ -141,7 +141,7 @@ Setting `runtime = 'edge'` puts this function at Cloudflare Edge → zero cold s
 
 | Var | Value |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | `https://moazmo-secureagentrag-api.hf.space` |
+| `NEXT_PUBLIC_API_URL` | `https://LeomordKaly-secureagentrag-api.hf.space` |
 | `NEXT_PUBLIC_OWNER_KEY_QUOTA` | `3` (queries per IP per hour) |
 | `NEXT_PUBLIC_DEMO_URL` | The Vercel deploy URL (for OG share preview) |
 

@@ -125,7 +125,7 @@ Phase 9 ends with merging `deploy/prod-launch` into `main`. The merge commit mes
 feat: production launch (P6) — Next.js + HF Space + Qdrant Cloud + Vercel
 
 Live demo: https://secureagentrag.vercel.app
-Backend:   https://moazmo-secureagentrag-api.hf.space
+Backend:   https://LeomordKaly-secureagentrag-api.hf.space
 Landing:   https://<hostinger-url>/
 
 Closes P6 from private/roadmap.md.

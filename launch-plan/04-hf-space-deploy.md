@@ -5,7 +5,7 @@
 
 ## Goal
 
-Build a Docker image that runs the FastAPI backend on HF Space port 7860 with all production dependencies (no Ollama, no Postgres, no Redis). Push to `huggingface.co/spaces/moazmo/secureagentrag-api`. Confirm reachable from Egypt.
+Build a Docker image that runs the FastAPI backend on HF Space port 7860 with all production dependencies (no Ollama, no Postgres, no Redis). Push to `huggingface.co/spaces/LeomordKaly/secureagentrag-api`. Confirm reachable from Egypt.
 
 ## Differences from existing `Dockerfile`
 
@@ -73,7 +73,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Path inside the container: /app/data/checkpoints/reranker-domain-v1
 RUN mkdir -p /app/data/checkpoints && \
     python -c "from huggingface_hub import snapshot_download; \
-               snapshot_download(repo_id='moazmo/secureagentrag-reranker-v1', \
+               snapshot_download(repo_id='LeomordKaly/secureagentrag-reranker-v1', \
                                  local_dir='/app/data/checkpoints/reranker-domain-v1')"
 
 COPY --chown=user:user . .
@@ -146,7 +146,7 @@ The fine-tuned reranker is 2.27 GB. It is gitignored locally and absent from the
 ```bash
 # One-time setup, owner runs locally
 huggingface-cli login                          # uses HF_TOKEN
-huggingface-cli upload moazmo/secureagentrag-reranker-v1 \
+huggingface-cli upload LeomordKaly/secureagentrag-reranker-v1 \
     data/checkpoints/reranker-domain-v1 . \
     --repo-type model
 ```
@@ -155,7 +155,7 @@ Make the model repo **public** so the HF Space build can download it without aut
 
 ## Build and push the Space
 
-The Space repo is a separate git remote at `https://huggingface.co/spaces/moazmo/secureagentrag-api`.
+The Space repo is a separate git remote at `https://huggingface.co/spaces/LeomordKaly/secureagentrag-api`.
 
 We use a deploy script (`scripts/deploy_hf_space.py`) that:
 
@@ -164,7 +164,7 @@ We use a deploy script (`scripts/deploy_hf_space.py`) that:
    - `Dockerfile.hf` renamed to `Dockerfile`
    - `pyproject.toml`, `uv.lock`
    - HF-flavored `README.md`
-2. Force-pushes to the Space remote (`huggingface.co/spaces/moazmo/secureagentrag-api`)
+2. Force-pushes to the Space remote (`huggingface.co/spaces/LeomordKaly/secureagentrag-api`)
 3. Polls the Space build status until "Running" or "Error"
 4. On success, prints the live URL
 
@@ -177,8 +177,8 @@ uv run python scripts/deploy_hf_space.py                       # push
 
 - [ ] `Dockerfile.hf` builds locally with `docker build -f Dockerfile.hf -t sar-hf .`
 - [ ] Local container responds: `docker run -p 7860:7860 -e SAR_QDRANT_URL=... -e SAR_QDRANT_API_KEY=... sar-hf` → `curl localhost:7860/health` returns 200
-- [ ] HF Space build succeeds (check at `https://huggingface.co/spaces/moazmo/secureagentrag-api/logs`)
-- [ ] `curl https://moazmo-secureagentrag-api.hf.space/health` from Egypt returns 200
+- [ ] HF Space build succeeds (check at `https://huggingface.co/spaces/LeomordKaly/secureagentrag-api/logs`)
+- [ ] `curl https://LeomordKaly-secureagentrag-api.hf.space/health` from Egypt returns 200
 - [ ] BYOK smoke from Egypt: `curl -H "X-User-LLM-Key: <test-key>" -H "X-User-Provider: groq" ...` returns a streamed response
 - [ ] HF Space settings → secrets contain `SAR_QDRANT_URL`, `SAR_QDRANT_API_KEY`, `SAR_GROQ_API_KEY`
 

@@ -32,7 +32,7 @@ Free-tier policies change. "No credit card" today may be "credit card after firs
 7. Wait for the Space to initialize (~30 seconds)
 8. Clone the Space repo locally:
    ```bash
-   git clone https://huggingface.co/spaces/moazmo/secureagentrag-api hf-smoke
+   git clone https://huggingface.co/spaces/LeomordKaly/secureagentrag-api hf-smoke
    cd hf-smoke
    ```
 9. Add a minimal `Dockerfile`:
@@ -51,7 +51,7 @@ Free-tier policies change. "No credit card" today may be "credit card after firs
     git push
     ```
 11. Wait 1-2 minutes for HF to build and start
-12. From Egypt, `curl https://moazmo-secureagentrag-api.hf.space/` — expect `{"ok": true, "service": "smoke"}`
+12. From Egypt, `curl https://LeomordKaly-secureagentrag-api.hf.space/` — expect `{"ok": true, "service": "smoke"}`
 13. Note the URL — record below
 
 ### Pass criteria
@@ -220,7 +220,7 @@ Once owner reports "all smoke green":
 
 Most common failure modes and the agent's response:
 
-- **HF Space build hangs** — check Space logs via `huggingface.co/spaces/moazmo/secureagentrag-api/logs`. Usually Dockerfile syntax error or missing `EXPOSE 7860`
+- **HF Space build hangs** — check Space logs via `huggingface.co/spaces/LeomordKaly/secureagentrag-api/logs`. Usually Dockerfile syntax error or missing `EXPOSE 7860`
 - **Qdrant Cloud cluster stuck in "Provisioning"** — wait full 5 minutes; if still stuck, delete and re-create in a different region
 - **Vercel deploy fails** — usually a Node version mismatch; pin Node 20 in `package.json` engines field
 - **Groq 401 from Egypt** — key may have been rotated; check `https://console.groq.com/keys`; if revoked, generate a new key and update `.env`

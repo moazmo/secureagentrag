@@ -24,7 +24,7 @@ The goal of P6: replace the local Streamlit demo with a public Next.js BYOK fron
 | `01-stack-decisions.md` | Full free-tier audit and final stack rationale |
 | `02-smoke-tests.md` | Five signup + smoke deploys to run **before any code** |
 | `03-backend-byok.md` | FastAPI BYOK mode spec — per-request key extraction, session collections, audit redaction |
-| `04-hf-space-deploy.md` | `Dockerfile.hf` + HF Space `huggingface.co/spaces/moazmo/secureagentrag-api` setup |
+| `04-hf-space-deploy.md` | `Dockerfile.hf` + HF Space `huggingface.co/spaces/LeomordKaly/secureagentrag-api` setup |
 | `05-nextjs-frontend.md` | Next.js 15 + shadcn + Vercel AI SDK frontend spec |
 | `06-hostinger-landing.md` | Static landing page spec + Hostinger hPanel deploy steps |
 | `07-keepalive-cron.md` | GitHub Actions workflow to keep HF Space warm |

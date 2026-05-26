@@ -10,7 +10,7 @@ If anything in production goes sideways, here is how to undo it without losing w
 
 ### Scenario 1: HF Space build fails repeatedly
 
-**Symptoms:** HF Space shows red "Build error" status. `huggingface.co/spaces/moazmo/secureagentrag-api/logs` shows the failure reason.
+**Symptoms:** HF Space shows red "Build error" status. `huggingface.co/spaces/LeomordKaly/secureagentrag-api/logs` shows the failure reason.
 
 **Action:**
 
@@ -33,7 +33,7 @@ If anything in production goes sideways, here is how to undo it without losing w
 1. Check Qdrant Cloud status page
 2. If their side, wait
 3. If our side (1 GB exceeded):
-   - Trigger immediate session purge: `curl -X POST https://moazmo-secureagentrag-api.hf.space/admin/purge-sessions`
+   - Trigger immediate session purge: `curl -X POST https://LeomordKaly-secureagentrag-api.hf.space/admin/purge-sessions`
    - Reduce `SAR_SESSION_TTL_HOURS` from 24 to 6 temporarily
    - If still over capacity, delete all `documents_sess_*` collections and add a warning to the frontend
 4. **Last resort:** switch the backend to self-hosted Qdrant inside the HF Space (data lost on restart but service stays up)
@@ -56,10 +56,10 @@ If anything in production goes sideways, here is how to undo it without losing w
 **Action:**
 
 1. Take the HF Space offline immediately:
-   - `huggingface.co/spaces/moazmo/secureagentrag-api/settings` → Pause
+   - `huggingface.co/spaces/LeomordKaly/secureagentrag-api/settings` → Pause
 2. Notify any user whose key was logged
 3. Wipe the audit logs on the Space:
-   - `huggingface-cli space-files moazmo/secureagentrag-api delete /tmp/audit_logs --recursive`
+   - `huggingface-cli space-files LeomordKaly/secureagentrag-api delete /tmp/audit_logs --recursive`
 4. Patch the redaction regex
 5. Add a regression test
 6. Re-enable
@@ -89,7 +89,7 @@ See `11-security-checklist.md` for prevention.
 
 If for any reason the launch needs to be scrapped:
 
-1. Delete the HF Space: `huggingface-cli delete-space moazmo/secureagentrag-api` (or via UI)
+1. Delete the HF Space: `huggingface-cli delete-space LeomordKaly/secureagentrag-api` (or via UI)
 2. Delete the Qdrant Cloud cluster from `cloud.qdrant.io`
 3. Delete the Vercel project from `vercel.com/dashboard`
 4. Remove the landing page files from Hostinger `public_html/`
