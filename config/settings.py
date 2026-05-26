@@ -215,6 +215,24 @@ class Settings(BaseSettings):
     # When false, all docs share a single collection with RBAC at payload level.
     multi_tenant_collections: bool = False
 
+    # ── BYOK demo mode (P6 production launch, see launch-plan/03-backend-byok.md)
+    # In BYOK mode the FastAPI surface accepts per-request LLM keys from visitor
+    # headers, scopes Qdrant writes to per-session collections, and disables
+    # Phoenix instrumentation. Off in dev/staging, on in the Hugging Face Space
+    # production image (SAR_BYOK_MODE=true via Space secrets).
+    byok_mode: bool = False
+    # When BYOK is on and a visitor did NOT bring their own LLM key, the owner
+    # key in .env is used but throttled to this many requests per IP per hour.
+    # The cap is intentionally tight so the Groq free-tier 30 RPM / 14400 RPD
+    # is never exhausted by a single visitor.
+    byok_owner_key_quota_per_hour: int = 3
+    # Per-session Qdrant collections (documents_sess_<session_id>) are auto
+    # purged after this many hours by retrieval/session_purge.py.
+    session_collection_ttl_hours: int = 24
+    # CORS allowlist consulted by the FastAPI middleware when byok_mode=true.
+    # Empty list = no CORS middleware mounted (dev default).
+    cors_allow_origins: list[str] = []
+
     # ── Multi-Modal RAG ──────────────────────────────────────────────────────────
     # When ingesting images, also generate a rich text description using a VLM.
     # The description is embedded as a separate chunk, enabling retrieval for

@@ -139,6 +139,51 @@ class BaseCloudClient(ABC):
         await self.close()
 
 
+def make_byok_cloud_client(
+    *,
+    provider: str,
+    user_key: str,
+    model: str | None = None,
+    timeout: float = 60.0,
+) -> BaseCloudClient:
+    """Build a per-request cloud LLM client that uses the visitor's API key.
+
+    Each call returns a **fresh client instance** holding the supplied key
+    in its own ``self.api_key`` slot. The visitor's key never lands on any
+    module-level singleton, never mixes into the owner-key client, and is
+    discarded when the FastAPI request scope ends.
+
+    Args:
+        provider: One of ``"groq"`` / ``"openai"`` / ``"anthropic"``.
+        user_key: The visitor-supplied API key from ``X-User-LLM-Key``.
+        model: Override the provider's default model.
+        timeout: Per-request HTTP timeout in seconds.
+
+    Returns:
+        A new ``BaseCloudClient`` subclass instance bound to the visitor key.
+
+    Raises:
+        ValueError: ``provider`` is not in the BYOK allowlist or ``user_key``
+            is missing.
+    """
+    if not user_key or not user_key.strip():
+        raise ValueError("make_byok_cloud_client called without a user key")
+    prov = (provider or "").lower()
+    if prov == "groq":
+        return GroqClient(
+            api_key=user_key.strip(), model=model or "llama-3.1-8b-instant", timeout=timeout
+        )
+    if prov == "openai":
+        return OpenAIClient(api_key=user_key.strip(), model=model or "gpt-4o-mini", timeout=timeout)
+    if prov == "anthropic":
+        return AnthropicClient(
+            api_key=user_key.strip(),
+            model=model or "claude-sonnet-4-20250514",
+            timeout=timeout,
+        )
+    raise ValueError(f"BYOK provider not supported: {provider!r}")
+
+
 class OpenAICompatibleClient(BaseCloudClient):
     """Shared client for OpenAI Chat Completions-compatible APIs.
 

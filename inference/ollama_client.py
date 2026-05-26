@@ -31,6 +31,36 @@ _retry_on_connection = retry(
 )
 
 
+def make_byok_ollama_client(
+    *,
+    base_url: str,
+    model: str | None = None,
+    timeout: float = 60.0,
+) -> OllamaClient:
+    """Build a per-request Ollama client bound to the visitor's instance URL.
+
+    Visitors running their own local Ollama can paste the public URL of
+    that instance into the frontend. Each call returns a **fresh client**
+    so the visitor's URL never replaces the owner default at module scope.
+
+    Args:
+        base_url: URL of the visitor's Ollama server (HTTPS preferred).
+        model: Override the default model. Falls back to the owner's
+            configured ``SAR_LLM_MODEL`` if the visitor's Ollama does not
+            advertise its own.
+        timeout: Per-request HTTP timeout in seconds.
+
+    Returns:
+        A new ``OllamaClient`` bound to ``base_url``.
+
+    Raises:
+        ValueError: ``base_url`` is empty or whitespace.
+    """
+    if not base_url or not base_url.strip():
+        raise ValueError("make_byok_ollama_client called without a base_url")
+    return OllamaClient(base_url=base_url.strip(), model=model, timeout=timeout)
+
+
 class OllamaClient:
     """Async client for the Ollama local LLM inference server.
 

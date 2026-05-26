@@ -220,6 +220,107 @@ class RateLimiter:
             logger.info("rate_limit_reset", key=key)
 
 
+class OwnerKeyHourThrottle:
+    """Per-IP hourly throttle for the BYOK owner-key fallback.
+
+    Distinct from the request-level :class:`RateLimiter` because the BYOK
+    semantics are different:
+
+    - Visitors who bring their own LLM key (``ByokCreds.has_user_key()``)
+      bypass this throttle entirely — they are paying for their own tokens.
+    - Visitors who do NOT bring a key fall back to the platform owner's
+      Groq key. This throttle exists to stop a single recruiter or curious
+      visitor from burning the free-tier 30 RPM / 14,400 RPD budget.
+
+    Bucket window is rolling one hour from the first allowed request in
+    the window. Sliding-window precision is not needed — three requests an
+    hour is already conservative. We keep timestamps in a tiny list per IP
+    and prune entries older than 3600 seconds on each check.
+    """
+
+    __slots__ = ("_buckets", "_quota_per_hour")
+
+    def __init__(self, quota_per_hour: int) -> None:
+        if quota_per_hour < 0:
+            raise ValueError("quota_per_hour must be non-negative")
+        self._quota_per_hour = quota_per_hour
+        self._buckets: dict[str, list[float]] = {}
+
+    def allow(self, ip: str, *, now: float | None = None) -> tuple[bool, dict[str, Any]]:
+        """Return whether ``ip`` may consume one owner-key request.
+
+        Args:
+            ip: Client IP address (use ``"anon"`` when unavailable so the
+                fallback path still throttles instead of leaking quota).
+            now: Optional monotonic clock override for tests.
+
+        Returns:
+            ``(allowed, meta)`` where ``meta`` carries ``remaining`` and
+            ``retry_after`` seconds, ready for an HTTP 429 response.
+        """
+        t = now if now is not None else time.monotonic()
+        # Prune entries older than 1h, then count.
+        bucket = [ts for ts in self._buckets.get(ip, []) if t - ts < 3600.0]
+        if len(bucket) >= self._quota_per_hour:
+            # ``retry_after`` defaults to a full window when quota_per_hour=0
+            # (kill switch) — there is no "oldest entry" to expire.
+            retry_after = max(1, int(3600.0 - (t - bucket[0])) + 1) if bucket else 3600
+            self._buckets[ip] = bucket  # write pruned list back
+            return False, {
+                "allowed": False,
+                "remaining": 0,
+                "retry_after": retry_after,
+                "reason": "owner_key_hourly_quota_exhausted",
+            }
+        bucket.append(t)
+        self._buckets[ip] = bucket
+        return True, {
+            "allowed": True,
+            "remaining": self._quota_per_hour - len(bucket),
+            "retry_after": 0,
+            "reason": None,
+        }
+
+    def reset(self, ip: str) -> None:
+        """Drop all timestamps for ``ip`` (test/cleanup helper)."""
+        self._buckets.pop(ip, None)
+
+    def reset_all(self) -> None:
+        """Drop every bucket — used between test cases to avoid leakage."""
+        self._buckets.clear()
+
+
+# Module-level singleton — lazy-initialised from settings on first use so
+# unit tests that monkey-patch SAR_BYOK_OWNER_QUOTA see the right value.
+_owner_key_throttle: OwnerKeyHourThrottle | None = None
+
+
+def get_owner_key_throttle() -> OwnerKeyHourThrottle:
+    """Return the process-wide owner-key throttle, creating it lazily.
+
+    Reads ``settings.byok_owner_key_quota_per_hour`` at first call. Tests
+    that need a different quota value should call :func:`reset_owner_key_throttle`
+    after the monkey-patch.
+    """
+    global _owner_key_throttle
+    if _owner_key_throttle is None:
+        from config.settings import settings  # local import to avoid cycle
+
+        _owner_key_throttle = OwnerKeyHourThrottle(
+            quota_per_hour=settings.byok_owner_key_quota_per_hour,
+        )
+    return _owner_key_throttle
+
+
+def reset_owner_key_throttle() -> None:
+    """Force the next :func:`get_owner_key_throttle` call to rebuild from settings.
+
+    Test-only hook; production code never calls this.
+    """
+    global _owner_key_throttle
+    _owner_key_throttle = None
+
+
 class RedisRateLimiter:
     """Distributed rate limiter backed by Redis.
 

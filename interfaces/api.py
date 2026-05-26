@@ -101,12 +101,32 @@ if _FASTAPI_AVAILABLE:
         description="Privacy-first multi-agent RAG with RBAC, guardrails, and audit chain.",
     )
 
-    # Initialize Phoenix tracing if configured
+    # Initialize Phoenix tracing if configured.
+    # When ``settings.byok_mode`` is on, ``setup_tracing`` short-circuits to
+    # False regardless of phoenix_endpoint (see utils/observability.py).
     from utils.observability import setup_tracing
 
     _tracing_enabled = setup_tracing()
     if _tracing_enabled:
         logger.info("phoenix_tracing_active_in_api")
+
+    # ── BYOK CORS middleware ─────────────────────────────────────────────
+    # Only mount CORS when:
+    #   1) BYOK mode is on (public demo path), AND
+    #   2) an explicit allowlist is configured via SAR_CORS_ALLOW_ORIGINS.
+    # Empty allowlist + BYOK = wildcard would be a footgun (CSRF surface).
+    # Empty allowlist + dev = no CORS needed (local same-origin).
+    if settings.byok_mode and settings.cors_allow_origins:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_allow_origins),
+            allow_credentials=False,  # BYOK never uses cookies
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["*"],
+        )
+        logger.info("byok_cors_enabled", origins=list(settings.cors_allow_origins))
 
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict[str, str]:
@@ -117,6 +137,113 @@ if _FASTAPI_AVAILABLE:
         report = await run_health_checks()
         code = 200 if report.overall_healthy else 503
         return JSONResponse(report.to_dict(), status_code=code)
+
+    # ── BYOK demo endpoint ───────────────────────────────────────────────
+    # Mounted only when ``settings.byok_mode`` is on. Bypasses JWT auth and
+    # uses per-request BYOK credentials instead. Isolation is enforced via
+    # session-scoped Qdrant collections, not JWT identity.
+    if settings.byok_mode:
+        from interfaces.byok import ByokCreds, extract_byok
+        from utils.rate_limiter import get_owner_key_throttle
+
+        _DEMO_PERSONAS: dict[str, dict] = {
+            "engineer": {
+                "org_id": "demo-engineering",
+                "clearance_level": 2,
+                "roles": ["engineering"],
+            },
+            "compliance": {
+                "org_id": "demo-compliance",
+                "clearance_level": 4,
+                "roles": ["compliance", "legal"],
+            },
+            "executive": {
+                "org_id": "demo-executive",
+                "clearance_level": 5,
+                "roles": ["executive", "compliance"],
+            },
+        }
+
+        def _persona_to_user_ctx(creds: ByokCreds) -> UserContext:
+            """Translate ``creds.demo_persona`` into a synthetic UserContext.
+
+            Unknown / missing persona → minimal read-only profile so the demo
+            still answers but cannot escalate beyond the lowest clearance.
+            """
+            preset = _DEMO_PERSONAS.get((creds.demo_persona or "").lower())
+            if preset is None:
+                preset = {"org_id": "demo-anon", "clearance_level": 1, "roles": ["viewer"]}
+            return UserContext(
+                user_id=f"demo-{creds.session_id}",
+                org_id=preset["org_id"],
+                clearance_level=preset["clearance_level"],
+                roles=preset["roles"],
+            )
+
+        from pydantic import BaseModel as _ByokBaseModel
+
+        class _ByokChatBody(_ByokBaseModel):
+            """Public-demo chat payload — no auth fields, only the question text."""
+
+            query: str
+            prefer_cloud: bool = True
+
+        # Runtime import — FastAPI dependency injection reads the annotation
+        # at request time, so this must NOT be a TYPE_CHECKING-only import.
+        from fastapi import Request as _FastApiRequest  # noqa: TC002
+
+        @app.post("/byok/chat", tags=["byok"])
+        async def byok_chat_endpoint(
+            request: _FastApiRequest,
+            body: _ByokChatBody,
+            creds: Annotated[ByokCreds, Depends(extract_byok)],
+        ) -> dict:
+            """Public-demo chat endpoint backed by BYOK credentials.
+
+            Routing:
+            - Visitor brought a key (``creds.has_user_key()``): pipeline uses
+              the visitor's provider + key. No throttle.
+            - Visitor did NOT bring a key: pipeline falls back to the owner's
+              configured cloud provider key, gated by ``OwnerKeyHourThrottle``.
+              When exhausted, returns 429 with copy nudging BYOK.
+
+            Persona maps to a synthetic ``UserContext`` so the existing RBAC
+            filter still runs end-to-end — same code path as authenticated
+            queries, just with demo identities.
+            """
+            if not creds.has_user_key():
+                throttle = get_owner_key_throttle()
+                client_ip = (request.client.host if request.client else None) or "anon"
+                ok, meta = throttle.allow(client_ip)
+                if not ok:
+                    raise HTTPException(
+                        status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail={
+                            "reason": meta["reason"],
+                            "retry_after_seconds": meta["retry_after"],
+                            "hint": (
+                                "Owner-key fallback exhausted for this IP. "
+                                "Paste your own LLM key to continue — your key "
+                                "is never stored server-side."
+                            ),
+                        },
+                    )
+            user_ctx = _persona_to_user_ctx(creds)
+            state = await run_rag_pipeline(
+                query=body.query,
+                user_context=user_ctx,
+                thread_id=f"byok-{creds.session_id}",
+                prefer_cloud=body.prefer_cloud,
+                # Visitor's chosen provider when present; falls back to env.
+                override_provider=creds.safe_provider(),
+            )
+            response = QueryResponse.from_state(state)
+            return {
+                "session_id": creds.session_id,
+                "persona": creds.demo_persona or "anonymous",
+                "byok_used": creds.has_user_key(),
+                "response": response.model_dump(mode="json"),
+            }
 
     @app.post("/query", response_model=QueryResponse, tags=["rag"])
     async def query_endpoint(
