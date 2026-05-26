@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SecureAgentRAG — Privacy-first multi-agent RAG platform</title>
+<meta
+  name="description"
+  content="Production-grade multi-agent RAG platform with RBAC enforced at the vector DB layer, sensitivity-based inference routing, NLI per-sentence faithfulness gate, and SHA-256 hash-chained audit log."
+/>
+<meta property="og:title" content="SecureAgentRAG" />
+<meta
+  property="og:description"
+  content="Privacy-first multi-agent RAG with RBAC, faithfulness gate, and tamper-evident audit chain."
+/>
+<meta property="og:url" content="https://eilm.live/" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="theme-color" content="#0a0a0a" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232563eb'/%3E%3Cpath d='M32 16 L48 24 V36 C48 44 32 52 32 52 C32 52 16 44 16 36 V24 Z' fill='%23fafafa'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="hero">
+  <nav class="topbar">
+    <span class="logo">🛡️ SecureAgentRAG</span>
+    <div class="topbar-links">
+      <a href="https://github.com/moazmo/secureagentrag" target="_blank" rel="noopener">GitHub</a>
+      <a class="cta-pill" href="https://app.eilm.live">Open live demo →</a>
+    </div>
+  </nav>
+
+  <div class="hero-content">
+    <h1>Privacy-first multi-agent RAG.</h1>
+    <p class="lede">
+      Four production patterns most RAG demos skip: RBAC enforced at the vector DB layer,
+      sensitivity-based inference routing, NLI per-sentence faithfulness gate, and
+      a SHA-256 hash-chained audit log.
+    </p>
+    <div class="cta-row">
+      <a class="cta-primary" href="https://app.eilm.live">Open live demo →</a>
+      <a class="cta-secondary" href="https://github.com/moazmo/secureagentrag" target="_blank" rel="noopener">View source</a>
+    </div>
+    <p class="stack-strip">
+      Live stack ·
+      <span class="chip">Next.js on Vercel</span>
+      <span class="chip">FastAPI on Hugging Face Spaces</span>
+      <span class="chip">Qdrant Cloud</span>
+      <span class="chip">Groq llama-3.3-70b</span>
+      <span class="chip green">$0/mo</span>
+    </p>
+  </div>
+</header>
+
+<section id="patterns" class="patterns">
+  <h2>What makes it different</h2>
+  <div class="grid">
+    <article class="card">
+      <h3>RBAC at the vector layer</h3>
+      <p>
+        Org + clearance + role enforced as a Qdrant <em>must</em>-filter on every search.
+        Dense and sparse vectors share the same payload filter — cross-tenant bypass is
+        structurally impossible from the application layer.
+      </p>
+    </article>
+    <article class="card">
+      <h3>Sensitivity-based inference routing</h3>
+      <p>
+        HIGH-classified documents force local Ollama inference; LOW can opt into Groq /
+        OpenAI / Anthropic. Routing decision per request, provenance recorded in the
+        audit trail.
+      </p>
+    </article>
+    <article class="card">
+      <h3>NLI per-sentence faithfulness gate</h3>
+      <p>
+        Every cited sentence must be entailed by its source chunk under an NLI model.
+        Citation marker presence is not enough — unsupported claims are annotated or
+        dropped.
+      </p>
+    </article>
+    <article class="card">
+      <h3>SHA-256 hash-chained audit</h3>
+      <p>
+        Every request gets a tamper-evident audit entry. PII redacted before persist
+        with provider-specific key shapes (Groq, OpenAI, Anthropic, HF, Vercel, Qdrant
+        JWT). Verifier detects any insertion / deletion / edit.
+      </p>
+    </article>
+  </div>
+</section>
+
+<section id="try" class="try">
+  <h2>Try it in 30 seconds</h2>
+  <ol class="steps">
+    <li>
+      <strong>Open the demo:</strong>
+      <a href="https://app.eilm.live">app.eilm.live</a>
+    </li>
+    <li>
+      <strong>Pick a persona:</strong> Engineer, Compliance, or Executive — clearance
+      level and roles set per persona.
+    </li>
+    <li>
+      <strong>Ask the same query across personas:</strong> e.g. <em>“What does the Q3
+      finance report say about cash position?”</em> Engineer is blocked by the role
+      allowlist; Compliance and Executive get cited answers with a sensitivity
+      disclaimer attached.
+    </li>
+    <li>
+      <strong>Optional — paste your own LLM key:</strong> the BYOK drawer accepts Groq /
+      OpenAI / Anthropic / Ollama URL. Your key lives in localStorage only, never
+      persists server-side, never goes to telemetry.
+    </li>
+  </ol>
+  <p class="byok-note">
+    No key pasted → the demo uses the platform owner's Groq key, throttled to 3 requests
+    per IP per hour (free-tier protection).
+  </p>
+</section>
+
+<section id="architecture" class="architecture">
+  <h2>Production stack</h2>
+  <pre class="arch-diagram">
+visitor browser
+   │
+   ▼
+Vercel Edge — Next.js 16 + shadcn-style UI + BYOK drawer + persona switcher
+   │  POST /api/chat  ·  X-User-LLM-Key  ·  X-Demo-Persona  ·  X-Session-ID
+   ▼
+Hugging Face Space — FastAPI on port 7860, CPU Basic (2 vCPU / 16 GB)
+   │  9-node LangGraph: router → guardrails → security → retriever
+   │                    → grader → rewriter → synthesizer → faithfulness → evaluator
+   ▼
+Qdrant Cloud free 1 GB — dense + sparse hybrid, RBAC payload filter
+   │
+   ▼
+Groq llama-3.3-70b-versatile — owner-key throttled, BYOK unthrottled
+  </pre>
+  <p class="arch-note">
+    Source: <a href="https://github.com/moazmo/secureagentrag">github.com/moazmo/secureagentrag</a>
+    · 600 tests passing · 24 architecture decision records
+    · branch <code>deploy/prod-launch</code>.
+  </p>
+</section>
+
+<footer class="footer">
+  <p>
+    Built by <a href="https://github.com/moazmo">Moaz Muhammad</a>
+    · MIT licensed
+    · Powered by Hugging Face Spaces, Vercel, Qdrant Cloud, Groq — all free tier.
+  </p>
+</footer>
+
+</body>
+</html>
