@@ -89,7 +89,7 @@ except Exception as e: print(f'reranker cache skipped: {e!r}', file=sys.stderr)"
 ENV SAR_BYOK_MODE=true
 ENV SAR_BYOK_OWNER_QUOTA=3
 ENV SAR_SESSION_TTL_HOURS=24
-ENV SAR_CORS_ALLOW_ORIGINS='["https://app.eilm.live","https://secureagentrag-web.vercel.app","https://secureagentrag.vercel.app"]'
+ENV SAR_CORS_ALLOW_ORIGINS='["https://secureagentrag-web.vercel.app","https://secureagentrag.vercel.app"]'
 
 # Cloud LLM defaults -- Groq llama-3.1-8b-instant is the cheapest fast option
 # on the free tier. Visitor BYOK overrides this per request.
