@@ -39,7 +39,7 @@ jobs:
           curl --fail --silent --show-error \
                --max-time 30 \
                --retry 3 --retry-delay 5 \
-               https://secureagentrag.vercel.app/
+               https://app.eilm.live/
 ```
 
 ## Budget

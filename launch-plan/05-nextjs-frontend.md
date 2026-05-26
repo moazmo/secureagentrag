@@ -194,7 +194,7 @@ secureagentrag-web/
 - [ ] Confidence + faithfulness + citation badges render correctly
 - [ ] Mobile responsive (Chrome devtools iPhone 14 Pro emulation)
 - [ ] Deploy to Vercel succeeds via `vercel --prod`
-- [ ] `https://secureagentrag.vercel.app` reachable from Egypt
+- [ ] `https://app.eilm.live` reachable from Egypt
 - [ ] Lighthouse score ≥ 90 on Performance, Accessibility, Best Practices, SEO
 - [ ] Backend CORS allowlist updated to include final Vercel URL
 

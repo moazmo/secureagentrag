@@ -1,7 +1,7 @@
 # 06 — Phase 5: Hostinger Static Landing Page
 
 **Owner of this phase:** AI agent writes the HTML/CSS; owner uploads via Hostinger hPanel File Manager.
-**Pre-requisite:** phase 4 (Vercel frontend) live at `https://secureagentrag.vercel.app`.
+**Pre-requisite:** phase 4 (Vercel frontend) live at `https://app.eilm.live`.
 
 ## Goal
 
@@ -15,7 +15,7 @@ No frameworks, no build step. Pure HTML + CSS + a few `<script>` tags. Loads in 
 
 ## Why a static landing is needed at all
 
-The Vercel URL `secureagentrag.vercel.app` is fine for direct sharing but:
+The Vercel URL `app.eilm.live` is fine for direct sharing but:
 
 - The recruiter-facing URL deserves to look intentional (not a deploy-platform subdomain)
 - A landing page is the right place for the screencast embed, README highlights, and a small "About" section that a chat-only UI cannot host
@@ -55,8 +55,8 @@ These ship in the `launch-plan/landing-assets/` directory of this branch first, 
 <meta name="description" content="A production-grade multi-agent RAG platform with RBAC at the vector DB layer, sensitivity-based inference routing, faithfulness gate, and hash-chained audit log." />
 <meta property="og:title" content="SecureAgentRAG" />
 <meta property="og:description" content="Privacy-first multi-agent RAG with RBAC, faithfulness gate, and audit chain." />
-<meta property="og:image" content="https://<owner-domain>/assets/og-image.png" />
-<meta property="og:url" content="https://<owner-domain>/" />
+<meta property="og:image" content="https://eilm.live/assets/og-image.png" />
+<meta property="og:url" content="https://eilm.live/" />
 <meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="/assets/favicon.ico" />
 <link rel="stylesheet" href="/styles.css" />
@@ -76,7 +76,7 @@ These ship in the `launch-plan/landing-assets/` directory of this branch first, 
       NLI per-sentence faithfulness gate, SHA-256 hash-chained audit log.
     </p>
     <div class="cta-row">
-      <a class="cta-primary" href="https://secureagentrag.vercel.app">Open live demo →</a>
+      <a class="cta-primary" href="https://app.eilm.live">Open live demo →</a>
       <a class="cta-secondary" href="https://github.com/moazmo/secureagentrag">View source</a>
     </div>
   </div>
@@ -169,7 +169,7 @@ No external DNS needed since the landing page lives on Hostinger.
 - [ ] `landing/index.html` validates against W3C HTML5 validator
 - [ ] Lighthouse on mobile: Performance ≥ 95, Accessibility ≥ 95
 - [ ] Page weight < 100 KB without video iframe load
-- [ ] CTA button click takes user to `https://secureagentrag.vercel.app` (verified after phase 4)
+- [ ] CTA button click takes user to `https://app.eilm.live` (verified after phase 4)
 - [ ] Owner uploaded to Hostinger and the public URL serves the page
 
 ## Out of scope

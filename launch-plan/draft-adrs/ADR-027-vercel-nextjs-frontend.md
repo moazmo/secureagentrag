@@ -27,7 +27,7 @@ Build a **Next.js 15 App Router frontend with shadcn/ui + Tailwind v4 + Vercel A
 
 - Repo: separate sibling repo `secureagentrag-web` at `github.com/moazmo/secureagentrag-web`
 - Deploy: Vercel free Hobby plan
-- URL: `secureagentrag.vercel.app`
+- URL: `app.eilm.live`
 - Streaming: Vercel AI SDK `useChat` hook over SSE bridged to the FastAPI streaming endpoint
 - BYOK input: drawer + localStorage persistence (never cookies)
 - Audit viewer: client-side hash verification
@@ -60,7 +60,7 @@ Build a **Next.js 15 App Router frontend with shadcn/ui + Tailwind v4 + Vercel A
 - `secureagentrag-web` repo created on GitHub
 - Vercel project linked
 - `vercel --prod` deploys cleanly
-- `https://secureagentrag.vercel.app` reachable from Egypt
+- `https://app.eilm.live` reachable from Egypt
 - BYOK drawer saves to localStorage and forwards header on next request
 - End-to-end streaming smoke against live HF Space backend works
 - Lighthouse mobile ≥ 90 on Performance, Accessibility, Best Practices, SEO
