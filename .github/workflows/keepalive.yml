@@ -1,0 +1,54 @@
+name: keepalive
+
+# Keep the public demo always-warm.
+#
+# Hugging Face Spaces (CPU Basic) auto-pause after 48 hours of zero traffic.
+# Vercel never sleeps but a regular ping confirms the Edge function path
+# still resolves through Vercel's network.
+#
+# Cron fires daily at 03:17 UTC. Off-round minute by design -- the round
+# minutes are heavily contended on GitHub-hosted runners and schedules
+# routinely slip past round-number times.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:        # manual fire from the Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping HF Space /healthz
+        run: |
+          curl --fail --silent --show-error \
+               --max-time 60 \
+               --retry 3 --retry-delay 10 \
+               --output /dev/null \
+               --write-out "HF /healthz HTTP %{http_code} ttfb=%{time_starttransfer}s\n" \
+               https://LeomordKaly-secureagentrag-api.hf.space/healthz
+
+      - name: Ping Vercel frontend
+        run: |
+          curl --fail --silent --show-error \
+               --max-time 30 \
+               --retry 3 --retry-delay 5 \
+               --output /dev/null \
+               --write-out "Vercel /  HTTP %{http_code} ttfb=%{time_starttransfer}s\n" \
+               https://secureagentrag-web.vercel.app/
+
+      - name: Ping Vercel chat proxy (cheap smoke)
+        run: |
+          curl --fail --silent --show-error \
+               --max-time 90 \
+               --retry 2 --retry-delay 5 \
+               -X POST \
+               -H "Content-Type: application/json" \
+               -d '{"query":"keepalive ping","sessionId":"keepalive-cron","persona":"engineer"}' \
+               --output /dev/null \
+               --write-out "Vercel /api/chat HTTP %{http_code} total=%{time_total}s\n" \
+               https://secureagentrag-web.vercel.app/api/chat
