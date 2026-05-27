@@ -420,6 +420,15 @@ async def synthesize_answer(state: GraphState) -> dict:
     # whole point of the grader + rewrite loop — we would synthesize from text
     # we already decided was off-topic. Refuse instead.
     docs_to_use = relevant_documents
+    # Cap the synthesis context. The grader bypass path can pass through
+    # the full retrieval set (10+); concatenating that many ~600-char
+    # chunks plus the system prompt pushes Groq llama-3.1-8b-instant
+    # close to its rate-limited token budget and the call can come back
+    # empty. Always trim to settings.rerank_top_k so the prompt is
+    # bounded regardless of how permissive the upstream nodes were.
+    max_ctx = int(getattr(settings, "rerank_top_k", 5)) or 5
+    if len(docs_to_use) > max_ctx:
+        docs_to_use = docs_to_use[:max_ctx]
 
     logger.info(
         "synthesizing_answer",

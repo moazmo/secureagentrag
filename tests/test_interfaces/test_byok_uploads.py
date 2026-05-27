@@ -150,6 +150,52 @@ def test_uploads_enforces_file_count_cap(byok_app) -> None:
     assert r.json()["detail"]["reason"] == "upload_quota_exceeded"
 
 
+def test_uploads_rejects_too_many_chunks(byok_app) -> None:
+    """An over-chunky file must NOT survive ingest -- the endpoint deletes
+    the just-upserted points and returns 413 with a clear hint."""
+    client, _ = byok_app
+    searcher = _stub_searcher()
+
+    # Mock ingestion to return 200 chunks (way over the 60-chunk cap).
+    over_result = MagicMock()
+    over_result.point_ids = [f"p{i}" for i in range(200)]
+    over_result.num_chunks = 200
+    over_result.status = "success"
+    over_result.errors = []
+    over_result.processing_time_seconds = 1.0
+
+    fake_pipeline = MagicMock()
+    fake_pipeline.ingest_document = AsyncMock(return_value=over_result)
+
+    with (
+        patch("interfaces.api._get_hybrid_searcher", return_value=searcher),
+        patch("interfaces.api.IngestionPipeline", return_value=fake_pipeline),
+        # Reuse the existing test fixture cap value -- patch settings here
+        # so the cap binds tightly to a known number for the assertion.
+        patch.object(settings, "byok_upload_max_chunks_per_file", 60),
+    ):
+        r = client.post(
+            "/byok/uploads",
+            headers={"X-Session-ID": "sess-over"},
+            files={"file": ("big.txt", b"hello content", "text/plain")},
+        )
+
+    assert r.status_code == 413
+    detail = r.json()["detail"]
+    assert detail["reason"] == "too_many_chunks"
+    assert detail["chunk_count"] == 200
+    assert detail["max_chunks"] == 60
+    assert "shorter" in detail["hint"]
+
+    # The cleanup path must have called delete with the same point ids the
+    # pipeline returned -- otherwise the orphan chunks would sit in the
+    # session collection eating Qdrant quota.
+    sess_mgr = searcher._qdrant.for_session.return_value
+    sess_mgr.client.delete.assert_called_once()
+    delete_kwargs = sess_mgr.client.delete.call_args.kwargs
+    assert delete_kwargs["points_selector"] == [f"p{i}" for i in range(200)]
+
+
 def test_uploads_happy_path(byok_app) -> None:
     """Valid .txt upload -> 200 with ingest result + payload tag applied."""
     client, _ = byok_app

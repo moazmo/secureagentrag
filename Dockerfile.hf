@@ -104,10 +104,14 @@ ENV SAR_LOCAL_EMBEDDING_MODEL=BAAI/bge-m3
 ENV SAR_EMBEDDING_MODEL=bge-m3
 ENV SAR_EMBEDDING_DIM=1024
 
-# Cross-encoder reranker -- balances quality with build size. Swap to
-# fine_tuned + SAR_FINETUNED_RERANKER_PATH after phase 3.2 ships the
-# 2.3 GB checkpoint to LeomordKaly/secureagentrag-reranker-v1.
-ENV SAR_RERANKER_TYPE=cross_encoder
+# Reranker disabled for the BYOK demo. The cross-encoder adds a ~600 MB
+# model + 4-5 s cold-load latency, and on a 10-doc corpus + 1-5 visitor
+# uploads its top-5 cut routinely drops the visitor's own chunk before
+# it reaches the grader. Pure dense+sparse RRF order is good enough on
+# the demo corpus; bench shows the reranker only helps materially past
+# 200+ documents per query. Re-enable for production deploys with
+# SAR_RERANKER_TYPE=cross_encoder or fine_tuned.
+ENV SAR_RERANKER_TYPE=none
 ENV SAR_RERANKER_CHECKPOINT=BAAI/bge-reranker-v2-m3
 
 # Sparse retrieval -- BM25 keeps the cold path zero-dep; SPLADE adds an
@@ -123,12 +127,31 @@ ENV SAR_BM25_INDEX_PATH=/tmp/secureagentrag/bm25_index.pkl
 # Multi-tenant collections route BYOK session -> documents_sess_<sid>.
 ENV SAR_MULTI_TENANT_COLLECTIONS=true
 
-# Pipeline safety
-ENV SAR_REQUEST_TIMEOUT_S=120
-ENV SAR_FAITHFULNESS_GATE_ENABLED=true
-# `flag` keeps the answer text intact and lets the UI render the
-# faithfulness badge. `drop` would rewrite sentences out of the answer
-# which is harder to demo — stay in flag mode for the public BYOK demo.
+# Pipeline safety -- BYOK uploads can push the candidate set up to 20
+# chunks (top_k=10 from base + top_k=10 from session) which the grader
+# scores one Groq call at a time. 180 s leaves headroom for the
+# reranker cold load + Groq free-tier rate-limit waits on a fresh boot.
+ENV SAR_REQUEST_TIMEOUT_S=180
+
+# Grader thresholds tuned looser for the BYOK demo so short user-uploaded
+# docs are not aggressively filtered out by the LLM judge. The default
+# 0.7 / 0.5 produced too many "all docs irrelevant" refusals on this
+# small corpus; 0.55 / 0.3 keeps the corrective-RAG retry loop active
+# but stops the demo from refusing on edge-case wording.
+ENV SAR_RELEVANCE_THRESHOLD=0.55
+ENV SAR_RELEVANCE_RETRY_THRESHOLD=0.3
+# Cap corrective-RAG retries -- two refines is enough; further rewrites
+# stack Groq calls without meaningfully improving recall on a 10-doc
+# corpus and just chew through the SLO.
+ENV SAR_MAX_RETRIES=1
+# Faithfulness gate disabled on the public BYOK demo: it makes one Groq
+# call per cited sentence (typically 5-10 extra calls per answer). On
+# the free-tier 30 RPM budget a single chatty answer can exhaust the
+# bucket and the next query 429s with an empty completion. The
+# synthesizer's own citation discipline (mandatory inline [N] markers
+# + sources-only prompt) is strong enough for the demo. Re-enable for
+# production deploys with a paid Groq tier or local Ollama.
+ENV SAR_FAITHFULNESS_GATE_ENABLED=false
 ENV SAR_FAITHFULNESS_GATE_MODE=flag
 ENV SAR_FAITHFULNESS_THRESHOLD=0.7
 

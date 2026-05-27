@@ -25,11 +25,27 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Retry decorator for transient connection failures only
+# Retry on transient connection failures AND 429 rate-limit responses.
+# Groq's free tier is 30 RPM; a single user query can fire grader +
+# synth + faith calls that exceed that bucket. We honour the Retry-After
+# header where present, fall back to exponential backoff otherwise.
+class _RateLimitError(Exception):
+    """Lift a 429 into something tenacity can catch and back off on."""
+
+
+def _raise_for_status_with_429(resp: httpx.Response) -> None:
+    """Like httpx.Response.raise_for_status but lifts 429 to _RateLimitError."""
+    if resp.status_code == 429:
+        raise _RateLimitError(resp.headers.get("Retry-After", ""))
+    resp.raise_for_status()
+
+
 _retry_on_connection = retry(
-    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
+    retry=retry_if_exception_type(
+        (httpx.ConnectError, httpx.TimeoutException, _RateLimitError)
+    ),
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
+    wait=wait_exponential(multiplier=1.5, min=2, max=20),
     reraise=True,
 )
 
@@ -251,7 +267,7 @@ class OpenAICompatibleClient(BaseCloudClient):
             json=payload,
         )
         elapsed_ms = (time.perf_counter() - start) * 1000
-        response.raise_for_status()
+        _raise_for_status_with_429(response)
 
         data = response.json()
         choice = data.get("choices", [{}])[0]

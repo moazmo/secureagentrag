@@ -619,6 +619,7 @@ if _FASTAPI_AVAILABLE:
                 "count": len(uploads),
                 "max_files": settings.byok_upload_max_files,
                 "max_bytes": settings.byok_upload_max_bytes,
+                "max_chunks_per_file": settings.byok_upload_max_chunks_per_file,
                 "allowed_extensions": list(settings.byok_upload_allowed_extensions),
                 "items": uploads,
             }
@@ -725,6 +726,38 @@ if _FASTAPI_AVAILABLE:
                     ],
                 )
                 result = await pipeline.ingest_document(req)
+                # Reject documents that chunk too aggressively. Without this
+                # cap a 100-page PDF dominates the dual-collection retrieval
+                # and the grader/faithfulness loop times out under the 180 s
+                # SLO. Delete what we just upserted and return 413 so the
+                # visitor knows exactly what failed.
+                max_chunks = int(settings.byok_upload_max_chunks_per_file)
+                if max_chunks > 0 and result.num_chunks > max_chunks:
+                    try:
+                        if result.point_ids:
+                            sess_qdrant.client.delete(
+                                collection_name=sess_qdrant.collection_name,
+                                points_selector=list(result.point_ids),
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "byok_upload_oversize_cleanup_failed",
+                            error=str(exc),
+                            chunks=result.num_chunks,
+                        )
+                    raise HTTPException(
+                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail={
+                            "reason": "too_many_chunks",
+                            "chunk_count": result.num_chunks,
+                            "max_chunks": max_chunks,
+                            "hint": (
+                                f"This file chunks to {result.num_chunks} pieces "
+                                f"but the BYOK demo caps single uploads at {max_chunks}. "
+                                "Try a shorter document or a section instead."
+                            ),
+                        },
+                    )
                 # Tag every newly-upserted chunk with the file_id + ingested_at
                 # so the list and delete endpoints can group by file.
                 if result.point_ids:

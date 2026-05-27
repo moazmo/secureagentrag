@@ -545,11 +545,71 @@ async def grade_documents(state: GraphState) -> dict:
             ],
         }
 
-    # Use batch grading for efficiency (single LLM call)
-    graded_documents = await _grade_documents_batch(
-        query, documents, prefer_cloud=state.get("prefer_cloud", False)
-    )
+    # Full grader bypass: when BYOK demo mode is on AND the byok_skip_grader
+    # flag is set, every retrieved chunk passes through as relevant. The
+    # Groq free-tier rate limit + LLM-as-judge noise makes the grader the
+    # dominant cause of "no answer" refusals on a tight demo corpus; the
+    # embedding + RRF ordering is already strong enough for the demo.
+    if settings.byok_mode and settings.byok_skip_grader:
+        graded_documents = [{**doc, "relevant": True} for doc in documents]
+        relevant_documents = graded_documents
+        total = len(graded_documents)
+        return {
+            "documents": graded_documents,
+            "relevant_documents": relevant_documents,
+            "relevance_ratio": 1.0,
+            "audit_trail": [
+                {
+                    "node": "retriever",
+                    "action": "grade_documents",
+                    "total_documents": total,
+                    "relevant_count": total,
+                    "relevance_ratio": 1.0,
+                    "bypass": "byok_skip_grader",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            ],
+        }
 
+    # BYOK visitor uploads bypass the LLM grader. The visitor chose to
+    # upload the file -- letting the model second-guess that choice is the
+    # exact behaviour the "uploaded my own doc and got no answer" bug
+    # report flagged. We still grade everything else (demo corpus,
+    # authenticated /query path) the normal way.
+    session_id = (state.get("byok_session_id") or "").strip()
+    auto_relevant: list = []
+    to_grade: list = []
+    if session_id:
+        from retrieval.multitenancy import _sanitize
+
+        sess_collection = f"documents_sess_{_sanitize(session_id)}"
+        for doc in documents:
+            md = doc.get("metadata", {}) if isinstance(doc, dict) else {}
+            # Two equivalent signals for "this chunk came from the
+            # visitor's upload": the user_id payload or a source_file_id
+            # tag we set right after the per-upload payload patch.
+            if (
+                md.get("user_id") == f"demo-{session_id}"
+                or md.get("source_file_id")
+                or md.get("__collection__") == sess_collection
+            ):
+                auto_doc = dict(doc)
+                auto_doc["relevant"] = True
+                auto_relevant.append(auto_doc)
+            else:
+                to_grade.append(doc)
+    else:
+        to_grade = list(documents)
+
+    # Use batch grading for efficiency (single LLM call)
+    if to_grade:
+        graded_remainder = await _grade_documents_batch(
+            query, to_grade, prefer_cloud=state.get("prefer_cloud", False)
+        )
+    else:
+        graded_remainder = []
+
+    graded_documents = auto_relevant + graded_remainder
     relevant_documents = [doc for doc in graded_documents if doc["relevant"]]
     total = len(graded_documents)
     relevance_ratio = len(relevant_documents) / total if total > 0 else 0.0

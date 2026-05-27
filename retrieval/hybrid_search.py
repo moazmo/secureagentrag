@@ -161,11 +161,16 @@ class HybridSearcher:
                 extra_filter=extra_filter,
             )
             if session_qdrant is not None:
+                # Session collections can be much smaller than the base, but
+                # an aggressive PDF upload can balloon to 100+ chunks; cap
+                # session pulls at top_k (not top_k * 2) so the candidate
+                # explosion in the dual-collection RRF stays bounded and the
+                # grader / faithfulness loop completes within the SLO.
                 try:
                     sess_dense = session_qdrant.search_with_rbac(
                         query_embedding=query_embedding,
                         user_context=user_context,
-                        top_k=top_k * 2,
+                        top_k=top_k,
                         extra_filter=extra_filter,
                     )
                     dense_results = list(dense_results) + list(sess_dense)
@@ -208,7 +213,7 @@ class HybridSearcher:
                         sess_sparse = session_qdrant.search_sparse_with_rbac(
                             sparse_vector=sparse_vector,
                             user_context=user_context,
-                            top_k=top_k * 2,
+                            top_k=top_k,
                             extra_filter=extra_filter,
                         )
                         sparse_results.extend(sess_sparse)

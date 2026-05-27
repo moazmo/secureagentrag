@@ -247,6 +247,20 @@ class Settings(BaseSettings):
     # raise without a Qdrant tier upgrade.
     byok_upload_max_bytes: int = 5 * 1024 * 1024  # 5 MB per file
     byok_upload_max_files: int = 5  # per session
+    # Hard chunk-count cap per uploaded file. A 50-page PDF can chunk to
+    # 100+ pieces -- on the HF Space CPU Basic each Groq call adds ~2 s
+    # so a single 135-chunk doc can blow past SAR_REQUEST_TIMEOUT_S.
+    # If the parsed file exceeds this cap, the ingest endpoint cleans up
+    # the partial points and returns 413 with a clear message.
+    byok_upload_max_chunks_per_file: int = 60
+    # Skip the LLM-as-judge document grader entirely when BYOK demo mode is on.
+    # The grader makes one Groq call per retrieved chunk to decide "is this
+    # relevant to the query?". On the free Groq tier with a tight 30 RPM
+    # budget the grader frequently returns "no" for genuinely-relevant docs
+    # (rate-limit retry, terse chunks, partial JSON parse), which gives the
+    # visitor a confusing "no docs relevant" refusal even when the retrieval
+    # ranking is correct. Bypass = trust the embedding + RRF ordering.
+    byok_skip_grader: bool = True
     # Extensions allowed on the BYOK upload endpoint. .pdf parsed via PyPDF2;
     # .txt / .md pass through the text loader. OCR / docx / csv stay off to
     # avoid pulling Paddle (~700 MB) into the image.
