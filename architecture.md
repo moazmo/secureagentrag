@@ -474,3 +474,45 @@ The hero claim "HIGH never leaves local Ollama" is **true in self-hosted mode**.
 The frontend renders a `sensitivity: high` badge whenever this happens — the visitor is informed that *for this query, on this deployment, HIGH data was routed to cloud*. Audit row records `synth_provider=groq` and `forced_local=false` for full provenance.
 
 **Recovery path for self-hosted deploys:** unset `SAR_ALLOW_CLOUD_FOR_HIGH` (defaults to `false`). HIGH-classified content will then refuse on the BYOK demo because no Ollama is available; the public demo would lose its HIGH-content answer capability. That's the intended trade — the demo prioritises showing the full pipeline; production deploys prioritise the privacy guarantee.
+
+### 13.5 Public metadata endpoints (the transparency layer)
+
+Two read-only public endpoints surface backend state to the frontend's
+`/corpus` and `/personas` pages. No auth, no BYOK key, no PII. They
+exist so the frontend never hard-codes a value that could drift from
+the server-side dispatch.
+
+| Endpoint | Returns | Backed by |
+|---|---|---|
+| `GET /byok/personas` | The three demo RBAC presets (`engineer`, `compliance`, `executive`) with `clearance_level`, `roles`, `style`, plus the `org_id` + `default` persona. | `_DEMO_PERSONAS` in `interfaces/api.py` — same dict that powers `_persona_to_user_ctx`. |
+| `GET /byok/corpus` | One row per source file in the base `documents` collection: `source_file` (basename), `chunks`, `sensitivity_level`, `roles` (union across chunks). Never includes chunk text — defense-in-depth regression test guards this. | Scrolls the root tenant Qdrant collection (up to 4 pages of 256), groups by `source_file`, role-unions chunks. Fails open on Qdrant outage. |
+
+Frontend pages consume them via thin Vercel Edge proxies at
+`/api/corpus` and `/api/personas`. Pages are server-rendered at request
+time with `dynamic = "force-dynamic"` so cold backends never poison a
+cached HTML response.
+
+### 13.6 Frontend product surface (Y-series, 2026-05-27)
+
+The Vercel deploy now serves five routes plus seven Edge proxies:
+
+| Route | Render | Purpose |
+|---|---|---|
+| `/` | static | Landing page — hero, four-feature card grid, six-step walkthrough, corpus/personas/status link grid, by-the-numbers stats. CTA → `/chat`. |
+| `/chat` | static + client | The BYOK chat UI itself. Was the home page until 2026-05-27 — moved out so first-time visitors get context before the chat surface loads. |
+| `/corpus` | SSR | Live table of the 10 demo docs from `/byok/corpus`. |
+| `/personas` | SSR | Live RBAC inspector from `/byok/personas`. |
+| `/status` | client | Live health probes for Vercel Edge + HF Space `/healthz` + `/readyz` + Edge proxy, polled every 30 s. |
+| `/api/chat` · `/api/chat/stream` · `/api/audit` · `/api/uploads` · `/api/uploads/[fileId]` · `/api/corpus` · `/api/personas` | Edge | Thin proxies → backend `/byok/*` endpoints. |
+
+**Cold-start warmer.** `/api/chat` fires a fire-and-forget GET to the HF
+Space `/healthz` at module load. A freshly cold Vercel Edge instance
+nudges the backend awake while the visitor is still typing, dropping
+the visible 30–60 s cold-start tax to ~1 s by the time the user hits
+Send.
+
+**Suggested follow-up chips.** Each assistant turn with citations
+renders 3 chips below the citations panel: 2 templated from distinct
+citation filenames (`Tell me more about <stem>`) plus 1 persona-
+flavoured generic prompt. Zero LLM calls — pure client-side string
+templating. Engagement boost without burning Groq budget.

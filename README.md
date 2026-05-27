@@ -672,6 +672,7 @@ Delivered:
 - [x] **V-series — Upload + chat quality hardening** — chunk-count cap, session top_k bound, robust JSON parse on Vercel Edge 30 s timeout, eye-comfort palette.
 - [x] **W-series — Sensitivity disclaimer dropped + 429 banner** — owner-key throttle raised 3 → 10/h, dedicated red "Set my API key" banner.
 - [x] **X-series — Groq cost optimisations** — pin `llama-3.1-8b-instant`, kill RAG-fusion, bypass evaluator LLM, router shortcut for short queries; ~2 Groq calls/chat. ADR-030.
+- [x] **Y-series — Web frontend product surface** — split single-page chat into `/`, `/chat`, `/corpus`, `/personas`, `/status`. Two new public backend endpoints (`/byok/corpus`, `/byok/personas`) wired through Edge proxies, plus Vercel-Edge cold-start warmer pinging `/healthz` at module load, client-side suggested-follow-up chips below each answer, robots.txt + sitemap.xml, richer OG/Twitter cards. Live at `secureagentrag-web.vercel.app/{corpus,personas,status}`.
 
 Planned (not yet implemented):
 - [ ] **Phase 8** — 4-minute demo video against the live URL.
