@@ -1,6 +1,6 @@
 # SecureAgentRAG — Architecture Documentation
 
-> 🚀 **Production topology in progress on `deploy/prod-launch`.** The diagrams below describe the **local-dev** architecture (everything in docker-compose on one host). The public-demo production topology — Hostinger landing → Vercel Next.js → Hugging Face Space FastAPI → Qdrant Cloud + Groq — is fully specified in [`launch-plan/01-stack-decisions.md`](./launch-plan/01-stack-decisions.md) and lands here as a new "§ 13. Production topology" section once Phase 7 smoke passes. Read both when reasoning about the running system.
+> 🚀 **Production topology shipped 2026-05-26..27 on `deploy/prod-launch`.** Sections 1–12 below describe the **local-dev** architecture (everything in docker-compose on one host). **§13** is the live production topology: Vercel Next.js → Hugging Face Space FastAPI → Qdrant Cloud + Groq. Read both when reasoning about the running system.
 
 ## 1. System Architecture
 
@@ -380,3 +380,97 @@ graph LR
 - **X-Forwarded-For trust** — the owner-key per-IP throttle reads the leftmost XFF token (production has a single trusted proxy). Without this fix, every HF visitor would share one bucket.
 - **HIGH cloud unlock** — `SAR_ALLOW_CLOUD_FOR_HIGH=true` in `Dockerfile.hf` lets HIGH-classified content synthesize on Groq because the Space has no local Ollama. The frontend labels those answers `sensitivity: high` so the visitor is informed.
 - **/readyz BYOK-aware** — skips the Ollama probe, pings `https://api.groq.com/openai/v1/models` with the owner key instead. The keepalive cron's success criterion mirrors what the demo actually depends on.
+
+### 13.1 BYOK upload pipeline (ADR-029)
+
+Visitor PDFs / TXT / MD enter the system through `/byok/uploads` and land in a per-session Qdrant collection — never the shared base.
+
+```mermaid
+graph LR
+    subgraph Browser
+        Drop[react-dropzone drag-drop]
+        Drawer[Uploads drawer<br/>list + delete]
+    end
+
+    subgraph Vercel Edge
+        EUp[/api/uploads<br/>duplex: half multipart/]
+    end
+
+    subgraph HF Space
+        Endpoint[/byok/uploads/<br/>POST 5MB · 5 files · 60 chunks]
+        Pipe[ingestion/pipeline<br/>chunker → BGE-M3 → upsert]
+        Validate[size + ext + chunk caps<br/>413 / 422 on reject]
+    end
+
+    subgraph Qdrant Cloud
+        Sess[(documents_sess_sid<br/>dense + bm25 sparse<br/>same RBAC filter)]
+    end
+
+    Drop --> EUp
+    EUp -- "X-Session-ID, file" --> Endpoint
+    Endpoint --> Validate
+    Validate -- "OK" --> Pipe
+    Pipe --> Sess
+    Drawer -- "GET /byok/uploads" --> Endpoint
+    Drawer -- "DELETE /byok/uploads/file_id" --> Endpoint
+```
+
+**Dual-collection retrieval.** Every chat fans out to base ∪ session collections in parallel for both dense and sparse, then RRF-fuses the four result sets:
+
+```mermaid
+graph TB
+    Query[User query]
+    Dense[BGE-M3 dense embed]
+    Sparse[BM25 sparse embed]
+
+    Query --> Dense
+    Query --> Sparse
+
+    Dense --> QBase[(documents<br/>top_k=10)]
+    Dense --> QSess[(documents_sess_sid<br/>top_k=10 bounded)]
+    Sparse --> QBase
+    Sparse --> QSess
+
+    QBase --> RRF[RRF fusion<br/>k=60]
+    QSess --> RRF
+    RRF --> TopK[Top-K to grader<br/>or synth in BYOK mode]
+```
+
+The session collection's `top_k` is bounded by `SAR_TOP_K` (not `*2`) to keep the candidate set tight — visitor uploads should *augment* base corpus, not drown it.
+
+### 13.2 Persona presets (`_DEMO_PERSONAS`)
+
+`X-Demo-Persona` header maps to one of three pre-baked RBAC profiles in `interfaces/api.py`. Selected fields below:
+
+| Persona | Clearance | Roles | Synth style |
+|---|---|---|---|
+| `engineer` | 2 | `engineering`, `viewer` | Direct, code-snippet ready, kubectl-friendly |
+| `compliance` | 3 | `compliance`, `legal`, `viewer` | Cite policy IDs, formal tone, flag uncertainty |
+| `executive` | 3 | `executive`, `compliance`, `engineering`, `viewer` | High-level, bullet-first, decision-ready |
+
+`persona_style` rides on `GraphState` from the request through to `synthesizer._build_system_prompt`, where it becomes a system-prompt suffix. The RBAC filter on `clearance + roles` is applied at Qdrant query time, so two personas asking the same query see different citation chips on the frontend.
+
+### 13.3 Cost-optimisation toggles (ADR-030)
+
+Each toggle in `Dockerfile.hf` represents a Groq call eliminated from the pipeline. The full table:
+
+| Toggle | Default (BYOK prod) | Calls saved/chat |
+|---|---|---|
+| `SAR_GROQ_MODEL=llama-3.1-8b-instant` | pinned | – (faster, more TPM headroom) |
+| `SAR_RAG_FUSION_ENABLED=false` | off | -1 (no reformulation LLM call) |
+| `SAR_BYOK_SKIP_EVALUATOR=true` | on | -1 (heuristic confidence) |
+| `SAR_BYOK_SKIP_GRADER=true` | on | -N (no per-doc LLM grade, N ≈ top_k) |
+| `SAR_FAITHFULNESS_GATE_ENABLED=false` | off | -5..10 (no per-sentence NLI) |
+| `SAR_RERANKER_TYPE=none` | off | – (no cross-encoder; CPU disk budget) |
+| router short-query shortcut (≤80 chars) | on | -1 (no classifier LLM) |
+| `SAR_MAX_RETRIES=1` | capped | -1 (no second rewrite) |
+
+**Before:** ~5–6 Groq calls/chat. **After:** ~2 calls/chat (router shortcut + synth). The 30 RPM free-tier budget survives sustained traffic.
+
+### 13.4 Privacy narrative under BYOK mode
+
+The hero claim "HIGH never leaves local Ollama" is **true in self-hosted mode**. The live BYOK demo runs without Ollama (HF Space CPU Basic has no LLM) and explicitly sets `SAR_ALLOW_CLOUD_FOR_HIGH=true` so HIGH-classified content can synthesize on Groq.
+
+The frontend renders a `sensitivity: high` badge whenever this happens — the visitor is informed that *for this query, on this deployment, HIGH data was routed to cloud*. Audit row records `synth_provider=groq` and `forced_local=false` for full provenance.
+
+**Recovery path for self-hosted deploys:** unset `SAR_ALLOW_CLOUD_FOR_HIGH` (defaults to `false`). HIGH-classified content will then refuse on the BYOK demo because no Ollama is available; the public demo would lose its HIGH-content answer capability. That's the intended trade — the demo prioritises showing the full pipeline; production deploys prioritise the privacy guarantee.

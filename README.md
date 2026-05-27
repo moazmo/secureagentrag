@@ -2,7 +2,7 @@
 
 > **🚀 Live demo:** [secureagentrag-web.vercel.app](https://secureagentrag-web.vercel.app) · **API:** [`LeomordKaly-secureagentrag-api.hf.space`](https://LeomordKaly-secureagentrag-api.hf.space/healthz) · **Cost:** $0/mo · **Egypt-tested · no credit card · no cold-start delay**
 >
-> ⚙️ **Production launch in progress** (started 2026-05-25). Public BYOK demo on Next.js + Vercel + Hugging Face Spaces + Qdrant Cloud is live on branch `deploy/prod-launch`. `main` is frozen at `56c8c98` as the last-known-good Streamlit state. Full plan and agent handoff contract in [`launch-plan/`](./launch-plan/README.md).
+> ⚙️ **Production launch shipped** (2026-05-26..27). Public BYOK demo on Next.js 16 + Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier is live on branch `deploy/prod-launch`. 80 launch tasks complete: SSE streaming, session-scoped uploads (dual-collection RRF), persona presets, X-Forwarded-For throttle, audit export, eye-comfort palette, 50%+ Groq RPM cut. **620 tests pass** (+136 from main), **30 ADRs** (24 historical + 4 launch + 2 cost). `main` frozen at `56c8c98`; merge after demo video. See [`launch-plan/`](./launch-plan/README.md) + [`DECISIONS.md`](./DECISIONS.md) ADR-025..030.
 
 ## What the live demo does
 
@@ -186,7 +186,11 @@ graph TB
 | **Sparse Search** | Qdrant native sparse vectors (`bm25` / `splade`) | Same RBAC filter as dense — cross-tenant BM25 bypass is structurally impossible |
 | **Reranking** | Cross-encoder / ColBERTv2 / fine-tuned domain checkpoint | Four-mode factory (`none` / `cross_encoder` / `colbert` / `fine_tuned`) selected by `SAR_RERANKER_TYPE` |
 | **OCR** | PaddleOCR | High-accuracy multilingual OCR for scanned documents and images |
-| **UI** | Streamlit | Rapid prototyping with rich interactive widgets (chat, file upload, admin) |
+| **UI (local dev)** | Streamlit | Rapid prototyping with rich interactive widgets (chat, file upload, admin) |
+| **UI (public demo)** | Next.js 16 + Tailwind v4 + SSE streaming | Production-grade BYOK demo on Vercel Hobby — `secureagentrag-web.vercel.app` |
+| **Backend host (public demo)** | Hugging Face Spaces Docker CPU Basic | $0/mo, 16 GB RAM, 48 h sleep defeated by GitHub Actions cron — ADR-026 |
+| **Vector store (public demo)** | Qdrant Cloud Free Tier (1 GB) | Always-on, sparse + dense, AWS us-east-1 — ADR-028 |
+| **LLM (public demo)** | Groq Free Tier (`llama-3.1-8b-instant`) | 14,400 RPD, 30 RPM, per-IP throttle + visitor BYOK unlock — ADR-030 |
 | **Observability** | Arize Phoenix + structlog | OpenTelemetry-compatible distributed tracing + structured JSON logging |
 | **Evaluation** | Ragas + Custom Metrics | Industry-standard RAG metrics with custom latency/confidence tracking |
 | **Package Manager** | uv | 10-100x faster than pip/Poetry; Rust-based with native lockfile support |
@@ -509,6 +513,33 @@ All settings are managed via environment variables (prefix: `SAR_`):
 | `SAR_FAITHFULNESS_THRESHOLD` | `0.7` | Min entailment score before a sentence counts as supported |
 | `SAR_REQUEST_TIMEOUT_S` | `60` | Wall-clock SLO budget for one pipeline run (`0` disables) |
 
+### BYOK production mode (ADR-025 + ADR-030)
+
+The HF Space Dockerfile sets these. They change the meaning of the pipeline — read the ADRs before flipping.
+
+| Variable | Default (prod) | Description |
+|----------|----------------|-------------|
+| `SAR_BYOK_MODE` | `true` | Master gate: enables per-request key extraction + session collections + cost-cut toggles |
+| `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR` | `10` | Owner-key per-IP throttle |
+| `SAR_SESSION_TTL_HOURS` | `24` | Auto-purge cutoff for `documents_sess_<sid>` collections |
+| `SAR_CORS_ALLOW_ORIGINS` | Vercel URL allowlist | CORS origins (JSON array) |
+| `SAR_BYOK_AUDIT_MAX_ENTRIES` | `50` | Cap on `/byok/audit` response size |
+| `SAR_BYOK_UPLOAD_MAX_BYTES` | `5242880` (5 MB) | Per-file upload cap |
+| `SAR_BYOK_UPLOAD_MAX_FILES` | `5` | Per-session file cap |
+| `SAR_BYOK_UPLOAD_MAX_CHUNKS_PER_FILE` | `60` | Reject chatty PDFs |
+| `SAR_BYOK_UPLOAD_ALLOWED_EXTENSIONS` | `[".txt",".md",".pdf"]` | Upload MIME allowlist |
+| `SAR_BYOK_SKIP_GRADER` | `true` | Bypass per-doc LLM grader (cost) |
+| `SAR_BYOK_SKIP_EVALUATOR` | `true` | Bypass evaluator LLM, use heuristic confidence (cost) |
+| `SAR_GROQ_MODEL` | `llama-3.1-8b-instant` | Pin model (don't default-drift to 70b) |
+| `SAR_RAG_FUSION_ENABLED` | `false` | Disabled for cost (no measurable gain on small corpus) |
+| `SAR_FAITHFULNESS_GATE_ENABLED` | `false` | Disabled for cost; self-hosted flips back |
+| `SAR_RERANKER_TYPE` | `none` | Disabled for CPU Basic disk + small corpus |
+| `SAR_RELEVANCE_THRESHOLD` | `0.55` | Loose to keep small-corpus answers flowing |
+| `SAR_MAX_RETRIES` | `1` | One refine is enough |
+| `SAR_ALLOW_CLOUD_FOR_HIGH` | `true` (prod) | HF Space has no Ollama; HIGH unlocks cloud with UI badge |
+
+> **Self-hosted users:** leave `SAR_BYOK_MODE=false` (default) and the platform behaves exactly as documented above — full faithfulness gate, LLM evaluator, LlamaGuard escalation, RBAC + sensitivity routing with HIGH-stays-local.
+
 ---
 
 ## Development
@@ -577,6 +608,14 @@ Key design choices are documented in [DECISIONS.md](DECISIONS.md). Highlights:
 | ADR-020 | Qdrant native sparse vectors over `rank_bm25` pickle | Sparse runs under the same RBAC filter — cross-tenant bypass structurally impossible |
 | ADR-021 | LlamaGuard 3 as drop-in escalation backend | Purpose-built classifier with S1-S14 taxonomy via `llama-guard3:8b` over Ollama |
 | ADR-022 | Fine-tuned domain reranker as opt-in checkpoint | Training + bench scripts in tree; flip `SAR_RERANKER_TYPE=fine_tuned` after training |
+| ADR-023 | Threshold calibration against labelled gold set | Data-driven confidence + faithfulness thresholds via `evaluation/calibration.json` |
+| ADR-024 | Per-tenant SPLADE isolation + manager cache | `QdrantManager.for_org()` caches per-tenant managers; sparse isolation pinned by regression tests |
+| ADR-025 | BYOK demo mode | Per-request key extraction + session collections + per-IP throttle + persona presets |
+| ADR-026 | Hugging Face Spaces as backend host | $0/mo, 16 GB RAM, 48 h sleep defeated by cron |
+| ADR-027 | Vercel + Next.js 16 frontend | SSE streaming, BYOK drawer + localStorage, eye-comfort palette |
+| ADR-028 | Qdrant Cloud + session collections | Always-on 1 GB free tier; 24 h auto-purge of `documents_sess_<sid>` |
+| ADR-029 | BYOK document uploads + dual-collection RRF | 5 MB / 5 files / 60 chunks; structurally impossible cross-session leakage |
+| ADR-030 | Free-tier Groq cost optimisations | Pin 8b-instant + bypass evaluator/grader/RAG-fusion/faithfulness/reranker — ~2 calls/chat vs 5–6 |
 
 ---
 
@@ -621,8 +660,22 @@ Delivered:
 - [x] **Per-tenant SPLADE isolation + manager cache** — `QdrantManager.for_org(org_id)` now caches per-tenant managers (one HTTP client pool + one `ensure_collection` round-trip per distinct tenant instead of per request). Each per-tenant collection still gets its own dense + sparse vector slot via `ensure_collection`, so cross-tenant sparse leakage is structurally impossible. Three new tests pin the contract. ADR-024.
 - [x] **Threshold calibration against a labelled gold set** — 50-row gold set at `evaluation/golden_set.jsonl` (NIST AI RMF + ACME synthetic + RBAC negatives + out-of-scope + injection probes + bilingual + adversarial). `scripts/calibrate_thresholds.py` sweeps the confidence and faithfulness signals end-to-end, picks the Youden-J-optimal cut-off, and persists to `evaluation/calibration.json`. `config/settings.py::_apply_calibration` loads those values at import; `SAR_CONFIDENCE_THRESHOLD` / `SAR_FAITHFULNESS_THRESHOLD` env still wins. Nightly CI compares `evaluation/baseline.json` against the same gold-set output (>5pp drop fails the build via `evaluation.nightly`). ADR-023.
 
+**P6 — Production launch (shipped 2026-05-26..27):**
+
+- [x] **Phase 1 smoke signups** — HF + Qdrant Cloud + Vercel + Groq + Hostinger inventory verified from Egypt with no credit card.
+- [x] **Phase 2 — BYOK backend mode** — `/byok/chat`, `/byok/chat/stream` (SSE), `/byok/audit`, `/byok/uploads` (GET/POST/DELETE), per-IP throttle on `X-Forwarded-For`, session-scoped Qdrant collections. ADR-025.
+- [x] **Phase 3 — HF Space backend live** — `LeomordKaly-secureagentrag-api.hf.space`, 16 GB CPU Basic, 0.54 s TTFB from Egypt. ADR-026.
+- [x] **Phase 4 — Vercel Next.js 16 frontend live** — `secureagentrag-web.vercel.app`, SSE streaming, BYOK drawer, eye-comfort palette. ADR-027.
+- [x] **Phase 6 — Keepalive cron** — daily GitHub Actions ping at 03:17 UTC defeats HF Space 48 h sleep.
+- [x] **Phase 7 — Demo corpus ingested** — 10 RBAC docs, 138 chunks, 276 points incl. sparse on Qdrant Cloud free tier. ADR-028.
+- [x] **U-series — Visitor document upload** — drag-drop + progress + delete, 5 MB / 5 files / 60 chunks caps, dual-collection RRF retrieval. ADR-029.
+- [x] **V-series — Upload + chat quality hardening** — chunk-count cap, session top_k bound, robust JSON parse on Vercel Edge 30 s timeout, eye-comfort palette.
+- [x] **W-series — Sensitivity disclaimer dropped + 429 banner** — owner-key throttle raised 3 → 10/h, dedicated red "Set my API key" banner.
+- [x] **X-series — Groq cost optimisations** — pin `llama-3.1-8b-instant`, kill RAG-fusion, bypass evaluator LLM, router shortcut for short queries; ~2 Groq calls/chat. ADR-030.
+
 Planned (not yet implemented):
-- *(none — all shipped)*
+- [ ] **Phase 8** — 4-minute demo video against the live URL.
+- [ ] **Phase 9** — merge `deploy/prod-launch` → `main`, tag `v1.0.0-launch`.
 
 ---
 

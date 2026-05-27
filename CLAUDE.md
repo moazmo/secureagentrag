@@ -136,40 +136,67 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ---
 
-## 5. State of the codebase (as of this commit)
+## 5. State of the codebase (as of `e848ecf` on `deploy/prod-launch`)
 
-- **484 tests pass**, 22 skipped (optional-dep gated), 0 failed. Lint + format clean.
-- **~29.5k Python LOC** across 144 files.
-- **9 graph nodes:** router → guardrails → security → retriever → grader → rewriter → synthesizer → faithfulness → evaluator.
-- Streamlit, FastAPI, MCP all share `core.schemas.QueryResponse`.
-- **Hybrid search** uses Qdrant native sparse vectors (BM25 or SPLADE backend). The legacy `rank_bm25` pickle, `utils/file_lock.py`, and the post-fusion RBAC re-check are all gone. Sparse runs under the same RBAC filter as dense — cross-tenant bypass is structurally impossible.
-- **Auth** dispatches HS256 (default, dev) ↔ RS256 (Keycloak/Auth0 via JWKS) on `SAR_JWT_ALGORITHM`.
-- **Guardrails** escalation routes through `regex` → `llm` → `llamaguard` per `SAR_GUARDRAILS_BACKEND`. LlamaGuard 3 maps S1-S14 categories to audit-friendly reasons.
-- **Reranker** factory accepts `none` / `cross_encoder` / `colbert` / `fine_tuned`. Fine-tuned checkpoint produced on RTX 3060 (100k MS-MARCO rows, 1 epoch, AMP fp16): **+1.60pp NDCG@10** vs BGE-Reranker-v2-M3 baseline. Bench: `evaluation/benchmarks/reranker_finetune.md`. Checkpoint dir `data/checkpoints/reranker-domain-v1/` (gitignored). Live default — `.env` pins `SAR_RERANKER_TYPE=fine_tuned`.
-- **Threshold calibration** — `confidence_threshold` + `faithfulness_threshold` are now data-driven via `scripts/calibrate_thresholds.py` against a 50-row labelled gold set (NIST + ACME + RBAC negatives + injection + bilingual + adversarial). Chosen cut-offs live in `evaluation/calibration.json`; `config/settings.py::_apply_calibration` loads them at import. Env override still wins. ADR-023.
-- **24-scenario UI gate (H.1 + H.2) is 24/24 PASS** on this HEAD, evidence under `data/agent_evidence/`.
+- **620 tests pass**, 0 failed. Lint + format clean. (Baseline lifted +136 from 484 during the BYOK launch series.)
+- **~33.8k Python LOC** across 161 files.
+- **30 ADRs** in `DECISIONS.md` (24 historical + ADR-025/026/027/028 promoted from launch drafts + ADR-029 BYOK uploads + ADR-030 Groq cost optimisations).
+- **18 commits ahead of `main`** on `deploy/prod-launch`. `main` frozen at `56c8c98` until launch closes.
+- **Live $0/month production deploy:**
+  - Frontend: `https://secureagentrag-web.vercel.app` — Next.js 16 + Tailwind v4 + SSE streaming on Vercel Hobby
+  - Backend: `https://LeomordKaly-secureagentrag-api.hf.space` — FastAPI BYOK on HF Spaces Docker CPU Basic, 16 GB RAM, 48 h sleep defeated by GitHub Actions cron
+  - Vector store: Qdrant Cloud free tier (1 GB, AWS us-east-1) — 10 demo RBAC docs (138 chunks, 276 points incl. sparse) + per-session collections
+  - LLM: Groq free tier (`llama-3.1-8b-instant`, 14,400 RPD, 30 RPM, per-IP owner throttle + visitor BYOK unlock)
+- **9 graph nodes:** router → guardrails → security → retriever → grader → rewriter → synthesizer → faithfulness → evaluator. Untouched structurally. In BYOK mode several nodes bypass their LLM call for cost (see ADR-030).
+- Streamlit, FastAPI, MCP all share `core.schemas.QueryResponse`. Streamlit is now the **local dev face**; Next.js is the **public production face**.
+- **Hybrid search** uses Qdrant native sparse vectors (BM25 default in production). Cross-tenant + cross-session bypass is structurally impossible.
+- **Auth** dispatches HS256 ↔ RS256 + JWKS via `SAR_JWT_ALGORITHM`. The BYOK demo does not require auth (it has its own session/persona contract).
+- **Guardrails** in production: regex only (LlamaGuard escalation is off in BYOK mode to save Groq calls). Self-hosted deploys flip `SAR_GUARDRAILS_BACKEND=llamaguard` to restore S1-S14 taxonomy.
+- **Reranker** factory accepts `none` / `cross_encoder` / `colbert` / `fine_tuned`. Live production uses `none` (CPU Basic disk budget + small corpus); fine-tuned checkpoint trained on RTX 3060 (+1.60pp NDCG@10) lives at `data/checkpoints/reranker-domain-v1/` (gitignored).
+- **Threshold calibration** — `evaluation/calibration.json` loaded at import via `_apply_calibration`. Env override still wins.
+- **24-scenario UI gate (H.1 + H.2) is 24/24 PASS** on `main`. Live BYOK demo verified end-to-end with kubectl rollback chat returning full citations in 13 s.
 - Recent commits (chronological, newest first):
-  - `700cdc5` feat(eval): P2 threshold calibration against a labelled gold set (ADR-023)
-  - `2d6f6e3` feat(reranker): P1 fine-tune trained — +1.60pp NDCG@10 vs baseline
-  - `29ff128` fix(scripts): persist reranker fine-tune weights + UTF-8 console output
-  - `1bcde26` test(h2-gate): 12/12 advanced real-world scenarios PASS
-  - `2f0e28d` feat(retrieval): fine-tuned reranker scaffolding (P4)
-  - `45ebfde` refactor(inference): consolidate Groq + OpenAI clients via shared parent (-203 LOC)
-  - `6722772` refactor(ui): extract chat service helpers into app/chat_service.py (-162 LOC in view)
-  - `038fdae` feat(guardrails): LlamaGuard 3 as drop-in escalation backend (P3)
-  - `5cda492` docs(evidence): 24-scenario UI gate H.1 PASS (H.2 was deferred at the time)
-  - `1a22ab8` docs: README + CLAUDE.md + architecture + ADR-019/020 (SPLADE + RS256)
-  - `b43bc66` feat(ops): Keycloak under docker-compose auth profile + realm export
-  - `e80a519` feat(auth): RS256 + JWKS verification path with in-memory key cache
-  - `26500ae` feat(retrieval): Qdrant native sparse vectors replace rank_bm25 pickle
+  - `e848ecf` fix(byok): cut Groq RPM pressure by 50% — pin 8b-instant, kill RAG-fusion, bypass evaluator LLM, router shortcut (ADR-030)
+  - `7b6997a` fix(byok): drop sensitivity disclaimer + actionable LLM-fail copy (W-series)
+  - `ac61654` fix(byok): upload + chat quality hardening for free-tier Groq (V-series)
+  - `1c8c7ad` feat(byok): visitor document upload with dual-collection retrieval (ADR-029, U-series)
+  - `1ae38dc` feat(byok): streaming SSE + audit export + persona prompts + XFF + HIGH unlock (A-series)
+  - `cd4bc80` docs(smoke): drop key-rotation TODO from Groq smoke
+  - `f7b455d` revert(landing): drop Hostinger landing + `app.eilm.live` custom domain
+  - `d8cb15f` deploy(corpus): phase 7 — ingest 10 demo docs + RBAC live
+  - `9bc9526` ci(keepalive): daily cron pings HF Space + Vercel
+  - `1e80b8b` deploy(vercel): phase 4 frontend live (ADR-027)
+  - `9a4e3ea` deploy(hf): phase 3 backend live (ADR-026)
+  - `9b430cc` feat(byok): phase 2 backend BYOK mode — `/byok/chat` live, 113 new tests (ADR-025)
+  - `5edc858`/`7890234`/`05e6d6e`/`cb3cdd3` deploy: phase 1 smoke signups (HF + Vercel + Groq + Qdrant Cloud + Hostinger inventory)
+  - `d6625d8` docs(launch): P6 plan + handoff contract
+  - `56c8c98` *(frozen `main` HEAD)* feat(retrieval): cache per-tenant QdrantManagers + pin sparse isolation (ADR-024)
 
 ---
 
-## 6. Genuinely remaining work (audited 2026-05-23)
+## 5.1 BYOK production mode (the live demo's runtime contract)
 
-*(P1 through P5 from the prior plan have all shipped — see "Recently
-shipped" below. The next-up backlog is a clean slate; pick from the
-private/roadmap.md "Production launch plan" section when ready.)*
+Lives behind `SAR_BYOK_MODE=true`. The HF Space Dockerfile sets it; local dev does not.
+
+- **Request shape:** `X-Demo-Persona` (engineer / compliance / executive — preset RBAC), `X-Session-ID` (UUID, drives session collection), `X-User-LLM-Key` (optional — visitor BYOK unlock), `X-User-Provider` (groq / openai / anthropic), `X-User-Ollama-URL` (optional). Extracted in `interfaces/byok.py`.
+- **Endpoints (under `/byok/`):** `chat` (sync JSON), `chat/stream` (SSE: open|phase|token|blocked|final|error), `audit` (last-N session-scoped rows for export), `uploads` GET/POST/DELETE (5 MB · 5 files · 60 chunks/file · txt/md/pdf — see ADR-029).
+- **Per-IP throttle:** `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10` against owner key. Visitor BYOK bypasses. IP from `X-Forwarded-For` leftmost token (HF Spaces reverse proxy masks `request.client.host`).
+- **Persona presets:** `_DEMO_PERSONAS` in `interfaces/api.py` maps each persona to `(clearance, roles, style)`. Style is threaded into the synth system prompt via `GraphState.persona_style`.
+- **Cost-cut toggles (ADR-030):** `SAR_GROQ_MODEL=llama-3.1-8b-instant`, `SAR_RAG_FUSION_ENABLED=false`, `SAR_BYOK_SKIP_EVALUATOR=true`, `SAR_BYOK_SKIP_GRADER=true`, `SAR_FAITHFULNESS_GATE_ENABLED=false`, `SAR_RERANKER_TYPE=none`, `SAR_RELEVANCE_THRESHOLD=0.55`, `SAR_MAX_RETRIES=1`, `SAR_RERANK_TOP_K=10`. Router classifier short-circuits queries ≤80 chars to `query_type="simple"`. Net effect: ~2 Groq calls/chat vs ~5–6 before.
+- **HIGH-on-cloud unlock:** `SAR_ALLOW_CLOUD_FOR_HIGH=true` in production because the HF Space has no Ollama. Frontend renders a `sensitivity:` badge so the visitor is informed. *Hero claim "HIGH never leaves local" is true in self-hosted mode only.*
+- **Session collections:** `documents_sess_<sanitized_session_id>`. Dual-collection retrieval (base ∪ session) under one RBAC filter; RRF-fused. 24 h TTL via `SAR_SESSION_TTL_HOURS=24` + `scripts/byok_session_purge.py`.
+- **Audit:** session-scoped only (`/byok/audit` filters `user_id == "demo-<sid>"`). SHA-256 chain intact; downloadable JSONL.
+- **Sensitivity disclaimer suppressed** in BYOK mode (both prompt-side gate in `_build_system_prompt` and post-synth `_add_disclaimers` early-return). The frontend's `sensitivity:` badge is the user-facing signal.
+- **No Phoenix / Postgres / Ollama in BYOK mode.** Audit on /tmp; checkpointer in-memory.
+
+## 6. Genuinely remaining work (audited 2026-05-27)
+
+The 80-task BYOK launch is complete. Pipeline survives Egypt-from-mobile traffic on $0/mo. What's left:
+
+- **Phase 8 — record 4-minute demo video** against `secureagentrag-web.vercel.app`. Owner action. Script lives in `launch-plan/08-demo-video.md`.
+- **Phase 9 — merge `deploy/prod-launch` → `main`, tag `v1.0.0-launch`**. After Phase 8.
+- **Optional:** upload fine-tuned reranker to `LeomordKaly/secureagentrag-reranker-v1` HF Hub model repo and flip `SAR_RERANKER_TYPE=fine_tuned` on the Space. Skipped for now — 10-doc corpus does not benefit materially.
+- **Optional:** selective guardrails escalation (regex hit → LlamaGuard on suspicious only). Would catch unicode-obfuscation without burning Groq budget on every chat.
 
 **Recently shipped** (was in this section, now done):
 - ✅ **Per-tenant SPLADE manager cache** — `QdrantManager.for_org(org_id)` now caches per-tenant managers; cross-tenant sparse isolation is pinned by 3 new regression tests. ADR-024 (2026-05-23).
@@ -237,6 +264,11 @@ These rules apply to every change, no exceptions:
 | Streamlit blank or `OSError [Errno 22]` | `utils/logging.py` (bootstrap at import) |
 | Audit chain breaks | `utils/audit.py::compute_hash`, `scripts/verify_audit_chain.py` |
 | Cloud router never used | `inference/router.py`, `query_sensitivity` in state |
+| **Groq 429 on every BYOK chat** | `Dockerfile.hf` ADR-030 env vars + `inference/router.py::_get_model_for_provider` + `core/agents/evaluator.py` skip flag + `core/agents/retriever.py` grader-bypass branch |
+| **Upload returns non-JSON** (Vercel Edge 30 s timeout) | `secureagentrag-web/src/lib/uploads.ts` text-then-parse fallback |
+| **Sensitivity disclaimer in BYOK response** | `core/agents/synthesizer.py::_build_system_prompt` byok-mode gate + `_add_disclaimers` early-return |
+| **Per-IP throttle bucket shared across visitors** | `interfaces/byok.py::client_ip_from_request` must read `X-Forwarded-For` leftmost token (HF reverse proxy masks `request.client.host`) |
+| **BYOK upload 6 MB rejection unclear** | `interfaces/api.py /byok/uploads` raises 413 with chunk + size context; frontend maps to actionable copy |
 
 ---
 

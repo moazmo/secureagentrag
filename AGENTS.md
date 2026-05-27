@@ -21,7 +21,7 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
 ### Before
 1. `git status` — must be clean. Don't start work on a dirty tree.
 2. `git pull origin main` — make sure you're on the latest.
-3. `uv run pytest -q` — must be **484+ passed, 0 failed** (current baseline: 484 passed, 22 skipped — the skips are optional-dep gated; never regress). If it's not, stop and fix the baseline first.
+3. `uv run pytest -q` — must be **620+ passed, 0 failed** (current baseline: 620 passed — the BYOK launch series lifted this from 484; never regress). If it's not, stop and fix the baseline first.
 4. `uv run ruff check . && uv run ruff format --check .` — both clean.
 5. Read the relevant module top-to-bottom before touching it. Read its test file.
 6. Have a working `qdrant` (`docker compose up -d qdrant`) and `ollama serve` running. If you need cloud, ensure `SAR_GROQ_API_KEY` is in `.env`.
@@ -41,6 +41,10 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
    - **HS256 ↔ RS256 dispatch** is keyed on `settings.jwt_algorithm`. `_verify_jwt` resolves the verification key once at the top — don't sniff the algorithm again deeper in the call stack.
    - **LlamaGuard 3 wants its exact chat template.** If you change the prompt string in `core/agents/guardrails_llamaguard.py::_prompt`, score against `jailbreakbench/JBB-Behaviors` to confirm you didn't regress recall.
    - **`data/agent_evidence/` is committed; `data/agent_evidence/real_corpus/` is NOT** (large arXiv PDFs). The h2_gate script re-downloads on demand.
+   - **BYOK mode is a system flag, not a feature flag.** `SAR_BYOK_MODE=true` changes the *meaning* of half the settings: faithfulness gate off, LLM evaluator off, LLM grader off, RAG-fusion off, reranker off, sensitivity disclaimer off. See ADR-025 + ADR-030. Don't accidentally re-enable these on the HF Space — Groq 30 RPM will 429 the next chat.
+   - **HF Spaces hides the visitor IP.** `request.client.host` is the reverse proxy; the real client lives in `X-Forwarded-For` (leftmost token). Without `interfaces/byok.py::client_ip_from_request`, every visitor shares one throttle bucket.
+   - **Vercel Edge 30 s timeout < backend `SAR_REQUEST_TIMEOUT_S=180`.** On long pipelines the Edge cuts first and returns HTML, not JSON. Frontend must do text-then-parse on every backend call — see `secureagentrag-web/src/lib/uploads.ts`.
+   - **`HybridSearcher` attribute is `_embedder`, not `_embeddings`.** Pre-existing trap caught + fixed in the U-series upload work. If you reference the wrong name the server 500s on every upload.
 
 ### After
 1. `uv run pytest -q` — green.
@@ -499,6 +503,67 @@ Any FAIL row blocks the PR.
 
 ---
 
+#### H.3 Production-only BYOK scenarios (against live HF Space + Vercel)
+
+The H.1 + H.2 grid validates the **self-hosted** stack. The live BYOK
+demo runs a different topology (no Ollama, faithfulness/evaluator/grader
+off, HIGH-on-cloud unlocked, per-IP throttle, session collections).
+These 8 scenarios cover what only the live deploy can prove. Run them
+against `secureagentrag-web.vercel.app` after any `Dockerfile.hf` or
+`interfaces/api.py /byok/*` change.
+
+25. **Owner-key chat round-trip from Egypt.** No headers set.
+    Expected: 200, SSE tokens stream, citations chip non-empty, footer
+    shows `groq · 8b`, latency < 20 s.
+
+26. **Per-IP throttle kicks at 11th request in the hour.** Same IP, 10
+    chats succeed, 11th returns 429 with `Retry-After` and the frontend
+    renders the dedicated red banner with "🔑 Set my API key" CTA.
+
+27. **Visitor BYOK key bypasses throttle.** Paste a personal Groq key
+    via the drawer, fire 15 chats in a minute. Zero 429s. Header
+    redaction regression: confirm `/byok/audit` export contains no
+    `gsk_*` substrings.
+
+28. **Persona switch alters retrieval.** Same query "rollback procedure
+    for checkout-service" run as engineer → compliance → executive.
+    Citation source files differ (RBAC payload filter is active). All
+    three answer; none refuses.
+
+29. **Upload → chat → cite round-trip.** Upload `Discrete_Mathematics_
+    Final_Revision.pdf` (~600 KB → ~56 chunks). Ask a question whose
+    answer requires the uploaded doc. Confirm answer cites the
+    uploaded file (citation chip shows the visitor's filename, not just
+    base corpus docs).
+
+30. **Upload caps hold.** Upload a 6 MB file → 413. Upload a 6th file
+    in one session → 422. Upload a chatty PDF with >60 chunks → 422
+    with chunk count in the error.
+
+31. **Session purge after 24 h.** Manually back-date a session
+    collection's `created_at` payload, run
+    `scripts/byok_session_purge.py`, confirm only the expired
+    collection is dropped, base `documents` untouched.
+
+32. **HF Space cold start.** Disable the GitHub Actions cron for 49 h
+    (or wait), hit `/healthz` cold. First request waits 30–60 s, second
+    is normal. Confirm the frontend shows the "warming up" loading
+    state rather than a hard error.
+
+Evidence directory addition:
+
+```
+data/agent_evidence/
+├── 25_owner_chat.png
+├── 26_throttle_429.png
+├── 27_byok_bypass.png
+├── 28_persona_swap.png
+├── 29_upload_chat.png
+├── 30_upload_caps.txt
+├── 31_session_purge.txt
+└── 32_cold_start.txt
+```
+
 ---
 
 ## 5. Commit style
@@ -540,7 +605,7 @@ Types: `feat | fix | docs | style | refactor | test | chore | perf | build | ci`
 - One-line bullet for any breaking change or migration step.
 
 ## Test plan
-- [ ] uv run pytest -q  → 484+ passed
+- [ ] uv run pytest -q  → 620+ passed
 - [ ] uv run ruff check .  → All checks passed!
 - [ ] uv run ruff format --check .  → clean
 - [ ] (Feature-specific real-data test from section 4)

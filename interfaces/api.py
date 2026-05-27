@@ -267,6 +267,105 @@ if _FASTAPI_AVAILABLE:
             preset = _DEMO_PERSONAS.get((creds.demo_persona or "").lower())
             return (preset or {}).get("style", "") if preset else ""
 
+        # ── Public demo metadata endpoints (no auth, no BYOK key needed) ──
+        # Lightweight read-only endpoints that power the public corpus +
+        # personas + status pages in the frontend. They expose only
+        # metadata that is already implied by the demo (filename, roles,
+        # sensitivity, chunk counts) -- nothing that could leak content.
+        @app.get("/byok/personas", tags=["byok"])
+        async def byok_personas() -> dict:
+            """Return the three preset RBAC personas + their synth styles.
+
+            Single source of truth for the frontend ``/personas`` page so
+            the UI never drifts from the actual server-side dispatch in
+            ``_persona_to_user_ctx``.
+            """
+            return {
+                "items": [
+                    {
+                        "key": key,
+                        "label": key.capitalize(),
+                        "clearance_level": preset["clearance_level"],
+                        "roles": list(preset["roles"]),
+                        "style": preset["style"],
+                    }
+                    for key, preset in _DEMO_PERSONAS.items()
+                ],
+                "default": "engineer",
+                "org_id": _DEMO_ORG_ID,
+            }
+
+        @app.get("/byok/corpus", tags=["byok"])
+        async def byok_corpus() -> dict:
+            """Summarise the base demo corpus -- source files + metadata.
+
+            Scrolls the root tenant Qdrant collection (the 10 hand-curated
+            demo docs) and groups points by ``source_file``. Returns one
+            row per file with the chunk count, sensitivity label, and
+            roles -- never the chunk text. Visitor uploads under
+            ``documents_sess_<sid>`` are NOT included (those live in the
+            session collection and are surfaced via ``/byok/uploads``).
+            """
+            from core.agents.retriever import _get_hybrid_searcher
+
+            files: dict[str, dict] = {}
+            try:
+                searcher = _get_hybrid_searcher()
+                # The root manager (``for_org`` of the demo org) points at
+                # the base demo collection. Multi-tenant mode wraps the
+                # name as ``documents_demo``.
+                qdrant = searcher._qdrant.for_org(_DEMO_ORG_ID)  # type: ignore[attr-defined]
+                client = qdrant.client
+                collection = qdrant.collection_name
+                next_offset = None
+                pages = 0
+                # Scroll up to 4 pages of 256 -- the demo corpus is ~140
+                # chunks today so one page covers it. Guard against a
+                # runaway scroll if someone later expands the corpus past
+                # ~1k chunks.
+                while pages < 4:
+                    points, next_offset = client.scroll(
+                        collection_name=collection,
+                        limit=256,
+                        with_payload=True,
+                        with_vectors=False,
+                        offset=next_offset,
+                    )
+                    for p in points:
+                        payload = p.payload or {}
+                        src = payload.get("source_file") or "unknown"
+                        base_name = src.split("/")[-1].split("\\")[-1]
+                        roles = payload.get("roles") or []
+                        sensitivity = payload.get("sensitivity_level") or "low"
+                        item = files.setdefault(
+                            src,
+                            {
+                                "source_file": base_name,
+                                "chunks": 0,
+                                "sensitivity_level": sensitivity,
+                                "roles": list(roles),
+                            },
+                        )
+                        item["chunks"] += 1
+                        # Roles can vary across chunks of the same file in
+                        # principle; union them so the visitor sees the
+                        # widest access required to retrieve the file.
+                        for r in roles:
+                            if r not in item["roles"]:
+                                item["roles"].append(r)
+                    pages += 1
+                    if not next_offset:
+                        break
+            except Exception as exc:
+                logger.warning("byok_corpus_list_failed", error=str(exc))
+            sorted_items = sorted(files.values(), key=lambda f: f["source_file"].lower())
+            return {
+                "collection": "documents",
+                "count": len(sorted_items),
+                "total_chunks": sum(f["chunks"] for f in sorted_items),
+                "items": sorted_items,
+            }
+
         from pydantic import BaseModel as _ByokBaseModel
 
         class _ByokChatBody(_ByokBaseModel):
@@ -453,20 +552,12 @@ if _FASTAPI_AVAILABLE:
                                 "guardrails_passed": st.get("guardrails_passed", True),
                                 "security_passed": st.get("security_passed", True),
                                 "documents_seen_total": len(st.get("documents", [])),
-                                "documents_used_total": len(
-                                    st.get("relevant_documents", [])
-                                ),
-                                "faithfulness_ratio": float(
-                                    st.get("faithfulness_ratio", 1.0)
-                                ),
-                                "confidence_score": float(
-                                    st.get("confidence_score", 0.0)
-                                ),
+                                "documents_used_total": len(st.get("relevant_documents", [])),
+                                "faithfulness_ratio": float(st.get("faithfulness_ratio", 1.0)),
+                                "confidence_score": float(st.get("confidence_score", 0.0)),
                                 "synth_provider": st.get("synth_provider", ""),
                                 "synth_model": st.get("synth_model", ""),
-                                "synth_latency_ms": float(
-                                    st.get("synth_latency_ms", 0.0)
-                                ),
+                                "synth_latency_ms": float(st.get("synth_latency_ms", 0.0)),
                                 "trace": [
                                     {k: v for k, v in e.items() if k in {"node", "action"}}
                                     for e in st.get("audit_trail", [])
@@ -476,18 +567,15 @@ if _FASTAPI_AVAILABLE:
                                 # Include the full QueryResponse shape so the
                                 # frontend reaches parity with the non-stream
                                 # endpoint (citations + provenance + blocked).
-                                payload["response"] = QueryResponse.from_state(
-                                    st
-                                ).model_dump(mode="json")
+                                payload["response"] = QueryResponse.from_state(st).model_dump(
+                                    mode="json"
+                                )
                         else:
                             payload = evt
                         yield f"event: {etype}\ndata: {json.dumps(payload)}\n\n"
                 except Exception as exc:  # pragma: no cover -- defensive
                     logger.exception("byok_stream_failed", error=str(exc))
-                    yield (
-                        "event: error\n"
-                        f"data: {json.dumps({'message': 'stream_failed'})}\n\n"
-                    )
+                    yield (f"event: error\ndata: {json.dumps({'message': 'stream_failed'})}\n\n")
                 # Persist audit row at the end of the stream so /byok/audit
                 # surfaces the session's history even when the visitor
                 # disconnects before the final frame.
@@ -508,9 +596,7 @@ if _FASTAPI_AVAILABLE:
                             synth_provider=resp.provenance.provider,
                             synth_model=resp.provenance.model,
                             faithfulness_ratio=final_state.get("faithfulness_ratio", 1.0),
-                            documents_used=len(
-                                final_state.get("relevant_documents", [])
-                            ),
+                            documents_used=len(final_state.get("relevant_documents", [])),
                             stream=True,
                         )
                     except Exception as exc:  # pragma: no cover
@@ -541,9 +627,7 @@ if _FASTAPI_AVAILABLE:
             """
             limit = max(0, int(settings.byok_audit_max_entries))
             if limit == 0:
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, detail="audit export disabled"
-                )
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="audit export disabled")
             today = date.today().isoformat()
             entries = audit_logger.get_entries(
                 start_date=today,
@@ -669,9 +753,7 @@ if _FASTAPI_AVAILABLE:
                         },
                     )
             if len(buf) == 0:
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST, detail={"reason": "empty_file"}
-                )
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"reason": "empty_file"})
 
             # ── 2. Enforce per-session file-count cap ───────────────────
             existing = _list_session_uploads(creds)
@@ -694,8 +776,7 @@ if _FASTAPI_AVAILABLE:
 
             file_id = _uuid.uuid4().hex
             safe_name = (
-                "".join(c if (c.isalnum() or c in "._-") else "_" for c in filename)
-                or "upload"
+                "".join(c if (c.isalnum() or c in "._-") else "_" for c in filename) or "upload"
             )
             tmp_dir = _tempfile.mkdtemp(prefix=f"byok_{creds.session_id}_")
             tmp_path = _os.path.join(tmp_dir, safe_name)
@@ -772,9 +853,7 @@ if _FASTAPI_AVAILABLE:
                             points=list(result.point_ids),
                         )
                     except Exception as exc:
-                        logger.warning(
-                            "byok_upload_set_payload_failed", error=str(exc)
-                        )
+                        logger.warning("byok_upload_set_payload_failed", error=str(exc))
 
                 # ── 5. Audit ────────────────────────────────────────────
                 try:
@@ -783,8 +862,7 @@ if _FASTAPI_AVAILABLE:
                         org_id=_DEMO_ORG_ID,
                         query=f"[upload] {safe_name}",
                         response_summary=(
-                            f"ingested {result.num_chunks} chunks "
-                            f"from {len(buf)} bytes"
+                            f"ingested {result.num_chunks} chunks from {len(buf)} bytes"
                         ),
                         sensitivity="low",
                         status=result.status,
@@ -824,17 +902,11 @@ if _FASTAPI_AVAILABLE:
             client = qdrant.client
             collection = qdrant.collection_name
             flt = Filter(
-                must=[
-                    FieldCondition(
-                        key="source_file_id", match=MatchValue(value=file_id)
-                    )
-                ]
+                must=[FieldCondition(key="source_file_id", match=MatchValue(value=file_id))]
             )
             try:
                 # Count before delete so we can report what was dropped.
-                count_resp = client.count(
-                    collection_name=collection, count_filter=flt, exact=True
-                )
+                count_resp = client.count(collection_name=collection, count_filter=flt, exact=True)
                 deleted = int(getattr(count_resp, "count", 0))
                 client.delete(collection_name=collection, points_selector=flt)
             except Exception as exc:
