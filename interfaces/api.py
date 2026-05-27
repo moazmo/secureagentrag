@@ -327,6 +327,7 @@ if _FASTAPI_AVAILABLE:
                 # Visitor's chosen provider when present; falls back to env.
                 override_provider=creds.safe_provider(),
                 persona_style=_persona_style(creds),
+                byok_session_id=creds.session_id,
             )
             elapsed_ms = (_t.perf_counter() - _t0) * 1000
             response = QueryResponse.from_state(state)
@@ -431,6 +432,7 @@ if _FASTAPI_AVAILABLE:
                         prefer_cloud=body.prefer_cloud,
                         override_provider=creds.safe_provider(),
                         persona_style=_persona_style(creds),
+                        byok_session_id=creds.session_id,
                     ):
                         etype = evt.get("type", "unknown")
                         # Reshape the heavy phase/final payload -- raw GraphState
@@ -556,6 +558,263 @@ if _FASTAPI_AVAILABLE:
                 "items": [e.model_dump(mode="json") for e in entries],
             }
 
+        # ── BYOK upload endpoints ────────────────────────────────────────
+        from fastapi import File, UploadFile
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+        from core.agents.retriever import _get_hybrid_searcher
+        from ingestion.metadata import IngestRequest, SensitivityLevel
+        from ingestion.pipeline import IngestionPipeline
+
+        def _session_qdrant_for_creds(creds: ByokCreds):
+            """Return a QdrantManager bound to the visitor's session collection."""
+            searcher = _get_hybrid_searcher()
+            return searcher._qdrant.for_session(creds.session_id)  # type: ignore[attr-defined]
+
+        def _list_session_uploads(creds: ByokCreds) -> list[dict]:
+            """Group session-collection points by `source_file` -> upload rows."""
+            qdrant = _session_qdrant_for_creds(creds)
+            client = qdrant.client
+            collection = qdrant.collection_name
+            files: dict[str, dict] = {}
+            try:
+                # Single scroll; the cap is 5 files * O(low chunks) so a single
+                # page covers it. Limit at 1000 points is defensive only.
+                points, _next = client.scroll(
+                    collection_name=collection,
+                    limit=1000,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                for p in points:
+                    payload = p.payload or {}
+                    src = payload.get("source_file") or ""
+                    # Reduce absolute paths down to a basename + sha so the
+                    # visitor sees the filename they uploaded, not the
+                    # container's tmp path.
+                    base_name = src.split("/")[-1].split("\\")[-1]
+                    item = files.setdefault(
+                        src,
+                        {
+                            "file_id": payload.get("source_file_id", base_name),
+                            "filename": base_name,
+                            "source_file": src,
+                            "chunks": 0,
+                            "first_ingested": payload.get("ingested_at"),
+                        },
+                    )
+                    item["chunks"] += 1
+            except Exception as exc:
+                logger.warning("byok_uploads_list_failed", error=str(exc))
+            return list(files.values())
+
+        @app.get("/byok/uploads", tags=["byok"])
+        async def byok_uploads_list(
+            request: _FastApiRequest,
+            creds: Annotated[ByokCreds, Depends(extract_byok)],
+        ) -> dict:
+            uploads = _list_session_uploads(creds)
+            return {
+                "session_id": creds.session_id,
+                "count": len(uploads),
+                "max_files": settings.byok_upload_max_files,
+                "max_bytes": settings.byok_upload_max_bytes,
+                "allowed_extensions": list(settings.byok_upload_allowed_extensions),
+                "items": uploads,
+            }
+
+        @app.post("/byok/uploads", tags=["byok"])
+        async def byok_uploads_ingest(
+            request: _FastApiRequest,
+            file: UploadFile = File(...),
+            creds: ByokCreds = Depends(extract_byok),
+        ) -> dict:
+            """Accept a multipart upload from the BYOK visitor.
+
+            The file is parsed by the existing ``ingestion.pipeline``, chunked,
+            embedded, and upserted into the visitor's session-scoped Qdrant
+            collection (``documents_sess_<sid>``). Visitor uploads are tagged
+            ``org_id="demo"`` + roles=["viewer", ...all personas] +
+            sensitivity_level=LOW so every demo persona can see them; the
+            visitor's session collection is the isolation boundary.
+            """
+            # ── 1. Validate ext + size ──────────────────────────────────
+            filename = file.filename or "upload"
+            ext = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
+            allowed = {e.lower() for e in settings.byok_upload_allowed_extensions}
+            if ext not in allowed:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "reason": "unsupported_extension",
+                        "extension": ext,
+                        "allowed": sorted(allowed),
+                    },
+                )
+            # Read with a hard cap; abort on first byte over the limit.
+            max_bytes = int(settings.byok_upload_max_bytes)
+            buf = bytearray()
+            while True:
+                chunk = await file.read(64 * 1024)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                if len(buf) > max_bytes:
+                    raise HTTPException(
+                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail={
+                            "reason": "file_too_large",
+                            "limit_bytes": max_bytes,
+                        },
+                    )
+            if len(buf) == 0:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, detail={"reason": "empty_file"}
+                )
+
+            # ── 2. Enforce per-session file-count cap ───────────────────
+            existing = _list_session_uploads(creds)
+            if len(existing) >= int(settings.byok_upload_max_files):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    detail={
+                        "reason": "upload_quota_exceeded",
+                        "max_files": settings.byok_upload_max_files,
+                        "hint": "Delete an existing upload first.",
+                    },
+                )
+
+            # ── 3. Spool to temp file -- the ingestion pipeline reads from disk.
+            import os as _os
+            import tempfile as _tempfile
+            import uuid as _uuid
+            from datetime import UTC as _UTC
+            from datetime import datetime as _datetime
+
+            file_id = _uuid.uuid4().hex
+            safe_name = (
+                "".join(c if (c.isalnum() or c in "._-") else "_" for c in filename)
+                or "upload"
+            )
+            tmp_dir = _tempfile.mkdtemp(prefix=f"byok_{creds.session_id}_")
+            tmp_path = _os.path.join(tmp_dir, safe_name)
+            try:
+                with open(tmp_path, "wb") as fh:
+                    fh.write(bytes(buf))
+
+                # ── 4. Build session-scoped pipeline + ingest ───────────
+                searcher = _get_hybrid_searcher()
+                sess_qdrant = searcher._qdrant.for_session(creds.session_id)  # type: ignore[attr-defined]
+                pipeline = IngestionPipeline(
+                    qdrant_manager=sess_qdrant,
+                    embedding_service=searcher._embedder,  # type: ignore[attr-defined]
+                    sparse_service=searcher._sparse,  # type: ignore[attr-defined]
+                )
+                req = IngestRequest(
+                    file_path=tmp_path,
+                    user_id=f"demo-{creds.session_id}",
+                    org_id=_DEMO_ORG_ID,
+                    sensitivity_level=SensitivityLevel.LOW,
+                    # Visible to every demo persona inside the visitor's session.
+                    roles=[
+                        "viewer",
+                        "engineering",
+                        "compliance",
+                        "legal",
+                        "executive",
+                    ],
+                )
+                result = await pipeline.ingest_document(req)
+                # Tag every newly-upserted chunk with the file_id + ingested_at
+                # so the list and delete endpoints can group by file.
+                if result.point_ids:
+                    try:
+                        sess_qdrant.client.set_payload(
+                            collection_name=sess_qdrant.collection_name,
+                            payload={
+                                "source_file_id": file_id,
+                                "ingested_at": _datetime.now(_UTC).isoformat(),
+                                "original_filename": safe_name,
+                            },
+                            points=list(result.point_ids),
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "byok_upload_set_payload_failed", error=str(exc)
+                        )
+
+                # ── 5. Audit ────────────────────────────────────────────
+                try:
+                    audit_logger.log_query(
+                        user_id=f"demo-{creds.session_id}",
+                        org_id=_DEMO_ORG_ID,
+                        query=f"[upload] {safe_name}",
+                        response_summary=(
+                            f"ingested {result.num_chunks} chunks "
+                            f"from {len(buf)} bytes"
+                        ),
+                        sensitivity="low",
+                        status=result.status,
+                        latency_ms=result.processing_time_seconds * 1000,
+                        action_hint="upload",
+                        file_id=file_id,
+                        filename=safe_name,
+                        chunks=result.num_chunks,
+                    )
+                except Exception as exc:
+                    logger.warning("byok_upload_audit_failed", error=str(exc))
+
+                return {
+                    "session_id": creds.session_id,
+                    "file_id": file_id,
+                    "filename": safe_name,
+                    "status": result.status,
+                    "chunks": result.num_chunks,
+                    "errors": result.errors,
+                    "processing_time_seconds": result.processing_time_seconds,
+                }
+            finally:
+                # Always purge the temp file -- visitor content never lingers on disk.
+                try:
+                    _os.remove(tmp_path)
+                    _os.rmdir(tmp_dir)
+                except OSError:
+                    pass
+
+        @app.delete("/byok/uploads/{file_id}", tags=["byok"])
+        async def byok_uploads_delete(
+            request: _FastApiRequest,
+            file_id: str,
+            creds: Annotated[ByokCreds, Depends(extract_byok)],
+        ) -> dict:
+            qdrant = _session_qdrant_for_creds(creds)
+            client = qdrant.client
+            collection = qdrant.collection_name
+            flt = Filter(
+                must=[
+                    FieldCondition(
+                        key="source_file_id", match=MatchValue(value=file_id)
+                    )
+                ]
+            )
+            try:
+                # Count before delete so we can report what was dropped.
+                count_resp = client.count(
+                    collection_name=collection, count_filter=flt, exact=True
+                )
+                deleted = int(getattr(count_resp, "count", 0))
+                client.delete(collection_name=collection, points_selector=flt)
+            except Exception as exc:
+                raise HTTPException(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"delete_failed: {exc!s}",
+                ) from exc
+            return {
+                "session_id": creds.session_id,
+                "file_id": file_id,
+                "deleted_chunks": deleted,
+            }
+
     @app.post("/query", response_model=QueryResponse, tags=["rag"])
     async def query_endpoint(
         body: QueryRequest,
@@ -592,7 +851,7 @@ if _FASTAPI_AVAILABLE:
         searcher = _get_hybrid_searcher()
         pipeline = IngestionPipeline(
             qdrant_manager=searcher._qdrant,  # type: ignore[attr-defined]
-            embedding_service=searcher._embeddings,  # type: ignore[attr-defined]
+            embedding_service=searcher._embedder,  # type: ignore[attr-defined]
             sparse_service=searcher._sparse,  # type: ignore[attr-defined]
         )
         req = IngestRequest(

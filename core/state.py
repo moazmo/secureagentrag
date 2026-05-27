@@ -61,6 +61,12 @@ class GraphState(TypedDict):
     # three personas produce visibly distinct answers.
     persona_style: str
 
+    # BYOK visitor session id. When set, the retriever node also queries the
+    # visitor's per-session Qdrant collection so any docs the visitor
+    # uploaded compete with the demo corpus by ranking. Empty string =
+    # demo-only retrieval (production /query path).
+    byok_session_id: str
+
     # Streaming dispatch flag — set by run_rag_pipeline_stream so the
     # synthesizer chooses call_llm_stream over call_llm_with_decision and
     # pushes tokens through the LangGraph stream writer. Not part of the

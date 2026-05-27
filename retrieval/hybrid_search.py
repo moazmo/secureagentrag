@@ -105,11 +105,18 @@ class HybridSearcher:
         top_k: int = 10,
         use_sparse: bool = True,
         extra_filter: Any = None,
+        session_id: str | None = None,
     ) -> list[SearchResult]:
         """Perform hybrid search combining dense and sparse retrieval with RBAC.
 
         Implements graceful degradation: if dense search fails, falls back to
         sparse-only search. If both fail, returns empty results.
+
+        When ``session_id`` is provided AND the visitor has uploaded any docs
+        to their session collection (``documents_sess_<sid>``), both the base
+        tenant collection and the session collection are queried in parallel
+        and merged into the same RRF fusion -- so the visitor's own uploads
+        compete head-to-head with the demo corpus by ranking, not by source.
 
         Args:
             query: User's search query.
@@ -117,6 +124,9 @@ class HybridSearcher:
             top_k: Maximum number of final results to return.
             use_sparse: Whether to include sparse vector results in fusion.
             extra_filter: Optional additional Qdrant filter.
+            session_id: BYOK session id. When set, also queries the session-
+                scoped Qdrant collection and fuses its results into the
+                ranking. The session collection is auto-created if missing.
 
         Returns:
             List of SearchResult objects ranked by fused relevance score.
@@ -127,8 +137,21 @@ class HybridSearcher:
 
         # Multi-tenancy: scope to tenant-specific collection when enabled.
         tenant_qdrant = self._qdrant.for_org(user_context.org_id)
+        session_qdrant = None
+        if session_id:
+            try:
+                session_qdrant = self._qdrant.for_session(session_id)
+                if session_qdrant is tenant_qdrant:
+                    session_qdrant = None
+            except Exception as exc:
+                logger.warning(
+                    "byok_session_collection_unavailable",
+                    error=str(exc),
+                    session_id=session_id,
+                )
 
-        # Step 1: Dense search
+        # Step 1: Dense search -- run against the base/org collection AND
+        # the optional session collection in parallel, then merge.
         try:
             query_embedding = await self._embedder.embed_text(query)
             dense_results = tenant_qdrant.search_with_rbac(
@@ -137,6 +160,21 @@ class HybridSearcher:
                 top_k=top_k * 2,
                 extra_filter=extra_filter,
             )
+            if session_qdrant is not None:
+                try:
+                    sess_dense = session_qdrant.search_with_rbac(
+                        query_embedding=query_embedding,
+                        user_context=user_context,
+                        top_k=top_k * 2,
+                        extra_filter=extra_filter,
+                    )
+                    dense_results = list(dense_results) + list(sess_dense)
+                except Exception as exc:
+                    logger.warning(
+                        "byok_session_dense_search_failed",
+                        error=str(exc),
+                        session_id=session_id,
+                    )
             dense_ranking = [(str(point.id), point.score) for point in dense_results]
         except Exception as exc:
             embeddings_failed = True
@@ -153,15 +191,33 @@ class HybridSearcher:
 
         # Step 2: Sparse search via Qdrant native sparse vectors (RBAC-filtered)
         sparse_ranking: list[tuple[str, float]] = []
+        sparse_results: list = []
         if use_sparse and self._sparse is not None:
             try:
                 sparse_vector = self._sparse.embed_text(query)
-                sparse_results = tenant_qdrant.search_sparse_with_rbac(
-                    sparse_vector=sparse_vector,
-                    user_context=user_context,
-                    top_k=top_k * 2,
-                    extra_filter=extra_filter,
+                sparse_results = list(
+                    tenant_qdrant.search_sparse_with_rbac(
+                        sparse_vector=sparse_vector,
+                        user_context=user_context,
+                        top_k=top_k * 2,
+                        extra_filter=extra_filter,
+                    )
                 )
+                if session_qdrant is not None:
+                    try:
+                        sess_sparse = session_qdrant.search_sparse_with_rbac(
+                            sparse_vector=sparse_vector,
+                            user_context=user_context,
+                            top_k=top_k * 2,
+                            extra_filter=extra_filter,
+                        )
+                        sparse_results.extend(sess_sparse)
+                    except Exception as exc:
+                        logger.warning(
+                            "byok_session_sparse_search_failed",
+                            error=str(exc),
+                            session_id=session_id,
+                        )
                 sparse_ranking = [(str(point.id), point.score) for point in sparse_results]
                 if sparse_ranking:
                     rankings.append(sparse_ranking)
@@ -190,23 +246,36 @@ class HybridSearcher:
                 "metadata": {k: v for k, v in payload.items() if k != "text"},
             }
 
-        # Fetch any sparse-only results from Qdrant (already RBAC-authorized)
+        # Fetch any sparse-only results from Qdrant (already RBAC-authorized).
+        # Sparse-only ids might live in the base collection OR the session
+        # collection -- payload IDs are UUIDs so we can't tell from the id
+        # alone; try base first, then session for any still-missing ids.
         sparse_map: dict[str, dict] = {}
         sparse_only_ids = [doc_id for doc_id, _ in sparse_ranking if doc_id not in dense_map]
         if sparse_only_ids:
-            try:
-                retrieved = tenant_qdrant.client.retrieve(
-                    collection_name=tenant_qdrant.collection_name,
-                    ids=sparse_only_ids,
-                )
-                for point in retrieved:
-                    payload = point.payload or {}
-                    sparse_map[str(point.id)] = {
-                        "text": payload.get("text", ""),
-                        "metadata": {k: v for k, v in payload.items() if k != "text"},
-                    }
-            except Exception as exc:
-                logger.warning("sparse_only_retrieve_failed", error=str(exc))
+            for src_qdrant in [tenant_qdrant, session_qdrant]:
+                if src_qdrant is None:
+                    continue
+                missing = [i for i in sparse_only_ids if i not in sparse_map]
+                if not missing:
+                    break
+                try:
+                    retrieved = src_qdrant.client.retrieve(
+                        collection_name=src_qdrant.collection_name,
+                        ids=missing,
+                    )
+                    for point in retrieved:
+                        payload = point.payload or {}
+                        sparse_map[str(point.id)] = {
+                            "text": payload.get("text", ""),
+                            "metadata": {k: v for k, v in payload.items() if k != "text"},
+                        }
+                except Exception as exc:
+                    logger.warning(
+                        "sparse_only_retrieve_failed",
+                        error=str(exc),
+                        collection=src_qdrant.collection_name,
+                    )
 
         # Step 5: Assemble final results
         results: list[SearchResult] = []

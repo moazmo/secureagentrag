@@ -337,6 +337,10 @@ async def retrieve_documents(state: GraphState) -> dict:
 
     start = time.perf_counter()
     documents: list[DocumentGrade] = []
+    # BYOK visitor uploads live in a session-scoped Qdrant collection. When
+    # present, hybrid_search queries both the base demo corpus AND the
+    # session collection in parallel and merges them into one RRF.
+    byok_session_id = state.get("byok_session_id", "") or ""
     try:
         # RAG Fusion: parallel search across multiple query reformulations.
         if settings.rag_fusion_enabled and settings.rag_fusion_n_queries > 1:
@@ -355,6 +359,7 @@ async def retrieve_documents(state: GraphState) -> dict:
                         user_context=user_context,
                         top_k=settings.top_k,
                         extra_filter=extra_filter,
+                        session_id=byok_session_id,
                     )
                     for q in queries
                 ),
@@ -367,6 +372,7 @@ async def retrieve_documents(state: GraphState) -> dict:
                 user_context=user_context,
                 top_k=settings.top_k,
                 extra_filter=extra_filter,
+                session_id=byok_session_id,
             )
 
         # Optionally rerank. Gated behind settings.reranker_type because

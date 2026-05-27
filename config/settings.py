@@ -241,6 +241,16 @@ class Settings(BaseSettings):
     # ``byok_audit_max_entries`` entries (no auth, but PII-redacted and
     # session-scoped). Empty list disables the endpoint.
     byok_audit_max_entries: int = 50
+    # Visitor doc upload limits. The HF Space CPU Basic has 16 GB RAM and the
+    # free-tier Qdrant Cloud cluster is 1 GB; these caps keep both bounded
+    # under realistic public-demo traffic. Override per environment but never
+    # raise without a Qdrant tier upgrade.
+    byok_upload_max_bytes: int = 5 * 1024 * 1024  # 5 MB per file
+    byok_upload_max_files: int = 5  # per session
+    # Extensions allowed on the BYOK upload endpoint. .pdf parsed via PyPDF2;
+    # .txt / .md pass through the text loader. OCR / docx / csv stay off to
+    # avoid pulling Paddle (~700 MB) into the image.
+    byok_upload_allowed_extensions: list[str] = [".txt", ".md", ".pdf"]
 
     # ── Multi-Modal RAG ──────────────────────────────────────────────────────────
     # When ingesting images, also generate a rich text description using a VLM.

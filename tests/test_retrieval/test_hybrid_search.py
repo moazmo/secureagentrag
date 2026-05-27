@@ -290,3 +290,106 @@ class TestHybridSearcher:
         ids = {r.id for r in results}
         assert "ok-1" in ids
         assert "ok-2" in ids
+
+
+class TestSessionScopedSearch:
+    """Tests for the dual-collection (base + session) BYOK upload search path."""
+
+    @pytest.fixture
+    def user_context(self) -> UserContext:
+        return UserContext(
+            user_id="demo-sess-1",
+            org_id="demo",
+            clearance_level=2,
+            roles=["engineering"],
+        )
+
+    @pytest.fixture
+    def mock_qdrant(self) -> MagicMock:
+        """Base manager. ``for_session`` returns the session manager below."""
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_embedder(self) -> MagicMock:
+        m = MagicMock()
+        m.embed_text = AsyncMock(return_value=[0.1] * 1024)
+        return m
+
+    @pytest.mark.asyncio
+    async def test_session_id_invokes_for_session(
+        self, mock_qdrant, mock_embedder, user_context
+    ):
+        """When session_id is passed, hybrid search must call for_session(sid)."""
+        # Base + session managers
+        base_mgr = MagicMock()
+        sess_mgr = MagicMock()
+        # Distinct collections so the "session_qdrant is tenant_qdrant" guard
+        # does NOT short-circuit the session path.
+        base_mgr.collection_name = "documents"
+        sess_mgr.collection_name = "documents_sess_xyz"
+        mock_qdrant.for_org.return_value = base_mgr
+        mock_qdrant.for_session.return_value = sess_mgr
+
+        base_point = MagicMock()
+        base_point.id = "base-1"
+        base_point.score = 0.9
+        base_point.payload = {"text": "demo corpus chunk", "org_id": "demo"}
+
+        sess_point = MagicMock()
+        sess_point.id = "sess-1"
+        sess_point.score = 0.85
+        sess_point.payload = {"text": "visitor upload chunk", "org_id": "demo"}
+
+        base_mgr.search_with_rbac.return_value = [base_point]
+        sess_mgr.search_with_rbac.return_value = [sess_point]
+
+        searcher = HybridSearcher(mock_qdrant, mock_embedder, sparse_service=None)
+        results = await searcher.search(
+            "test", user_context, top_k=10, session_id="xyz"
+        )
+
+        mock_qdrant.for_session.assert_called_once_with("xyz")
+        ids = {r.id for r in results}
+        # Both collections must surface their chunks in the fused ranking.
+        assert "base-1" in ids
+        assert "sess-1" in ids
+
+    @pytest.mark.asyncio
+    async def test_session_id_omitted_skips_for_session(
+        self, mock_qdrant, mock_embedder, user_context
+    ):
+        """No session_id -> never call for_session (production /query path)."""
+        base_mgr = MagicMock()
+        base_mgr.search_with_rbac.return_value = []
+        mock_qdrant.for_org.return_value = base_mgr
+
+        searcher = HybridSearcher(mock_qdrant, mock_embedder, sparse_service=None)
+        await searcher.search("test", user_context, top_k=5)
+        mock_qdrant.for_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_search_failure_does_not_break_base(
+        self, mock_qdrant, mock_embedder, user_context
+    ):
+        """Session-collection search exception must NOT take out the base result."""
+        base_mgr = MagicMock()
+        sess_mgr = MagicMock()
+        base_mgr.collection_name = "documents"
+        sess_mgr.collection_name = "documents_sess_broken"
+        mock_qdrant.for_org.return_value = base_mgr
+        mock_qdrant.for_session.return_value = sess_mgr
+
+        base_point = MagicMock()
+        base_point.id = "base-1"
+        base_point.score = 0.9
+        base_point.payload = {"text": "ok", "org_id": "demo"}
+        base_mgr.search_with_rbac.return_value = [base_point]
+        # Simulate the session collection blowing up under us.
+        sess_mgr.search_with_rbac.side_effect = RuntimeError("session-down")
+
+        searcher = HybridSearcher(mock_qdrant, mock_embedder, sparse_service=None)
+        results = await searcher.search(
+            "test", user_context, top_k=5, session_id="broken"
+        )
+        # The base result must survive even when the session path raises.
+        assert any(r.id == "base-1" for r in results)
