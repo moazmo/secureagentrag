@@ -185,7 +185,27 @@ async def call_llm_stream(
             yield token
     except Exception as exc:
         logger.error("call_llm_stream_failed", error=str(exc))
-        yield "[Error generating response]"
+        # Map common failure modes to actionable user-facing copy. Bare
+        # "[Error generating response]" left visitors guessing whether
+        # the bug was in the corpus, the prompt, or the LLM provider.
+        err_text = str(exc).lower()
+        if "429" in err_text or "rate" in err_text or "quota" in err_text:
+            yield (
+                "Sorry — the demo's shared Groq quota is exhausted for "
+                "this hour. Paste your own Groq / OpenAI / Anthropic key "
+                "via the 🔑 button at the top of the page for an "
+                "unthrottled bucket."
+            )
+        elif "timeout" in err_text or "connect" in err_text:
+            yield (
+                "The LLM provider didn't respond in time. Try again in a "
+                "few seconds, or paste your own key via the 🔑 button."
+            )
+        else:
+            yield (
+                "I couldn't reach the LLM provider this turn. Try again, "
+                "or paste your own key via the 🔑 button at the top."
+            )
 
 
 def _get_routing_prompt(query: str) -> str:

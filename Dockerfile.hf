@@ -87,7 +87,14 @@ except Exception as e: print(f'reranker cache skipped: {e!r}', file=sys.stderr)"
 # secrets panel -- they ride the same SAR_* env-var protocol but are NOT
 # baked into the image. Only mode flags and safe defaults live here.
 ENV SAR_BYOK_MODE=true
-ENV SAR_BYOK_OWNER_QUOTA=3
+# Per-IP owner-key quota / hour. Cap protects the daily Groq 14 400-req
+# budget against any single abuser. Raised from 3 -> 10 because the
+# previous 3 was too tight: visitors blocked after their third query of
+# the same IP. With ~100 distinct visitor IPs / day the daily Groq cap
+# would still be defended; visitors who exceed the cap are nudged to
+# paste their own BYOK key via the UI 429 banner.
+ENV SAR_BYOK_OWNER_QUOTA=10
+ENV SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10
 ENV SAR_SESSION_TTL_HOURS=24
 ENV SAR_CORS_ALLOW_ORIGINS='["https://secureagentrag-web.vercel.app","https://secureagentrag.vercel.app"]'
 

@@ -413,6 +413,12 @@ class TestSynthesizeAnswerJsonMode:
     def test_synthesize_answer_json_mode(self, mock_llm, mock_settings, synth_state):
         """Test answer synthesis with JSON-mode citation extraction."""
         mock_settings.json_citations_enabled = True
+        # The synthesizer trims docs_to_use to settings.rerank_top_k so
+        # rate-limited Groq calls stay bounded; tests need an explicit
+        # value because MagicMock attributes default to 1 via __int__,
+        # which would silently cap the fixture's 2 docs down to 1.
+        mock_settings.rerank_top_k = 20
+        mock_settings.byok_mode = False
         mock_llm.return_value = _mocked_call_return(
             '{"answer": "RAG improves answers [1] and reduces hallucinations [2].", '
             '"citations": [1, 2]}'
@@ -431,6 +437,12 @@ class TestSynthesizeAnswerJsonMode:
     def test_synthesize_answer_json_mode_fallback(self, mock_llm, mock_settings, synth_state):
         """Test JSON-mode fallback to regex when response is not valid JSON."""
         mock_settings.json_citations_enabled = True
+        # The synthesizer trims docs_to_use to settings.rerank_top_k so
+        # rate-limited Groq calls stay bounded; tests need an explicit
+        # value because MagicMock attributes default to 1 via __int__,
+        # which would silently cap the fixture's 2 docs down to 1.
+        mock_settings.rerank_top_k = 20
+        mock_settings.byok_mode = False
         mock_llm.return_value = _mocked_call_return(
             "RAG improves answers [1] and reduces hallucinations [2]."
         )

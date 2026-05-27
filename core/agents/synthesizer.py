@@ -83,7 +83,14 @@ def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitiv
     context_str = "\n\n".join(context_parts)
 
     sensitivity_instruction = ""
-    if sensitivity in ("high", "medium"):
+    # In BYOK demo mode the UI already renders a `sensitivity: <level>`
+    # badge next to every answer. Asking the LLM to also append a
+    # boilerplate disclaimer doubles the signal and clutters short
+    # answers ("Use MFA. -- Note: this references documents with moderate
+    # sensitivity..."). Suppress the prompt-side disclaimer in the demo
+    # so the answer stays clean; production deploys (byok_mode=False)
+    # still get the verbal disclaimer for compliance optics.
+    if sensitivity in ("high", "medium") and not settings.byok_mode:
         sensitivity_instruction = (
             "\n\nIMPORTANT: This involves sensitive information. "
             "Include appropriate disclaimers about data sensitivity and "
@@ -136,7 +143,14 @@ def _build_json_synthesis_prompt(
     context_str = "\n\n".join(context_parts)
 
     sensitivity_instruction = ""
-    if sensitivity in ("high", "medium"):
+    # In BYOK demo mode the UI already renders a `sensitivity: <level>`
+    # badge next to every answer. Asking the LLM to also append a
+    # boilerplate disclaimer doubles the signal and clutters short
+    # answers ("Use MFA. -- Note: this references documents with moderate
+    # sensitivity..."). Suppress the prompt-side disclaimer in the demo
+    # so the answer stays clean; production deploys (byok_mode=False)
+    # still get the verbal disclaimer for compliance optics.
+    if sensitivity in ("high", "medium") and not settings.byok_mode:
         sensitivity_instruction = (
             "\n\nIMPORTANT: This involves sensitive information. "
             "Include appropriate disclaimers about data sensitivity and "
@@ -338,6 +352,13 @@ def _compute_synthesis_confidence(
 def _add_disclaimers(response: str, sensitivity_level: str) -> str:
     """Add disclaimers to the response based on sensitivity level.
 
+    In BYOK demo mode the UI already shows a ``sensitivity: <level>``
+    badge under every answer, so appending a verbal disclaimer doubles
+    the signal and clutters short answers ("Use MFA. -- Note: this
+    response references documents with moderate sensitivity..."). The
+    badge is the canonical surface for the BYOK demo; the verbal
+    disclaimer stays on for production deploys.
+
     Args:
         response: The generated response text.
         sensitivity_level: The sensitivity level of the documents used.
@@ -345,6 +366,8 @@ def _add_disclaimers(response: str, sensitivity_level: str) -> str:
     Returns:
         Response text with appropriate disclaimers appended.
     """
+    if settings.byok_mode:
+        return response
     if sensitivity_level == "high":
         disclaimer = (
             "\n\n---\n"
@@ -426,7 +449,12 @@ async def synthesize_answer(state: GraphState) -> dict:
     # close to its rate-limited token budget and the call can come back
     # empty. Always trim to settings.rerank_top_k so the prompt is
     # bounded regardless of how permissive the upstream nodes were.
-    max_ctx = int(getattr(settings, "rerank_top_k", 5)) or 5
+    try:
+        max_ctx = int(getattr(settings, "rerank_top_k", 5)) or 5
+    except (TypeError, ValueError):
+        # ``settings`` may be a MagicMock in unit tests; fall back to the
+        # conservative default rather than crashing the synth node.
+        max_ctx = 5
     if len(docs_to_use) > max_ctx:
         docs_to_use = docs_to_use[:max_ctx]
 
