@@ -134,6 +134,61 @@ if _FASTAPI_AVAILABLE:
 
     @app.get("/readyz", tags=["ops"])
     async def readyz() -> JSONResponse:
+        # In BYOK production mode the deploy has no local Ollama -- pinging
+        # it would always fail and the cron keepalive would mistake the
+        # Space for down. Skip Ollama; ping Groq /models with the owner key
+        # instead (when configured). Postgres + Redis remain optional.
+        if settings.byok_mode:
+            report = await run_health_checks(include_ollama=False)
+            # Optionally surface Groq reachability when an owner key is set.
+            if settings.groq_api_key:
+                import time
+
+                from utils.health import HealthStatus
+
+                t0 = time.perf_counter()
+                try:
+                    import httpx
+
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        r = await client.get(
+                            f"{settings.groq_api_base}/models",
+                            headers={"Authorization": f"Bearer {settings.groq_api_key}"},
+                        )
+                        latency_ms = (time.perf_counter() - t0) * 1000
+                        if r.status_code == 200:
+                            report.services.append(
+                                HealthStatus(
+                                    name="groq",
+                                    healthy=True,
+                                    latency_ms=latency_ms,
+                                    message="Owner key reachable.",
+                                    optional=True,
+                                )
+                            )
+                        else:
+                            report.services.append(
+                                HealthStatus(
+                                    name="groq",
+                                    healthy=False,
+                                    latency_ms=latency_ms,
+                                    message=f"HTTP {r.status_code}",
+                                    optional=True,
+                                )
+                            )
+                except Exception as exc:
+                    latency_ms = (time.perf_counter() - t0) * 1000
+                    report.services.append(
+                        HealthStatus(
+                            name="groq",
+                            healthy=False,
+                            latency_ms=latency_ms,
+                            message=f"Connection failed: {exc!s}",
+                            optional=True,
+                        )
+                    )
+            code = 200 if report.overall_healthy else 503
+            return JSONResponse(report.to_dict(), status_code=code)
         report = await run_health_checks()
         code = 200 if report.overall_healthy else 503
         return JSONResponse(report.to_dict(), status_code=code)
@@ -143,7 +198,7 @@ if _FASTAPI_AVAILABLE:
     # uses per-request BYOK credentials instead. Isolation is enforced via
     # session-scoped Qdrant collections, not JWT identity.
     if settings.byok_mode:
-        from interfaces.byok import ByokCreds, extract_byok
+        from interfaces.byok import ByokCreds, client_ip_from_request, extract_byok
         from utils.rate_limiter import get_owner_key_throttle
 
         # All demo personas share ``org_id="demo"`` so they query the same
@@ -156,18 +211,39 @@ if _FASTAPI_AVAILABLE:
         # be in the same range so the Qdrant range filter passes the right
         # chunks. Engineer < Compliance == Executive, but executive carries
         # a wider role set (sees both engineering + compliance content).
+        # ``style`` is a short tone hint injected into the synthesizer's
+        # system prompt so the three demo personas produce visibly distinct
+        # answers from the same retrieved chunks.
         _DEMO_PERSONAS: dict[str, dict] = {
             "engineer": {
                 "clearance_level": 2,
                 "roles": ["engineering"],
+                "style": (
+                    "Write for a senior engineer. Use precise technical language, "
+                    "name the underlying mechanism, and prefer concrete code "
+                    "snippets or commands over abstract description. Skip the "
+                    "executive summary -- this reader wants the wire-level detail."
+                ),
             },
             "compliance": {
                 "clearance_level": 3,
                 "roles": ["compliance", "legal"],
+                "style": (
+                    "Write for a compliance / legal reviewer. Foreground the "
+                    "regulatory citations, control IDs, and risk vocabulary. "
+                    "Highlight gaps and required attestations. Hedge claims that "
+                    "are not directly supported by an authoritative source."
+                ),
             },
             "executive": {
                 "clearance_level": 3,
                 "roles": ["executive", "compliance", "engineering"],
+                "style": (
+                    "Write for a busy executive. Lead with the bottom line in "
+                    "two sentences. Quantify impact in dollars / risk percentage / "
+                    "headcount where the source supports it. Skip implementation "
+                    "detail unless it changes the decision."
+                ),
             },
         }
 
@@ -179,13 +255,17 @@ if _FASTAPI_AVAILABLE:
             """
             preset = _DEMO_PERSONAS.get((creds.demo_persona or "").lower())
             if preset is None:
-                preset = {"clearance_level": 1, "roles": ["viewer"]}
+                preset = {"clearance_level": 1, "roles": ["viewer"], "style": ""}
             return UserContext(
                 user_id=f"demo-{creds.session_id}",
                 org_id=_DEMO_ORG_ID,
                 clearance_level=preset["clearance_level"],
                 roles=preset["roles"],
             )
+
+        def _persona_style(creds: ByokCreds) -> str:
+            preset = _DEMO_PERSONAS.get((creds.demo_persona or "").lower())
+            return (preset or {}).get("style", "") if preset else ""
 
         from pydantic import BaseModel as _ByokBaseModel
 
@@ -220,7 +300,7 @@ if _FASTAPI_AVAILABLE:
             """
             if not creds.has_user_key():
                 throttle = get_owner_key_throttle()
-                client_ip = (request.client.host if request.client else None) or "anon"
+                client_ip = client_ip_from_request(request)
                 ok, meta = throttle.allow(client_ip)
                 if not ok:
                     raise HTTPException(
@@ -236,6 +316,9 @@ if _FASTAPI_AVAILABLE:
                         },
                     )
             user_ctx = _persona_to_user_ctx(creds)
+            import time as _t
+
+            _t0 = _t.perf_counter()
             state = await run_rag_pipeline(
                 query=body.query,
                 user_context=user_ctx,
@@ -243,13 +326,234 @@ if _FASTAPI_AVAILABLE:
                 prefer_cloud=body.prefer_cloud,
                 # Visitor's chosen provider when present; falls back to env.
                 override_provider=creds.safe_provider(),
+                persona_style=_persona_style(creds),
             )
+            elapsed_ms = (_t.perf_counter() - _t0) * 1000
             response = QueryResponse.from_state(state)
+            # Persist a single audit-log row so /byok/audit can surface the
+            # session's history. utils.pii.redact strips key shapes from the
+            # query/answer before write.
+            try:
+                audit_logger.log_query(
+                    user_id=user_ctx.user_id,
+                    org_id=user_ctx.org_id,
+                    query=body.query,
+                    response_summary=(response.answer or "")[:200],
+                    sensitivity=state.get("query_sensitivity", "low"),
+                    status="blocked" if response.blocked else "success",
+                    latency_ms=elapsed_ms,
+                    persona=creds.demo_persona or "anonymous",
+                    byok_used=creds.has_user_key(),
+                    synth_provider=response.provenance.provider,
+                    synth_model=response.provenance.model,
+                    faithfulness_ratio=state.get("faithfulness_ratio", 1.0),
+                    documents_used=len(state.get("relevant_documents", [])),
+                )
+            except Exception as exc:  # pragma: no cover -- defensive
+                logger.exception("byok_audit_persist_failed", error=str(exc))
             return {
                 "session_id": creds.session_id,
                 "persona": creds.demo_persona or "anonymous",
                 "byok_used": creds.has_user_key(),
                 "response": response.model_dump(mode="json"),
+                # Extra payload surfaced for the new frontend UX -- raw audit
+                # trail of nodes executed (used for the "trace pills" strip)
+                # and the rewriter's output if the rewriter fired.
+                "trace": [
+                    {k: v for k, v in entry.items() if k in {"node", "action"}}
+                    for entry in state.get("audit_trail", [])
+                ],
+                "rewritten_query": state.get("rewritten_query", ""),
+                "query_sensitivity": state.get("query_sensitivity", "low"),
+                "faithfulness_ratio": float(state.get("faithfulness_ratio", 1.0)),
+                "documents_seen_total": len(state.get("documents", [])),
+                "documents_used_total": len(state.get("relevant_documents", [])),
+            }
+
+        # ── BYOK streaming endpoint (SSE) ────────────────────────────────
+        from fastapi.responses import StreamingResponse as _StreamingResponse
+
+        from core.graph import run_rag_pipeline_stream
+
+        @app.post("/byok/chat/stream", tags=["byok"])
+        async def byok_chat_stream_endpoint(
+            request: _FastApiRequest,
+            body: _ByokChatBody,
+            creds: Annotated[ByokCreds, Depends(extract_byok)],
+        ):
+            """Server-Sent Events variant of ``/byok/chat``.
+
+            Emits ``event: <type>\\ndata: <json>\\n\\n`` frames mirroring the
+            event dicts produced by ``run_rag_pipeline_stream``:
+
+            - ``phase``   — graph node fired (with merged state snapshot)
+            - ``token``   — synthesizer streaming token
+            - ``blocked`` — guardrails / security / timeout refusal
+            - ``final``   — last state + total latency
+
+            CORS is already mounted on the app when ``byok_mode`` is on.
+            """
+            if not creds.has_user_key():
+                throttle = get_owner_key_throttle()
+                client_ip = client_ip_from_request(request)
+                ok, meta = throttle.allow(client_ip)
+                if not ok:
+                    raise HTTPException(
+                        status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail={
+                            "reason": meta["reason"],
+                            "retry_after_seconds": meta["retry_after"],
+                            "hint": (
+                                "Owner-key fallback exhausted for this IP. "
+                                "Paste your own LLM key to continue — your key "
+                                "is never stored server-side."
+                            ),
+                        },
+                    )
+            user_ctx = _persona_to_user_ctx(creds)
+
+            async def _gen():
+                import time as _t
+
+                _t0 = _t.perf_counter()
+                # Replay the session_id up front so the client can stitch
+                # token deltas to a known turn without waiting for `final`.
+                yield (
+                    "event: open\n"
+                    f"data: {json.dumps({'session_id': creds.session_id, 'persona': creds.demo_persona or 'anonymous', 'byok_used': creds.has_user_key()})}\n\n"
+                )
+                final_state: dict | None = None
+                try:
+                    async for evt in run_rag_pipeline_stream(
+                        query=body.query,
+                        user_context=user_ctx,
+                        thread_id=f"byok-{creds.session_id}",
+                        prefer_cloud=body.prefer_cloud,
+                        override_provider=creds.safe_provider(),
+                        persona_style=_persona_style(creds),
+                    ):
+                        etype = evt.get("type", "unknown")
+                        # Reshape the heavy phase/final payload -- raw GraphState
+                        # is large; the frontend only needs the public-facing
+                        # bits. token frames pass through verbatim.
+                        if etype == "token":
+                            payload = {"text": evt.get("text", "")}
+                        elif etype in ("phase", "blocked", "final"):
+                            st = evt.get("state", {}) or {}
+                            if etype == "final":
+                                final_state = st
+                            payload = {
+                                "name": evt.get("name", ""),
+                                "message": evt.get("message", ""),
+                                "latency_ms": evt.get("latency_ms", 0.0),
+                                "rewritten_query": st.get("rewritten_query", ""),
+                                "query_sensitivity": st.get("query_sensitivity", "low"),
+                                "guardrails_passed": st.get("guardrails_passed", True),
+                                "security_passed": st.get("security_passed", True),
+                                "documents_seen_total": len(st.get("documents", [])),
+                                "documents_used_total": len(
+                                    st.get("relevant_documents", [])
+                                ),
+                                "faithfulness_ratio": float(
+                                    st.get("faithfulness_ratio", 1.0)
+                                ),
+                                "confidence_score": float(
+                                    st.get("confidence_score", 0.0)
+                                ),
+                                "synth_provider": st.get("synth_provider", ""),
+                                "synth_model": st.get("synth_model", ""),
+                                "synth_latency_ms": float(
+                                    st.get("synth_latency_ms", 0.0)
+                                ),
+                                "trace": [
+                                    {k: v for k, v in e.items() if k in {"node", "action"}}
+                                    for e in st.get("audit_trail", [])
+                                ],
+                            }
+                            if etype == "final":
+                                # Include the full QueryResponse shape so the
+                                # frontend reaches parity with the non-stream
+                                # endpoint (citations + provenance + blocked).
+                                payload["response"] = QueryResponse.from_state(
+                                    st
+                                ).model_dump(mode="json")
+                        else:
+                            payload = evt
+                        yield f"event: {etype}\ndata: {json.dumps(payload)}\n\n"
+                except Exception as exc:  # pragma: no cover -- defensive
+                    logger.exception("byok_stream_failed", error=str(exc))
+                    yield (
+                        "event: error\n"
+                        f"data: {json.dumps({'message': 'stream_failed'})}\n\n"
+                    )
+                # Persist audit row at the end of the stream so /byok/audit
+                # surfaces the session's history even when the visitor
+                # disconnects before the final frame.
+                if final_state is not None:
+                    elapsed_ms = (_t.perf_counter() - _t0) * 1000
+                    resp = QueryResponse.from_state(final_state)
+                    try:
+                        audit_logger.log_query(
+                            user_id=user_ctx.user_id,
+                            org_id=user_ctx.org_id,
+                            query=body.query,
+                            response_summary=(resp.answer or "")[:200],
+                            sensitivity=final_state.get("query_sensitivity", "low"),
+                            status="blocked" if resp.blocked else "success",
+                            latency_ms=elapsed_ms,
+                            persona=creds.demo_persona or "anonymous",
+                            byok_used=creds.has_user_key(),
+                            synth_provider=resp.provenance.provider,
+                            synth_model=resp.provenance.model,
+                            faithfulness_ratio=final_state.get("faithfulness_ratio", 1.0),
+                            documents_used=len(
+                                final_state.get("relevant_documents", [])
+                            ),
+                            stream=True,
+                        )
+                    except Exception as exc:  # pragma: no cover
+                        logger.exception("byok_stream_audit_persist_failed", error=str(exc))
+
+            return _StreamingResponse(
+                _gen(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache, no-transform",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
+
+        # ── BYOK public audit export ─────────────────────────────────────
+        @app.get("/byok/audit", tags=["byok"])
+        async def byok_audit_endpoint(
+            request: _FastApiRequest,
+            creds: Annotated[ByokCreds, Depends(extract_byok)],
+        ) -> dict:
+            """Return the last N PII-redacted audit entries for this demo.
+
+            Public, session-scoped, capped by ``settings.byok_audit_max_entries``.
+            The audit log file is shared across sessions inside the HF Space --
+            we filter by the visitor's demo user_id (``demo-<session_id>``) so
+            visitors only see their own turns.
+            """
+            limit = max(0, int(settings.byok_audit_max_entries))
+            if limit == 0:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, detail="audit export disabled"
+                )
+            today = date.today().isoformat()
+            entries = audit_logger.get_entries(
+                start_date=today,
+                end_date=today,
+                user_id=f"demo-{creds.session_id}",
+            )
+            # Newest first, then cap.
+            entries = list(reversed(entries))[:limit]
+            return {
+                "session_id": creds.session_id,
+                "count": len(entries),
+                "items": [e.model_dump(mode="json") for e in entries],
             }
 
     @app.post("/query", response_model=QueryResponse, tags=["rag"])

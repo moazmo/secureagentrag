@@ -81,6 +81,34 @@ class ByokCreds(BaseModel):
         return None
 
 
+def client_ip_from_request(request: Request) -> str:
+    """Resolve the visitor IP for throttling, honouring ``X-Forwarded-For``.
+
+    HF Spaces, Vercel, and most cloud reverse proxies set ``X-Forwarded-For``
+    with the chain ``client, proxy1, proxy2``. The leftmost entry is the
+    public client IP — what we want to throttle on. Falls back to the
+    socket peer (``request.client.host``) when XFF is absent, then to
+    ``"anon"`` so the throttle never crashes on a missing source.
+
+    ``X-Real-IP`` is honoured second as a courtesy for proxies that set it
+    instead of XFF. Never trust headers in environments where the request
+    is not already terminated by a trusted reverse proxy — set
+    ``SAR_BYOK_MODE`` only behind one.
+    """
+    xff = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
+    if xff:
+        # Leftmost token is the original client; strip any whitespace.
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    real_ip = request.headers.get("x-real-ip") or request.headers.get("X-Real-IP")
+    if real_ip and real_ip.strip():
+        return real_ip.strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "anon"
+
+
 def _derive_session_id(client_host: str | None) -> str:
     """Generate a deterministic-but-non-identifying session ID.
 

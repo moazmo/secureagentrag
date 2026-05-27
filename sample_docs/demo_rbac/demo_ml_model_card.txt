@@ -1,0 +1,59 @@
+ACME ML MODEL CARD — fraud-detector-v7
+=======================================
+Owner: Risk Engineering  ·  Status: Production (canary 5%, full rollout 2026-03-01)
+Reviewers: Compliance (Tara Wexler), Privacy (Jin Park), Engineering Lead (Mo Saleh)
+
+1. MODEL OVERVIEW
+   - Task: binary classification — is the in-flight payment authorization
+     attempt fraudulent (1) or legitimate (0)?
+   - Algorithm: gradient-boosted decision trees (LightGBM) wrapped in an
+     Isotonic calibrator. 832 features; 2,400 boosting rounds; max depth 7.
+   - Training corpus: 18 months of card-not-present transactions across 4
+     issuing regions, balanced 4:1 legitimate:fraud after under-sampling.
+     Class weights: 1.0 / 3.7. PII (PAN, CVV, cardholder name, email) is
+     tokenised before feature extraction. No raw PII leaves the secure
+     enclave used for training.
+
+2. INTENDED USE
+   - In-line scoring of authorization attempts above $50 with risk score >= 0.4.
+   - The model's output is one input among five used by the deterministic rule
+     engine. The model is never a sole denial signal.
+   - Out-of-scope: card-present transactions (different model, fraud-cp-v3);
+     ACH transfers (different model, ach-detect-v2).
+
+3. PERFORMANCE
+   Holdout AUROC: 0.971  ·  PR-AUC: 0.873  ·  Recall@1%FPR: 0.642
+   Demographic parity gap (region NA vs EMEA): 1.4% absolute (within the 3%
+   compliance tolerance set in policy ACME-RISK-014).
+   Equalised odds gap (region NA vs EMEA): 1.9% absolute.
+   Latency p99 in production: 8.2 ms (one feature-store fetch + tree inference).
+
+4. KNOWN LIMITATIONS
+   - Trained on data through 2025-09-30; expect drift on novel fraud rings
+     emerging after 2026-Q1. The monitor `fraud_v7_drift_psi` alerts when
+     PSI > 0.2 on any of the top-20 most important features.
+   - Holiday weeks (US Thanksgiving, EU summer holidays) show ~7% higher
+     false-positive rate. The rule engine compensates by raising the
+     model's denial threshold by 0.05 during these windows.
+   - The model does not see CVV mismatch outcomes directly — the deterministic
+     rule engine has higher signal there.
+
+5. COMPLIANCE NOTES
+   - GDPR Article 22 (automated individual decision-making): customers can
+     request a human review of any decision where the model contributed to a
+     denial. The customer-care intake form `cs-review-001` triggers this.
+   - SR 11-7 model risk governance: model is rated "Tier 1" (material impact);
+     subject to annual independent validation by the Model Risk team.
+   - Fairness audit: completed 2026-02-20 by an external party (DataAudit Inc.,
+     report DA-2026-019). Findings: no statistically significant adverse
+     impact on any protected class at the alpha=0.05 level.
+
+6. RETIRE / REPLACE
+   - Retire condition: AUROC drops below 0.94 for 4 consecutive weeks, OR
+     a successor model passes the v7 shadow gate at ≥1pp lift on PR-AUC.
+   - Successor in training: fraud-detector-v8 (transformer-on-sequence,
+     incorporates merchant-network embeddings). Shadow scoring since
+     2026-02-01. Promote decision target: 2026-Q3.
+
+CONTACT
+   Risk Eng Slack: #risk-models  ·  Pager: risk-models-oncall

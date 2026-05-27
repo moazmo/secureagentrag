@@ -55,6 +55,12 @@ class GraphState(TypedDict):
     prefer_cloud: bool  # True when caller opts into cloud providers for LOW/MEDIUM
     override_provider: str  # "" or one of "ollama" / "groq" / "openai" / "anthropic"
 
+    # Optional tone hint injected into the synthesizer's system prompt.
+    # Empty string = use the default research-assistant voice. The BYOK
+    # demo endpoint populates this from the X-Demo-Persona header so the
+    # three personas produce visibly distinct answers.
+    persona_style: str
+
     # Streaming dispatch flag — set by run_rag_pipeline_stream so the
     # synthesizer chooses call_llm_stream over call_llm_with_decision and
     # pushes tokens through the LangGraph stream writer. Not part of the

@@ -83,6 +83,8 @@ class CorpusItem:
 CORPUS: list[CorpusItem] = [
     # SensitivityLevel maps LOW=1, MEDIUM=2, HIGH=3 (see ingestion/metadata.py).
     # All personas have clearance>=2 so LOW docs are universally visible.
+    # When SAR_ALLOW_CLOUD_FOR_HIGH=true on the HF Space, HIGH chunks are
+    # also synthesisable via cloud LLM (the router gate is opt-out).
     CorpusItem(
         file=SAMPLE_ROOT / "demo_rbac" / "demo_public_handbook.txt",
         sensitivity=SensitivityLevel.LOW,
@@ -95,21 +97,54 @@ CORPUS: list[CorpusItem] = [
         roles=["engineering"],
         label="engineering runbook",
     ),
-    # NOTE: kept at MEDIUM (not HIGH) so cloud synthesis is allowed. HIGH
-    # sensitivity forces local Ollama in ``inference.router`` and the HF
-    # Space CPU Basic image has no Ollama. RBAC differentiation against
-    # engineer is preserved via the ``roles`` allowlist.
     CorpusItem(
         file=SAMPLE_ROOT / "demo_rbac" / "demo_finance_q3.txt",
-        sensitivity=SensitivityLevel.MEDIUM,
+        sensitivity=SensitivityLevel.HIGH,
         roles=["compliance", "executive"],
-        label="finance Q3",
+        label="finance Q3 (sensitive)",
     ),
     CorpusItem(
         file=SAMPLE_ROOT / "real" / "NIST_AI_RMF.pdf",
         sensitivity=SensitivityLevel.LOW,
         roles=["engineering", "compliance", "legal", "executive", "viewer"],
         label="NIST AI RMF",
+    ),
+    # ── Expanded corpus (2026-05-27) ────────────────────────────────────
+    CorpusItem(
+        file=SAMPLE_ROOT / "demo_rbac" / "demo_security_policy.txt",
+        sensitivity=SensitivityLevel.MEDIUM,
+        roles=["compliance", "legal", "executive", "engineering"],
+        label="security policy",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "demo_rbac" / "demo_incident_runbook.txt",
+        sensitivity=SensitivityLevel.MEDIUM,
+        roles=["engineering"],
+        label="incident runbook",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "demo_rbac" / "demo_ml_model_card.txt",
+        sensitivity=SensitivityLevel.MEDIUM,
+        roles=["engineering", "compliance"],
+        label="ML model card",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "demo_rbac" / "demo_infra_adr.txt",
+        sensitivity=SensitivityLevel.LOW,
+        roles=["engineering", "compliance", "executive", "viewer"],
+        label="infra ADR-0042",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "demo_rbac" / "demo_hr_handbook.txt",
+        sensitivity=SensitivityLevel.LOW,
+        roles=["engineering", "compliance", "legal", "executive", "viewer"],
+        label="HR handbook",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "demo_rbac" / "demo_vendor_contract.txt",
+        sensitivity=SensitivityLevel.HIGH,
+        roles=["compliance", "legal", "executive"],
+        label="vendor MSA (sensitive)",
     ),
 ]
 
@@ -167,7 +202,7 @@ async def main() -> int:
         grand_total_chunks += result.num_chunks
 
     print()
-    print(f"== summary ==")
+    print("== summary ==")
     print(f"  total chunks ingested: {grand_total_chunks}")
     print(f"  errors:                {len(errors)}")
     if errors:

@@ -1,0 +1,74 @@
+MASTER SERVICES AGREEMENT — ACME GLOBAL, INC. <> SUMMITLINE DATA CORP.
+=======================================================================
+Effective Date: 2026-03-01  ·  MSA ID: ACME-MSA-2026-0117
+Counter-parties:
+   - ACME Global, Inc. ("Customer")    Tax ID: 83-1100442
+   - Summitline Data Corp. ("Vendor")  Registered: Delaware, USA
+
+1. SCOPE OF SERVICES
+   1.1 Vendor will provide a managed analytics ingestion platform (the
+       "Service") permitting Customer to stream up to 5 billion events per
+       day into Vendor's hosted environment for transformation, retention,
+       and downstream egress to Customer-owned data warehouses.
+   1.2 Specific services, service levels, and pricing are detailed in
+       Statements of Work executed under this MSA. SOW-001 is attached and
+       integrated by reference.
+
+2. TERM AND TERMINATION
+   2.1 Initial term: 36 months from the Effective Date. Auto-renewal for
+       successive 12-month terms unless either party gives written notice of
+       non-renewal at least 90 days prior to the then-current expiration.
+   2.2 Termination for cause: either party may terminate on 30 days' written
+       notice if the other party materially breaches and fails to cure within
+       the notice period.
+   2.3 Termination for convenience: Customer may terminate any SOW on 60 days'
+       written notice. Vendor may not terminate for convenience.
+
+3. FEES AND PAYMENT
+   3.1 Annual subscription: USD 1,400,000 net 30, invoiced quarterly in
+       advance, subject to the volume discount schedule in Exhibit B.
+   3.2 Overages billed monthly in arrears at $0.40 per 1M events above the
+       contracted 5B/day cap. Overage line items must be itemised by source
+       system on the invoice.
+   3.3 Annual price escalation: limited to the lesser of 3% or the prior
+       12-month US CPI-U. Escalations require 90-day advance notice.
+
+4. DATA PROTECTION
+   4.1 Vendor processes Customer Data solely to provide the Service. Vendor
+       shall not use Customer Data to train, fine-tune, or otherwise improve
+       any general-purpose models that Vendor offers to other customers.
+   4.2 Vendor maintains SOC 2 Type II and ISO/IEC 27001:2022 certification
+       throughout the term and shall provide annual evidence of continued
+       certification within 30 days of issuance.
+   4.3 Sub-processors: Vendor's current sub-processor list is attached as
+       Exhibit C. New sub-processors require 30 days' advance notice and
+       Customer's right to object on reasonable grounds.
+   4.4 Personal data: where Customer Data includes EU personal data, the
+       DPA dated 2026-02-14 governs. Standard Contractual Clauses (Module 2)
+       apply to cross-border transfers to the United States.
+
+5. AVAILABILITY AND SERVICE LEVELS
+   5.1 Vendor commits to 99.9% monthly availability of the ingestion control
+       plane. Credits apply per SOW-001 Section 4.
+   5.2 Maintenance windows: pre-announced no fewer than 5 business days in
+       advance and counted outside the availability metric.
+
+6. LIABILITY
+   6.1 Aggregate liability cap: 2x the trailing 12 months of fees paid under
+       the affected SOW, except for (i) breach of confidentiality, (ii) breach
+       of data protection obligations, (iii) IP indemnification, and (iv)
+       gross negligence or willful misconduct — for which liability is capped
+       at 3x trailing 12 months of fees.
+   6.2 Neither party is liable for indirect, incidental, consequential, or
+       punitive damages, except where excluded by Section 6.1.
+
+7. ASSIGNMENT
+   7.1 Neither party may assign this MSA without the other's prior written
+       consent, except to an affiliate or in connection with a merger, sale
+       of substantially all assets, or change of control. The non-assigning
+       party retains a termination right exercisable within 60 days of
+       notice of any such assignment to a Customer competitor.
+
+SIGNATORIES
+   For Customer:  Sasha Liu, SVP Procurement
+   For Vendor:    Daniel Cho, General Counsel

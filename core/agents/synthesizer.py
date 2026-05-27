@@ -43,6 +43,26 @@ def _max_sensitivity(docs_to_use: list[DocumentGrade]) -> str:
     return _max_label(*levels) if levels else "low"
 
 
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are an expert research assistant that always cites sources."
+)
+
+
+def _build_system_prompt(state: GraphState) -> str:
+    """Return the synthesizer's system prompt, optionally tuned per persona.
+
+    The BYOK demo populates ``state['persona_style']`` from the
+    ``X-Demo-Persona`` header (engineer / compliance / executive) so the
+    same retrieved chunks produce visibly distinct answers. Empty / missing
+    style falls back to the neutral default voice -- the production API
+    surface is unaffected.
+    """
+    style = (state.get("persona_style") or "").strip()
+    if not style:
+        return _DEFAULT_SYSTEM_PROMPT
+    return f"{_DEFAULT_SYSTEM_PROMPT}\n\n{style}"
+
+
 def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitivity: str) -> str:
     """Build the synthesis prompt with source markers for citation tracking.
 
@@ -478,7 +498,7 @@ async def synthesize_answer(state: GraphState) -> dict:
         collected: list[str] = []
         async for token in call_llm_stream(
             prompt,
-            system_prompt="You are an expert research assistant that always cites sources.",
+            system_prompt=_build_system_prompt(state),
             sensitivity_level=max_sensitivity,
             prefer_cloud=prefer_cloud,
         ):
@@ -499,7 +519,7 @@ async def synthesize_answer(state: GraphState) -> dict:
     else:
         response_text, decision, llm_response = await call_llm_with_decision(
             prompt,
-            system_prompt="You are an expert research assistant that always cites sources.",
+            system_prompt=_build_system_prompt(state),
             sensitivity_level=max_sensitivity,
             prefer_cloud=prefer_cloud,
             json_mode=json_mode,

@@ -126,8 +126,20 @@ ENV SAR_MULTI_TENANT_COLLECTIONS=true
 # Pipeline safety
 ENV SAR_REQUEST_TIMEOUT_S=120
 ENV SAR_FAITHFULNESS_GATE_ENABLED=true
+# `flag` keeps the answer text intact and lets the UI render the
+# faithfulness badge. `drop` would rewrite sentences out of the answer
+# which is harder to demo — stay in flag mode for the public BYOK demo.
 ENV SAR_FAITHFULNESS_GATE_MODE=flag
 ENV SAR_FAITHFULNESS_THRESHOLD=0.7
+
+# Cloud LLM is the only inference path on the HF Space (no Ollama). Unlock
+# HIGH-sensitivity content for cloud synthesis -- the frontend warns the
+# visitor with a "sensitive: routed to cloud" badge.
+ENV SAR_ALLOW_CLOUD_FOR_HIGH=true
+
+# Public audit export -- caps the /byok/audit response so the panel is
+# usable but never floods the page on a long-running Space.
+ENV SAR_BYOK_AUDIT_MAX_ENTRIES=50
 
 # Logging
 ENV SAR_LOG_LEVEL=INFO

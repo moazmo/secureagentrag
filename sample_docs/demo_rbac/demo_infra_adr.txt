@@ -1,0 +1,74 @@
+ADR-0042 — Adopt Kubernetes Gateway API for north-south traffic
+================================================================
+Status: Accepted  ·  Date: 2026-01-18  ·  Authors: Platform SRE (Mo Saleh, Lila Reyes)
+Reviewers: Engineering Council, Security Architecture
+
+CONTEXT
+   ACME runs ~140 services across two AWS regions (us-east-1, eu-west-1) and one
+   on-prem datacentre (DC-LON-2). North-south traffic terminates at AWS ALBs
+   for cloud, F5 BIG-IP for on-prem. We use Kubernetes Ingress (kubernetes.io/ingress.class=alb)
+   for service-to-ALB binding. As of 2026-Q1 we have 380 Ingress objects across
+   three clusters; the Ingress spec is showing strain:
+     - Cross-namespace routing requires custom annotations that drift across
+       teams. We've had three Sev-2 incidents in the last 18 months caused by
+       conflicting `alb.ingress.kubernetes.io/group.name` values.
+     - Header-based routing is annotation-driven and silently breaks on
+       Ingress controller upgrades. We've burned ~6 engineering-weeks per
+       year on annotation regression triage.
+     - TLS policy is per-Ingress, making it hard to enforce one consistent
+       TLS profile org-wide. Compliance flagged this in the Q4 audit.
+
+DECISION
+   Adopt Kubernetes Gateway API v1 (GA in K8s 1.30) as the canonical north-south
+   surface. Specifically:
+     1. Provision one GatewayClass per cluster, owned by Platform SRE.
+     2. Each business unit owns a Gateway with a unique listener set (HTTPS:443,
+        plus a TCP listener where the protocol demands it).
+     3. Application teams own HTTPRoute / TCPRoute / GRPCRoute objects.
+     4. AWS Load Balancer Controller v2.8 (which supports Gateway API) replaces
+        the legacy Ingress reconciliation path for new services. Existing
+        Ingress objects remain in place until migrated.
+
+CONSEQUENCES
+   Positive:
+     - RBAC: GatewayClass/Gateway/Route split lets us delegate routing without
+       handing out ALB-create permissions. Application devs no longer need IAM
+       changes to add a route.
+     - Cross-namespace routing is a first-class concept via `parentRefs` with
+       explicit `ReferenceGrant`. No more annotation magic.
+     - TLS policy lives on the Gateway, not each Ingress — one consistent
+       profile per BU is enforceable and auditable.
+
+   Negative:
+     - Migration cost: 380 Ingress -> HTTPRoute conversions. Estimate 0.4 FTE
+       for two quarters using the `ingress2gateway` tool plus manual review.
+     - Tooling: kustomize overlays and Helm charts assume Ingress today.
+       Templates must be regenerated for HTTPRoute. We have inventoried 87
+       charts that need updates; 12 are external (vendor) charts that
+       require upstream PRs.
+     - On-prem (DC-LON-2): F5 does not implement Gateway API. The on-prem
+       cluster stays on Ingress for the foreseeable future; we accept the
+       inconsistency between cloud and on-prem until the F5 roadmap catches
+       up (no GA target communicated as of 2026-01).
+
+ROLLOUT PLAN
+   Quarter 1: enable Gateway API CRDs, ship one pilot service (`marketing-www`).
+     Acceptance: latency parity with current Ingress; zero policy regressions.
+   Quarter 2: migrate the 25 highest-traffic services. Open backports for any
+     internal libraries assuming Ingress controller annotations.
+   Quarter 3: migrate the remaining ~355 services in chunks of 10/week,
+     prioritised by lowest annotation complexity first.
+   Quarter 4: decommission the legacy Ingress reconciler in cloud clusters.
+     On-prem stays on Ingress; document the divergence in the platform
+     reference architecture.
+
+ALTERNATIVES CONSIDERED
+   - Stay on Ingress + write a custom validation webhook. Rejected: cost is
+     comparable to migration but yields no upside; the underlying spec
+     limitations remain.
+   - Adopt Istio Gateway / Linkerd HTTPRoute. Rejected: we don't run a service
+     mesh in production today and don't have appetite for the operational
+     scope. Gateway API is a thinner surface for the north-south problem.
+
+CONTACT
+   Platform SRE: #platform-sre  ·  Architecture review: arch-review@acme.example

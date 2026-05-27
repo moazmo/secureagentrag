@@ -1,6 +1,24 @@
 # SecureAgentRAG
 
-> ⚙️ **Production launch in progress** (started 2026-05-25). Public BYOK demo on Next.js + Vercel + Hugging Face Spaces + Qdrant Cloud is being built on branch `deploy/prod-launch`. `main` is frozen at `56c8c98` as the last-known-good Streamlit state. Full plan and agent handoff contract in [`launch-plan/`](./launch-plan/README.md).
+> **🚀 Live demo:** [secureagentrag-web.vercel.app](https://secureagentrag-web.vercel.app) · **API:** [`LeomordKaly-secureagentrag-api.hf.space`](https://LeomordKaly-secureagentrag-api.hf.space/healthz) · **Cost:** $0/mo · **Egypt-tested · no credit card · no cold-start delay**
+>
+> ⚙️ **Production launch in progress** (started 2026-05-25). Public BYOK demo on Next.js + Vercel + Hugging Face Spaces + Qdrant Cloud is live on branch `deploy/prod-launch`. `main` is frozen at `56c8c98` as the last-known-good Streamlit state. Full plan and agent handoff contract in [`launch-plan/`](./launch-plan/README.md).
+
+## What the live demo does
+
+1. **You pick a persona** (engineer / compliance / executive) → RBAC + clearance get applied to every Qdrant search.
+2. **You ask a question** → 9 LangGraph nodes run end-to-end with token-by-token SSE streaming.
+3. **The UI shows you the proof** — trace pills for every node, citation chips with source/page/score, NLI faithfulness percentage, query rewrite if it fired, SHA-256-chained audit log downloadable as JSONL.
+4. **Switch personas + re-ask** → some chunks vanish from the citations panel. That's the RBAC filter at the Qdrant payload layer — same query, different access.
+
+```bash
+# Try it locally without paying anything:
+curl -X POST https://LeomordKaly-secureagentrag-api.hf.space/byok/chat \
+  -H 'Content-Type: application/json' \
+  -H 'X-Demo-Persona: compliance' \
+  -H 'X-Session-ID: try-it-001' \
+  -d '{"query":"What MFA controls does the security policy mandate?","prefer_cloud":true}'
+```
 
 <div align="center">
 

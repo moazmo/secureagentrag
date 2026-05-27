@@ -311,3 +311,72 @@ admin (full access to all documents and sensitivity levels)
 5. **Resource-Aware** — Optimized for consumer hardware (8GB VRAM) without sacrificing functionality
 6. **Graceful Degradation** — Optional dependencies (Phoenix, Ragas, PaddleOCR) don't break core functionality
 7. **Separation of Concerns** — Each agent handles exactly one responsibility in the pipeline
+
+---
+
+## 13. Production topology (live since 2026-05-26)
+
+The public BYOK demo replaces the local Streamlit + Ollama + Postgres + Qdrant docker-compose stack with a $0/month cloud topology. The same FastAPI + LangGraph code runs on both — only the dependencies and entry-point change.
+
+```mermaid
+graph LR
+    subgraph Browser
+        UI[Next.js 16 SSE chat<br/>secureagentrag-web.vercel.app]
+    end
+
+    subgraph Vercel Edge
+        Edge1[/api/chat/stream<br/>SSE proxy/]
+        Edge2[/api/audit<br/>JSON proxy/]
+        Edge3[/api/chat<br/>JSON fallback/]
+    end
+
+    subgraph HF Space :7860
+        FastAPI[FastAPI BYOK<br/>byok_mode=true]
+        Graph[LangGraph 9-node<br/>persona_style threaded]
+        Audit[utils.audit JSONL<br/>SHA-256 chain]
+        PII[utils.pii redact<br/>7 provider key shapes]
+    end
+
+    subgraph Qdrant Cloud 1GB
+        Coll[(documents<br/>RBAC payload filter<br/>BGE-M3 + BM25 sparse)]
+    end
+
+    subgraph Groq Free Tier
+        LLM[llama-3.1-8b-instant<br/>14,400 req/day<br/>X-Forwarded-For throttle]
+    end
+
+    subgraph GitHub Actions
+        Keep[cron 17 3 * * *<br/>healthz + chat keepalive]
+    end
+
+    UI -- 'X-Demo-Persona, X-Session-ID,<br/>X-User-LLM-Key (optional)' --> Edge1
+    UI --> Edge2
+    UI --> Edge3
+    Edge1 -- SSE passthrough --> FastAPI
+    Edge2 -- /byok/audit --> FastAPI
+    Edge3 -- /byok/chat --> FastAPI
+    FastAPI --> Graph
+    Graph -- RBAC + sensitivity --> Coll
+    Graph -- visitor BYOK OR throttled owner key --> LLM
+    FastAPI --> Audit
+    FastAPI --> PII
+    Keep -. defeats 48h idle .-> FastAPI
+```
+
+### Cost envelope ($0/month verified)
+
+| Component               | Tier            | Limits in play                                  |
+|-------------------------|-----------------|--------------------------------------------------|
+| Vercel Hobby            | Free            | 100 GB bandwidth / mo                            |
+| Hugging Face Space      | CPU Basic free  | 2 vCPU, 16 GB RAM, 48h idle sleep (cron defeated) |
+| Qdrant Cloud free       | 1 GB cluster    | 1 cluster, 4 collections, ~180 chunks resident   |
+| Groq llama-3.1-8b       | Free tier       | 14,400 req/day, 6000 TPM, per-IP owner throttle   |
+| GitHub Actions          | Free for public | 2000 min/mo (cron uses ~1 min/day)               |
+
+### Streaming + audit invariants (production-only)
+
+- **SSE wire shape** — `event: open | phase | token | blocked | final | error`. Vercel Edge runtime pipes the upstream response body directly so the proxy never buffers. Token deltas reach the browser sub-100ms.
+- **Session-scoped audit** — `/byok/audit` filters by `demo-<session_id>` user_id. Sessions cannot read each other's history. The frontend exports the visible rows as `.jsonl` with the SHA-256 `prev_hash` / `entry_hash` chain intact so the recipient can re-verify integrity.
+- **X-Forwarded-For trust** — the owner-key per-IP throttle reads the leftmost XFF token (production has a single trusted proxy). Without this fix, every HF visitor would share one bucket.
+- **HIGH cloud unlock** — `SAR_ALLOW_CLOUD_FOR_HIGH=true` in `Dockerfile.hf` lets HIGH-classified content synthesize on Groq because the Space has no local Ollama. The frontend labels those answers `sensitivity: high` so the visitor is informed.
+- **/readyz BYOK-aware** — skips the Ollama probe, pings `https://api.groq.com/openai/v1/models` with the owner key instead. The keepalive cron's success criterion mirrors what the demo actually depends on.

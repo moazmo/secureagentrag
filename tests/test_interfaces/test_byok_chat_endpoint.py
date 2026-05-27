@@ -45,37 +45,37 @@ def byok_app() -> Iterator:
             reset_owner_key_throttle()
 
 
-def _make_state(text: str = "ok"):
-    """Build a minimal QueryResponse-like state for the mocked pipeline."""
+def _make_state(text: str = "hello world") -> dict:
+    """Build a GraphState-shaped dict mirroring a real ``run_rag_pipeline`` result.
 
-    state = {
-        "answer": text,
-        "user_id": "demo-user",
-        "thread_id": "byok-test",
+    The endpoint code reads many of these keys (rewritten_query,
+    query_sensitivity, audit_trail, documents, relevant_documents,
+    faithfulness_ratio) to build the response envelope. The mock must
+    return all of them so the dict access in interfaces.api does not
+    raise.
+    """
+    return {
+        "generation": text,
         "citations": [],
-        "confidence": 0.9,
+        "confidence_score": 0.9,
         "needs_human_review": False,
+        "query_type": "simple",
+        "retry_count": 0,
+        "synth_provider": "groq",
+        "synth_model": "llama-3.1-8b-instant",
+        "synth_usage": {},
+        "synth_latency_ms": 10.0,
+        "guardrails_passed": True,
+        "guardrails_reason": "",
+        "security_passed": True,
+        "security_message": "",
+        "documents": [],
+        "relevant_documents": [],
+        "rewritten_query": "hello world",
+        "query_sensitivity": "low",
+        "faithfulness_ratio": 1.0,
         "audit_trail": [],
-        "graph_path": [],
     }
-    # QueryResponse.from_state may need a dict-shaped state; instead build the
-    # response directly and substitute it via the mock's return_value.
-    return state
-
-
-def _make_response():
-    from core.schemas import QueryResponse
-
-    return QueryResponse(
-        answer="hello world",
-        user_id="demo-user",
-        thread_id="byok-test",
-        citations=[],
-        confidence=0.9,
-        needs_human_review=False,
-        audit_trail=[],
-        graph_path=[],
-    )
 
 
 def test_byok_route_present_only_in_byok_mode() -> None:
@@ -97,13 +97,10 @@ def test_byok_route_present_only_in_byok_mode() -> None:
 def test_byok_chat_uses_owner_key_when_no_user_key(byok_app) -> None:
     """No ``X-User-LLM-Key`` header → owner-key path, throttle consumes a slot."""
     client, _ = byok_app
-    fake_resp = _make_response()
+    fake_state = _make_state()
 
-    # ``QueryResponse.from_state`` expects a state; patch it alongside the
-    # pipeline so the endpoint flows regardless of the real schema shape.
-    with (
-        patch("interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_resp)),
-        patch("interfaces.api.QueryResponse.from_state", return_value=fake_resp),
+    with patch(
+        "interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_state)
     ):
         r = client.post("/byok/chat", json={"query": "ping"})
     assert r.status_code == 200
@@ -115,10 +112,9 @@ def test_byok_chat_uses_owner_key_when_no_user_key(byok_app) -> None:
 def test_byok_chat_owner_key_quota_returns_429_after_three(byok_app) -> None:
     """Same IP → fourth owner-key call returns 429 with BYOK hint."""
     client, _ = byok_app
-    fake_resp = _make_response()
-    with (
-        patch("interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_resp)),
-        patch("interfaces.api.QueryResponse.from_state", return_value=fake_resp),
+    fake_state = _make_state()
+    with patch(
+        "interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_state)
     ):
         for _ in range(3):
             r = client.post("/byok/chat", json={"query": "ping"})
@@ -133,10 +129,9 @@ def test_byok_chat_owner_key_quota_returns_429_after_three(byok_app) -> None:
 def test_byok_chat_with_user_key_bypasses_throttle(byok_app) -> None:
     """Visitor BYOK never consumes owner-key quota."""
     client, _ = byok_app
-    fake_resp = _make_response()
-    with (
-        patch("interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_resp)),
-        patch("interfaces.api.QueryResponse.from_state", return_value=fake_resp),
+    fake_state = _make_state()
+    with patch(
+        "interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_state)
     ):
         for _ in range(10):  # 10 > quota_per_hour=3
             r = client.post(
@@ -152,18 +147,22 @@ def test_byok_chat_with_user_key_bypasses_throttle(byok_app) -> None:
 
 
 def test_byok_chat_translates_persona_to_user_ctx(byok_app) -> None:
-    """Persona header reaches the run_rag_pipeline call as the right UserContext."""
+    """Persona header reaches the run_rag_pipeline call as the right UserContext.
+
+    All demo personas now share ``org_id="demo"`` so they hit the same
+    ingested corpus; differentiation lives in clearance + roles enforced
+    at the Qdrant payload layer (mirrors production RBAC).
+    """
     client, _ = byok_app
-    fake_resp = _make_response()
+    fake_state = _make_state()
     seen_ctx = {}
 
     async def _capture(**kwargs):
         seen_ctx["user_context"] = kwargs["user_context"]
-        return fake_resp
+        return fake_state
 
-    with (
-        patch("interfaces.api.run_rag_pipeline", new=AsyncMock(side_effect=_capture)),
-        patch("interfaces.api.QueryResponse.from_state", return_value=fake_resp),
+    with patch(
+        "interfaces.api.run_rag_pipeline", new=AsyncMock(side_effect=_capture)
     ):
         r = client.post(
             "/byok/chat",
@@ -172,24 +171,23 @@ def test_byok_chat_translates_persona_to_user_ctx(byok_app) -> None:
         )
     assert r.status_code == 200
     ctx = seen_ctx["user_context"]
-    assert ctx.org_id == "demo-compliance"
-    assert ctx.clearance_level == 4
+    assert ctx.org_id == "demo"
+    assert ctx.clearance_level == 3
     assert "compliance" in ctx.roles
 
 
 def test_byok_chat_unknown_persona_falls_back_to_anon_clearance_1(byok_app) -> None:
     """Bogus persona must NOT leak into a higher clearance bucket."""
     client, _ = byok_app
-    fake_resp = _make_response()
+    fake_state = _make_state()
     seen_ctx = {}
 
     async def _capture(**kwargs):
         seen_ctx["user_context"] = kwargs["user_context"]
-        return fake_resp
+        return fake_state
 
-    with (
-        patch("interfaces.api.run_rag_pipeline", new=AsyncMock(side_effect=_capture)),
-        patch("interfaces.api.QueryResponse.from_state", return_value=fake_resp),
+    with patch(
+        "interfaces.api.run_rag_pipeline", new=AsyncMock(side_effect=_capture)
     ):
         r = client.post(
             "/byok/chat",
@@ -197,8 +195,11 @@ def test_byok_chat_unknown_persona_falls_back_to_anon_clearance_1(byok_app) -> N
             headers={"X-Demo-Persona": "ceo-of-everything"},
         )
     assert r.status_code == 200
+    # Unknown persona drops to clearance 1 / viewer; org_id remains "demo"
+    # because that's the only org in the BYOK demo corpus.
     assert seen_ctx["user_context"].clearance_level == 1
-    assert seen_ctx["user_context"].org_id == "demo-anon"
+    assert seen_ctx["user_context"].org_id == "demo"
+    assert seen_ctx["user_context"].roles == ["viewer"]
 
 
 def test_cors_middleware_allowlist_enforced(byok_app) -> None:

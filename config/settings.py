@@ -232,6 +232,15 @@ class Settings(BaseSettings):
     # CORS allowlist consulted by the FastAPI middleware when byok_mode=true.
     # Empty list = no CORS middleware mounted (dev default).
     cors_allow_origins: list[str] = []
+    # In production BYOK deploys (HF Space) there is no local Ollama. Setting
+    # this to True allows the inference router to use the configured cloud
+    # provider for HIGH-sensitivity content as well. Off by default so dev /
+    # staging keeps the strict local-only invariant for HIGH.
+    allow_cloud_for_high: bool = False
+    # Public-demo audit export — when BYOK is on, /byok/audit returns the last
+    # ``byok_audit_max_entries`` entries (no auth, but PII-redacted and
+    # session-scoped). Empty list disables the endpoint.
+    byok_audit_max_entries: int = 50
 
     # ── Multi-Modal RAG ──────────────────────────────────────────────────────────
     # When ingesting images, also generate a rich text description using a VLM.

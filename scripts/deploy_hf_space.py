@@ -56,8 +56,7 @@ short_description: Privacy-first multi-agent RAG (BYOK demo)
 
 Production backend for the [SecureAgentRAG](https://github.com/moazmo/secureagentrag) public demo.
 
-- **Frontend:** https://app.eilm.live
-- **Landing:** https://eilm.live
+- **Frontend:** https://secureagentrag-web.vercel.app
 - **Source:** https://github.com/moazmo/secureagentrag (branch `deploy/prod-launch`)
 - **License:** MIT
 
@@ -70,27 +69,50 @@ the Next.js frontend deployed on Vercel.
 Runs in BYOK (Bring Your Own Key) mode:
 
 - `POST /byok/chat` accepts visitor-supplied LLM credentials via headers
+- `POST /byok/chat/stream` is the SSE variant that surfaces phase / token /
+  blocked / final events for the live trace UI
+- `GET  /byok/audit` returns the visitor's last 50 PII-redacted audit
+  entries so the frontend can display the SHA-256 chain
 - Owner-key fallback is throttled to 3 requests per IP per hour (Groq free
-  tier protection)
+  tier protection) and consults `X-Forwarded-For` first so the throttle is
+  not bypassed by HF's reverse proxy
 - Each visitor gets a session-scoped Qdrant collection that auto-purges
   every 24 hours
 - Phoenix instrumentation is hard-disabled (no third-party telemetry sees
   prompts or keys)
 - Every audit-log persist runs through `utils.pii.redact` with regression
   tests for the Groq / OpenAI / Anthropic / HF / Vercel / Qdrant JWT shapes
+- `SAR_ALLOW_CLOUD_FOR_HIGH=true` -- HIGH-sensitivity content is allowed to
+  synthesize on the cloud LLM since this deploy has no local Ollama. The
+  frontend renders a "sensitive: routed to cloud" badge on those answers.
+
+## Demo personas
+
+| Persona     | Clearance | Roles                              | Sees                                                                                  |
+|-------------|-----------|------------------------------------|---------------------------------------------------------------------------------------|
+| engineer    | 2 (med)   | engineering                        | public handbook, eng runbook, incident runbook, infra ADR, ML model card, NIST RMF    |
+| compliance  | 3 (high)  | compliance, legal                  | public handbook, security policy, finance Q3, vendor MSA, ML model card, NIST, HR     |
+| executive   | 3 (high)  | executive, compliance, engineering | union of the above                                                                    |
+
+The RBAC filter is enforced at the Qdrant payload layer (`org_id` keyword +
+`sensitivity_level_int` range + `roles` match-any). Chunks the persona is
+not authorised to see are physically not returned, regardless of
+cosine-similarity score.
 
 ## Endpoints
 
-| Path | Purpose |
-|------|---------|
-| `GET  /healthz` | Liveness probe (used by GitHub Actions keepalive cron) |
-| `GET  /readyz`  | Readiness — pings Qdrant Cloud + Groq |
-| `POST /byok/chat` | Public-demo chat (BYOK or throttled owner-key) |
-| `POST /query` | Authenticated JWT endpoint (dev / staging compat) |
+| Path                    | Purpose                                                       |
+|-------------------------|---------------------------------------------------------------|
+| `GET  /healthz`         | Liveness probe (used by GitHub Actions keepalive cron)        |
+| `GET  /readyz`          | Readiness -- pings Qdrant Cloud + Groq (Ollama skipped here)  |
+| `POST /byok/chat`       | Public-demo chat (BYOK or throttled owner-key)                |
+| `POST /byok/chat/stream`| SSE variant -- emits phase / token / blocked / final events  |
+| `GET  /byok/audit`      | Session-scoped audit export (PII redacted, SHA-256 chained)   |
+| `POST /query`           | Authenticated JWT endpoint (dev / staging compat)             |
 
 ## Operator notes
 
-- 600 tests passing on the source repo at the commit pinned in
+- 600+ tests passing on the source repo at the commit pinned in
   `private/roadmap.md`.
 - Built from `Dockerfile.hf` in the source tree -- this Space copy is
   renamed to `Dockerfile` so HF picks it up automatically.

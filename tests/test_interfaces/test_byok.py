@@ -16,7 +16,55 @@ from interfaces.byok import (
     ByokCreds,
     _derive_session_id,
     build_creds,
+    client_ip_from_request,
 )
+
+# ── Client IP extraction (X-Forwarded-For aware) ───────────────────────────
+
+
+def _fake_request(headers: dict[str, str], peer: str | None = None) -> object:
+    """Minimal FastAPI Request stub for client_ip_from_request tests."""
+
+    class _Client:
+        def __init__(self, host: str) -> None:
+            self.host = host
+
+    obj = MagicMock()
+    obj.headers = headers
+    obj.client = _Client(peer) if peer else None
+    return obj
+
+
+def test_client_ip_prefers_x_forwarded_for_leftmost() -> None:
+    """XFF chain ``client, proxy1, proxy2`` -> the leftmost token is returned.
+
+    HF Spaces sits behind multiple proxies; the rightmost entries are the
+    HF infrastructure IPs and would collapse every visitor into one
+    throttle bucket. The original client IP is always leftmost.
+    """
+    req = _fake_request(
+        {"x-forwarded-for": "203.0.113.42, 10.0.0.1, 10.0.0.2"},
+        peer="172.16.0.1",
+    )
+    assert client_ip_from_request(req) == "203.0.113.42"
+
+
+def test_client_ip_falls_back_to_x_real_ip() -> None:
+    """X-Real-IP wins over the socket peer when XFF is absent."""
+    req = _fake_request({"x-real-ip": "198.51.100.7"}, peer="172.16.0.1")
+    assert client_ip_from_request(req) == "198.51.100.7"
+
+
+def test_client_ip_falls_back_to_socket_peer() -> None:
+    """No proxy headers -> use request.client.host."""
+    req = _fake_request({}, peer="172.16.0.50")
+    assert client_ip_from_request(req) == "172.16.0.50"
+
+
+def test_client_ip_anonymous_when_everything_missing() -> None:
+    """Returns the literal ``anon`` string -- the throttle never crashes on None."""
+    req = _fake_request({}, peer=None)
+    assert client_ip_from_request(req) == "anon"
 
 # ── Pure factory tests ──────────────────────────────────────────────────────
 
