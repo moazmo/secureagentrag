@@ -43,6 +43,10 @@ class TestInferenceRouterRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "test-key"
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             mock_settings.openai_api_key = None
             mock_settings.anthropic_api_key = None
             router = InferenceRouter()
@@ -57,6 +61,10 @@ class TestInferenceRouterRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = None
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             mock_settings.openai_api_key = None
             mock_settings.anthropic_api_key = None
             router = InferenceRouter()
@@ -68,6 +76,10 @@ class TestInferenceRouterRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "test-key"
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             decision = router_with_cloud.route(sensitivity_level="high", prefer_cloud=True)
 
         assert decision.provider == "ollama"
@@ -82,6 +94,10 @@ class TestInferenceRouterRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "test-key"
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             decision = router_with_cloud.route(sensitivity_level="high", prefer_cloud=True)
 
         assert decision.provider == "ollama"
@@ -102,6 +118,9 @@ class TestInferenceRouterRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "test-key"
             mock_settings.allow_cloud_for_high = True
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
             decision = router_with_cloud.route(sensitivity_level="high", prefer_cloud=False)
 
         assert decision.provider == "groq"
@@ -114,6 +133,10 @@ class TestInferenceRouterRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "test-key"
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             decision = router_with_cloud.route(sensitivity_level="low", prefer_cloud=True)
 
         assert decision.provider == "groq"
@@ -147,6 +170,10 @@ class TestInferenceRouterRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "test-key"
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             decision = router_with_cloud.route(sensitivity_level="medium", prefer_cloud=True)
 
         assert decision.provider == "groq"
@@ -156,6 +183,9 @@ class TestInferenceRouterRouting:
         """override_provider should bypass sensitivity routing entirely."""
         with patch("inference.router.settings") as mock_settings:
             mock_settings.llm_model = "qwen3:8b"
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
             decision = router_with_cloud.route(
                 sensitivity_level="high",
                 prefer_cloud=False,
@@ -172,6 +202,10 @@ class TestInferenceRouterRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = None
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             mock_settings.openai_api_key = None
             mock_settings.anthropic_api_key = None
             decision = router_no_cloud.route(sensitivity_level="low", prefer_cloud=True)
@@ -190,6 +224,10 @@ class TestInferenceRouterAvailableProviders:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = None
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             mock_settings.openai_api_key = None
             mock_settings.anthropic_api_key = None
             router = InferenceRouter()
@@ -205,6 +243,10 @@ class TestInferenceRouterAvailableProviders:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "key1"
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             mock_settings.openai_api_key = "key2"
             mock_settings.anthropic_api_key = "key3"
             router = InferenceRouter()
@@ -223,6 +265,10 @@ class TestInferenceRouterAvailableProviders:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "key1"
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
             mock_settings.openai_api_key = None
             mock_settings.anthropic_api_key = "key3"
             router = InferenceRouter()
@@ -254,6 +300,10 @@ class TestInferenceRouterGenerateWithRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "key"
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
 
             router = InferenceRouter()
             response, decision = await router.generate_with_routing(
@@ -285,6 +335,10 @@ class TestInferenceRouterGenerateWithRouting:
             mock_settings.llm_model = "qwen3:8b"
             mock_settings.groq_api_key = "key"
             mock_settings.allow_cloud_for_high = False
+            mock_settings.groq_model = "llama-3.1-8b-instant"
+            mock_settings.openai_model = "gpt-4o-mini"
+            mock_settings.anthropic_model = "claude-sonnet-4"
+            mock_settings.llm_model = "qwen3:8b"
 
             router = InferenceRouter()
             messages = [{"role": "user", "content": "Hello"}]

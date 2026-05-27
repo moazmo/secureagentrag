@@ -84,6 +84,14 @@ class Settings(BaseSettings):
     groq_api_base: str = "https://api.groq.com/openai/v1"
     openai_api_base: str = "https://api.openai.com/v1"
     anthropic_api_base: str = "https://api.anthropic.com/v1"
+    # Per-provider default model. Used when the router falls back to a
+    # provider's default (no override_provider or BYOK model). Free-tier
+    # Groq's 30 RPM cap is shared across models, but the 8b-instant model
+    # has a higher TPM budget than 70b-versatile and finishes generations
+    # in ~1 s instead of ~5 s -- the right pick for the demo.
+    groq_model: str = "llama-3.1-8b-instant"
+    openai_model: str = "gpt-4o-mini"
+    anthropic_model: str = "claude-sonnet-4-20250514"
 
     # ── RAG Pipeline Thresholds ───────────────────────────────────────────────────
     relevance_retry_threshold: float = 0.5
@@ -261,6 +269,13 @@ class Settings(BaseSettings):
     # visitor a confusing "no docs relevant" refusal even when the retrieval
     # ranking is correct. Bypass = trust the embedding + RRF ordering.
     byok_skip_grader: bool = True
+    # Skip the evaluator node's two LLM calls (hallucination check +
+    # completeness check) when BYOK demo mode is on. On the free-tier
+    # Groq 30 RPM cap, the evaluator alone consumes 2 calls per chat
+    # which is enough to throttle a busy demo. The synthesizer's own
+    # citation discipline + the per-sentence faithfulness gate (still
+    # available for paid tiers) are stronger quality signals anyway.
+    byok_skip_evaluator: bool = True
     # Extensions allowed on the BYOK upload endpoint. .pdf parsed via PyPDF2;
     # .txt / .md pass through the text loader. OCR / docx / csv stay off to
     # avoid pulling Paddle (~700 MB) into the image.

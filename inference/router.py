@@ -389,8 +389,8 @@ class InferenceRouter:
         """
         model_defaults: dict[str, str] = {
             "ollama": settings.llm_model,
-            "groq": "llama-3.3-70b-versatile",
-            "openai": "gpt-4o-mini",
-            "anthropic": "claude-sonnet-4-20250514",
+            "groq": settings.groq_model,
+            "openai": settings.openai_model,
+            "anthropic": settings.anthropic_model,
         }
         return model_defaults.get(provider, settings.llm_model)

@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from config.settings import settings
 from core.state import GraphState  # noqa: TC001
 from utils.logging import get_logger
 from utils.observability import trace_llm_call
@@ -270,23 +271,33 @@ async def route_query(state: GraphState) -> dict:
     prefer_cloud = state.get("prefer_cloud", False)
     logger.info("routing_query", query_len=len(query), prefer_cloud=prefer_cloud)
 
-    prompt = _get_routing_prompt(query)
-    response = await call_llm_async(
-        prompt,
-        system_prompt="You are a query classification assistant.",
-        prefer_cloud=prefer_cloud,
-    )
-
-    # Parse the response — normalize to expected categories
-    response_clean = response.strip().lower().replace('"', "").replace("'", "")
-    valid_types = {"simple", "complex", "out_of_scope"}
-
-    if response_clean in valid_types:
-        query_type = response_clean
+    # Short-query heuristic: bypass the LLM classifier entirely when the
+    # query is short enough that the "simple" vs "complex" distinction
+    # rarely matters. Saves one Groq call per chat in BYOK demo mode
+    # (where the 30 RPM cap is the binding constraint). Threshold of
+    # 80 chars covers most demo prompts; longer queries still pay the
+    # classifier cost so the corrective-RAG retry budget tunes correctly.
+    if settings.byok_mode and len(query) <= 80:
+        query_type = "simple"
+        logger.info("route_query_shortcut", reason="byok_short_query")
     else:
-        # Default to complex if LLM response is unparseable
-        query_type = "complex"
-        logger.warning("route_query_fallback", raw_response=response_clean)
+        prompt = _get_routing_prompt(query)
+        response = await call_llm_async(
+            prompt,
+            system_prompt="You are a query classification assistant.",
+            prefer_cloud=prefer_cloud,
+        )
+
+        # Parse the response — normalize to expected categories
+        response_clean = response.strip().lower().replace('"', "").replace("'", "")
+        valid_types = {"simple", "complex", "out_of_scope"}
+
+        if response_clean in valid_types:
+            query_type = response_clean
+        else:
+            # Default to complex if LLM response is unparseable
+            query_type = "complex"
+            logger.warning("route_query_fallback", raw_response=response_clean)
 
     # Set routing parameters based on query type
     routing_config = _get_routing_config(query_type)

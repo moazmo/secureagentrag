@@ -265,6 +265,37 @@ async def evaluate_response(state: GraphState) -> dict:
     # ── Metric 2: Evidence Strength (heuristic, no LLM call) ────────────────
     evidence_strength = _compute_evidence_strength(citations, docs_to_use)
 
+    # ── Skip LLM-driven evaluator metrics in BYOK demo mode ─────────────────
+    # The free-tier Groq 30 RPM cap is the binding constraint on the
+    # public demo. Cutting these two extra LLM calls per chat halves
+    # the Groq-call surface area; the heuristic metrics above are
+    # still computed and feed the confidence score.
+    from config.settings import settings as _settings
+
+    if _settings.byok_mode and _settings.byok_skip_evaluator:
+        confidence = round(
+            (citation_coverage * 0.5 + evidence_strength * 0.5), 3
+        )
+        return {
+            "confidence_score": confidence,
+            "needs_human_review": confidence < _settings.confidence_threshold,
+            "evaluation_notes": (
+                f"byok_eval_skip: citation_coverage={citation_coverage:.2f}, "
+                f"evidence_strength={evidence_strength:.2f}"
+            ),
+            "audit_trail": [
+                {
+                    "node": "evaluator",
+                    "action": "evaluate_response",
+                    "bypass": "byok_skip_evaluator",
+                    "confidence_score": confidence,
+                    "citation_coverage": citation_coverage,
+                    "evidence_strength": evidence_strength,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            ],
+        }
+
     # ── Metric 3 & 4: Hallucination Check + Completeness (batched LLM) ──────
     context_str = "\n---\n".join(doc.get("text", "")[:300] for doc in docs_to_use[:5])
 

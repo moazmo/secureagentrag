@@ -151,6 +151,23 @@ ENV SAR_RELEVANCE_RETRY_THRESHOLD=0.3
 # stack Groq calls without meaningfully improving recall on a 10-doc
 # corpus and just chew through the SLO.
 ENV SAR_MAX_RETRIES=1
+# RAG fusion fires 1 extra Groq call per chat to generate N query
+# reformulations + N parallel Qdrant searches. Useless on a 10-doc
+# demo corpus where the original query already retrieves the right
+# chunks; disabled here to cut Groq call count.
+ENV SAR_RAG_FUSION_ENABLED=false
+# Pin the Groq model to llama-3.1-8b-instant for the demo. The
+# default 70b-versatile model hits the 30 RPM cap faster (heavier
+# generation = slower throughput), and the 8b model finishes in
+# ~1 s on prompts under 4k tokens with comparable answer quality
+# on this small corpus.
+ENV SAR_GROQ_MODEL=llama-3.1-8b-instant
+# With the reranker disabled + grader bypassed, the synth context cap
+# (rerank_top_k) doubles as the doc budget into the synth prompt. Raise
+# from 5 -> 10 so all retrieved chunks reach the LLM; llama-3.1-8b has
+# a 131k context so 10 chunks × 600 chars = trivial. Bigger context here
+# is the easiest quality lever now that reranker is off.
+ENV SAR_RERANK_TOP_K=10
 # Faithfulness gate disabled on the public BYOK demo: it makes one Groq
 # call per cited sentence (typically 5-10 extra calls per answer). On
 # the free-tier 30 RPM budget a single chatty answer can exhaust the
