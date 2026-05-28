@@ -34,6 +34,14 @@ def setup_tracing() -> bool:
     """
     global _tracer, _phoenix_configured, _phoenix_project_name
 
+    # BYOK mode mandates: no third-party telemetry sees a request. Phoenix
+    # spans capture LLM prompts and completions, which would include the
+    # visitor's keys-in-context and any private text they uploaded. Hard
+    # disable in BYOK regardless of phoenix_endpoint configuration.
+    if settings.byok_mode:
+        _log.info("phoenix_tracing_disabled", reason="BYOK mode forbids external telemetry")
+        return False
+
     if not settings.phoenix_endpoint:
         _log.info("phoenix_tracing_disabled", reason="No phoenix_endpoint configured")
         return False

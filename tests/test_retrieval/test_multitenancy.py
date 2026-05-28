@@ -34,6 +34,43 @@ def test_collection_name_empty_org_returns_default() -> None:
         assert get_collection_name("") == settings.qdrant_collection
 
 
+def test_collection_name_byok_session_overrides_org() -> None:
+    """In BYOK mode, session_id beats org_id — visitor isolation is stricter."""
+    with (
+        patch.object(settings, "byok_mode", True),
+        patch.object(settings, "multi_tenant_collections", True),
+    ):
+        # session_id present → session collection regardless of org_id
+        assert (
+            get_collection_name("acme_corp", session_id="abc-123")
+            == f"{settings.qdrant_collection}_sess_abc_123"
+        )
+        # session_id absent → falls back to multi-tenant routing
+        assert get_collection_name("acme_corp") == f"{settings.qdrant_collection}_acme_corp"
+
+
+def test_collection_name_byok_session_sanitises_id() -> None:
+    """Session UUIDs from clients can contain dashes; collection-safe sanitise."""
+    with patch.object(settings, "byok_mode", True):
+        # standard UUID4 format
+        assert (
+            get_collection_name(session_id="550e8400-e29b-41d4-a716-446655440000")
+            == f"{settings.qdrant_collection}_sess_550e8400_e29b_41d4_a716_446655440000"
+        )
+        # punctuation gets replaced
+        assert (
+            get_collection_name(session_id="sess.with/punct")
+            == f"{settings.qdrant_collection}_sess_sess_with_punct"
+        )
+
+
+def test_collection_name_byok_session_ignored_when_mode_off() -> None:
+    """Session_id alone does NOT trigger session collection — needs byok_mode."""
+    with patch.object(settings, "byok_mode", False):
+        # In dev mode (no BYOK), session_id is silently ignored.
+        assert get_collection_name(session_id="anything") == settings.qdrant_collection
+
+
 def test_qdrant_manager_for_org_returns_self_in_single_tenant() -> None:
     from retrieval.qdrant_client import QdrantManager
 

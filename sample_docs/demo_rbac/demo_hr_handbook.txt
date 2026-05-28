@@ -1,0 +1,59 @@
+ACME EMPLOYEE HANDBOOK — selected policies
+===========================================
+Version 2026.1  ·  Effective: 2026-01-01  ·  Maintained by People Operations
+
+1. WORKING HOURS AND TIME OFF
+   1.1 Core hours: 10:00–16:00 local. Outside that window, work-when-you-work.
+       For roles with a scheduled rotation (on-call, customer support), the
+       rotation schedule supersedes core hours.
+   1.2 Paid time off: 25 working days per calendar year, accrued monthly,
+       carry-over up to 5 days. Sick leave is separate and uncapped, but
+       absences over 3 consecutive days require a doctor's note.
+   1.3 Public holidays follow each office's local calendar. Remote employees
+       follow the calendar of the office assigned at hire.
+
+2. REMOTE WORK
+   2.1 ACME is remote-first. Employees may work from any country in which
+       ACME has a permanent establishment OR a Remote.com employer-of-record
+       relationship.
+   2.2 Workspace stipend: $1,500 at hire, $400 annual refresh. Submit via
+       Expensify with the WS-2026 category code.
+   2.3 Travel: when on-site visits are mandated (offsites, customer visits),
+       ACME books and pays directly. Per-diem covers meals up to $75 per day
+       (US/EU) or $50 (other regions).
+
+3. CODE OF CONDUCT
+   3.1 ACME maintains a zero-tolerance policy for harassment, discrimination,
+       or retaliation. Reports may be made to People Operations or anonymously
+       through the third-party Whistleblower line (vendor: Lighthouse).
+   3.2 The People Ops Investigation Standard (POI-2026) requires an
+       acknowledged response within 48 hours and an initial findings report
+       within 14 days, extended only with the complainant's written consent.
+
+4. PERFORMANCE
+   4.1 Reviews run semi-annually (January, July). Calibration is the manager's
+       responsibility; the People Ops team reviews calibration outputs for
+       protected-class drift before any compensation decisions are finalised.
+   4.2 Performance Improvement Plans (PIPs): minimum 60 days, with clear
+       written goals reviewed weekly. Skipping a PIP for termination requires
+       People Ops + General Counsel approval.
+
+5. COMPENSATION
+   5.1 Pay bands are published internally on the People Ops wiki. Each role
+       has a single global band adjusted by geographic cost-of-labour factor
+       (San Francisco = 100; New York = 95; London = 88; Berlin = 78; etc.).
+   5.2 Annual merit cycle: April. Promotion cycle: October. Spot bonuses are
+       available year-round at the manager's discretion within the team
+       quarterly budget.
+
+6. CONFIDENTIALITY
+   6.1 Employees handling CONFIDENTIAL or RESTRICTED data (per ACME-SEC-001)
+       must complete annual data-handling training and pass the included
+       knowledge check.
+   6.2 Departing employees: People Ops coordinates with IT for credential
+       revocation within 1 hour of last-day end-of-business. Manager-led
+       knowledge transfer plans are required for all departures.
+
+CONTACT
+   People Ops: people@acme.example  ·  Whistleblower line: lighthouse.acme.example
+   This handbook is INTERNAL — do not share externally without People Ops approval.

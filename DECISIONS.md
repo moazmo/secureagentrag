@@ -837,3 +837,441 @@ Two issues remained:
 - (-) Cache invalidation on schema change requires a process restart.
   Acceptable because schema changes are rare and the existing
   ``scripts/migrate_to_splade.py`` already requires a full re-ingest.
+
+---
+
+## ADR-025: BYOK Demo Mode (per-request key + session collections)
+
+**Date:** 2026-05-26
+**Status:** Accepted (flipped from draft when `/byok/chat` served traffic
+end-to-end from Egypt via the HF Space)
+
+**Context:**
+The public production launch needs a demo any visitor can try without us
+paying per-token LLM costs. Three patterns were considered:
+
+1. Owner-funded — single Groq key paid by the owner. Free tier exhausts
+   in hours under any traffic. Rejected.
+2. Per-user OAuth + cloud credits — sign visitors up for N free queries.
+   30 s of OAuth before the demo is visible. Friction kills the demo.
+   Rejected.
+3. **BYOK — visitor pastes their own key** — zero key-burn risk on the
+   owner side, introduces the threat surface of routing visitor keys
+   through our backend. Must never persist.
+
+Independent constraint: HF Spaces is the chosen backend host (ADR-026).
+Its ephemeral disk + 48-hour idle sleep forces a stateless-per-session
+design that matches BYOK naturally.
+
+**Decision:**
+Implement a BYOK mode behind ``SAR_BYOK_MODE=true``. Concretely:
+
+- Per-request headers ``X-User-LLM-Key``, ``X-User-Provider``,
+  ``X-User-Ollama-URL``, ``X-Session-ID``, ``X-Demo-Persona`` are extracted
+  by ``interfaces/byok.py`` and threaded into the LangGraph pipeline.
+- Owner-key fallback is gated by a per-IP rate limit. Default
+  ``SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10`` (raised from initial 3 after
+  live testing showed visitors blocked on the 3rd query).
+- ``X-Forwarded-For`` leftmost token is the trusted IP because HF Spaces
+  masks ``request.client.host`` behind a reverse proxy. Without this,
+  every visitor would share one throttle bucket.
+- Each session gets a Qdrant collection named
+  ``documents_sess_<sanitized_session_id>`` for uploads (see ADR-029).
+- A purge cron deletes session collections older than
+  ``SAR_SESSION_TTL_HOURS=24``.
+- Phoenix instrumentation is forcibly disabled when BYOK mode is on so
+  no observability layer sees the visitor key.
+- Audit log redacts API key patterns (Groq ``gsk_*``, OpenAI ``sk-*``
+  and ``sk-proj-*``, Anthropic ``sk-ant-*``, HuggingFace ``hf_*``,
+  Vercel ``vcp_*``, Qdrant JWT) before persist.
+- CORS allowlist limited to the Vercel frontend URL via
+  ``SAR_CORS_ALLOW_ORIGINS``.
+- Persona presets ``_DEMO_PERSONAS`` (engineer / compliance / executive)
+  map ``X-Demo-Persona`` to clearance + roles + system-prompt style.
+- BYOK mode bypasses the LLM-evaluator and grader by default
+  (``SAR_BYOK_SKIP_GRADER=true``, ``SAR_BYOK_SKIP_EVALUATOR=true``) — see
+  ADR-030 for the cost-trade rationale.
+- BYOK mode suppresses the synth-side sensitivity disclaimer because the
+  frontend renders a dedicated ``sensitivity:`` badge instead.
+
+**Consequences:**
+
+- (+) Zero recurring LLM cost regardless of demo traffic.
+- (+) Recruiter can paste a ``$0.10`` test-budget Groq key and verify
+  the entire stack works without giving us anything.
+- (+) Per-session collection isolation is a free side-effect that
+  doubles as a multi-tenancy proof point.
+- (+) Aligns with the privacy-first narrative — "we never store your
+  keys, even for telemetry."
+- (-) Introduces a new threat surface (BYOK key in transit). Mitigated
+  by HTTPS-only, never-log-body, redaction regression test, and the
+  no-Phoenix rule.
+- (-) Owner-key fallback still exists for visitors without a key; 10/hr
+  per IP throttle defends the daily Groq budget. Rotation declined —
+  the throttle structurally caps single-abuser cost below the budget.
+- (-) BYOK mode changes the *meaning* of half the existing settings
+  (faithfulness, evaluator, RAG-fusion, reranker can all be off in
+  production while the codepaths remain in tree). ADR-030 documents
+  those trade-offs explicitly.
+- (-) Session cleanup adds a cron job that must stay alive.
+
+**Acceptance criteria (all met 2026-05-26):**
+
+- ✅ ``interfaces/byok.py`` shipped, owner + visitor BYOK paths green
+- ✅ ``tests/test_security/`` API-key redaction tests green
+- ✅ ``tests/test_interfaces/test_byok.py`` per-IP throttle + header
+  extraction tests green
+- ✅ Session collection purge tested live on Qdrant Cloud
+- ✅ Live ``/byok/chat`` round-trip from Egypt streaming SSE tokens
+
+---
+
+## ADR-026: Hugging Face Spaces as Production Backend Host
+
+**Date:** 2026-05-26
+**Status:** Accepted (flipped from draft when ``/healthz`` returned 200
+from Egypt and ``/byok/chat`` completed end-to-end)
+
+**Context:**
+Production backend host must hit four hard constraints: zero USD, no
+credit card at signup, available in Egypt, no Render-style cold start.
+
+A 2026-05-25 free-tier audit narrowed the candidates to Hugging Face
+Spaces (Docker, CPU Basic, 16 GB RAM, 48 h idle sleep), Northflank
+Sandbox (CC requirement unclear), Streamlit Community Cloud (shorter
+sleep), and Vercel Hobby Python (60 s function timeout — too short).
+
+**Decision:**
+Use **Hugging Face Spaces with the Docker SDK on CPU Basic hardware**.
+
+- Space: ``huggingface.co/spaces/LeomordKaly/secureagentrag-api``
+- Public URL: ``LeomordKaly-secureagentrag-api.hf.space``
+- Hardware: CPU Basic (2 vCPU, 16 GB RAM, $0/mo)
+- Build: ``Dockerfile.hf`` in the GitHub repo, two-stage build with uv
+- Sleep mitigation: GitHub Actions cron at 03:17 UTC daily pings
+  ``/healthz`` plus a tiny ``/byok/chat`` round-trip
+- Secrets: ``SAR_QDRANT_URL``, ``SAR_QDRANT_API_KEY``, ``SAR_GROQ_API_KEY``
+  via HF Space secrets panel — never baked into the image
+- Reranker: ``SAR_RERANKER_TYPE=none`` in production. The fine-tuned 2.3
+  GB checkpoint is intentionally not uploaded (would blow CPU Basic disk;
+  ADR-022 acceptance criteria are still met in the available mode)
+
+**Consequences:**
+
+- (+) Zero recurring cost.
+- (+) 16 GB RAM fits BGE-M3 + FastAPI + Python stack with >10 GB headroom.
+- (+) ``git push`` deploy via ``scripts/deploy_hf_space.py``.
+- (+) Free ``.hf.space`` subdomain — no domain purchase required.
+- (+) 48-hour sleep boundary (vs Render's 15 min) — 192× more forgiving.
+- (-) 30–60 s cold start on first wake. Mitigated by keepalive cron.
+- (-) Ephemeral disk — audit log + checkpoints wiped per restart.
+  Acceptable for BYOK demo; aligns with the privacy story.
+- (-) CPU only — synth latency on Groq dwarfs anything CPU does locally,
+  so this is a non-issue in practice.
+- (-) Custom domain requires HF Pro ($9/mo). Skipped — the Vercel
+  subdomain is the recruiter-facing URL.
+
+**Acceptance criteria (all met 2026-05-26):**
+
+- ✅ HF Space provisioned, reachable from Egypt at 0.54 s TTFB
+- ✅ ``Dockerfile.hf`` builds cleanly (450 s on the HF runner)
+- ✅ ``curl .../healthz`` returns 200 from Egypt
+- ✅ Phase 2 BYOK backend runs successfully on the Space
+- ✅ Live ``/byok/chat`` round-trip with owner-key + with visitor BYOK key
+
+---
+
+## ADR-027: Vercel + Next.js 16 Frontend (drop Streamlit for the public demo)
+
+**Date:** 2026-05-26
+**Status:** Accepted (flipped from draft when the Vercel deploy served a
+streaming response from Egypt end-to-end)
+
+**Context:**
+The Streamlit UI (``app/``) is the local-dev face but recruiter optics +
+mobile responsiveness + 2026 visual standards push us to Next.js +
+shadcn/ui for the public demo. Streamlit-on-HF-Spaces also has websocket
+reliability issues through HF's proxy.
+
+**Decision:**
+Build a **Next.js 16 App Router frontend with Tailwind v4 + SSE
+streaming**, deployed to **Vercel Hobby plan**. Streamlit remains in the
+repo for local development; it is no longer the public face of the demo.
+
+- Sibling repo: ``github.com/moazmo/secureagentrag-web``
+- URL: ``secureagentrag-web.vercel.app`` (Hostinger custom-domain detour
+  cancelled 2026-05-27)
+- Streaming: Vercel Edge runtime proxy with ``duplex: "half"`` so the
+  upstream SSE body pipes through without buffering. Token deltas reach
+  the browser sub-100 ms.
+- BYOK input: drawer + localStorage persistence (never cookies — CSRF
+  surface)
+- Audit viewer: client-side download as ``.jsonl`` with the SHA-256
+  ``prev_hash``/``entry_hash`` chain intact for offline verification
+- Persona switcher: three preset RBAC profiles (engineer / compliance /
+  executive) — header drives the backend persona map
+- PDF upload: drag-drop + progress bar → multipart POST to backend, 5 MB
+  / 5 files / 60 chunks per file cap (ADR-029)
+- Theme: eye-comfort dark palette (``--background: #0c0d10``,
+  ``--foreground: #e6e7ea``, ``--accent: #6b8afd``)
+
+**Consequences:**
+
+- (+) Zero cold start (Vercel Edge for SSR + Edge function for the SSE
+  bridge).
+- (+) "Next.js on Vercel" matches the recruiter mental model for AI
+  products. Streamlit signals "data-scientist tool."
+- (+) BYOK UX is clean — drawer + localStorage is a familiar pattern.
+- (+) Mobile responsiveness comes free from Tailwind primitives.
+- (+) Separates frontend and backend lifecycles — UI can iterate without
+  redeploying the model layer.
+- (-) Two repos to maintain.
+- (-) Some duplication of types between TypeScript and Python; mitigated
+  by mirroring the Pydantic schema by hand for the demo surface (we are
+  small enough that an openapi codegen pipeline would be overkill).
+- (-) The SSE wire format had to be bridged because Vercel AI SDK's
+  default contract differs from our ``graph.astream(stream_mode=
+  ["updates","custom"])`` events. ~120 LOC of bridge code in
+  ``secureagentrag-web/src/lib/stream.ts``.
+
+**Acceptance criteria (all met 2026-05-26..27):**
+
+- ✅ Sibling repo created on GitHub
+- ✅ Vercel project linked + ``vercel --prod`` deploy clean
+- ✅ ``https://secureagentrag-web.vercel.app`` reachable from Egypt
+- ✅ BYOK drawer saves to localStorage and forwards header on next request
+- ✅ End-to-end streaming smoke against live HF Space backend works
+- ✅ Lighthouse acceptable on mobile
+
+---
+
+## ADR-028: Qdrant Cloud Free Tier + Per-Session Collections
+
+**Date:** 2026-05-26
+**Status:** Accepted (flipped from draft when the demo corpus ingest +
+RBAC matrix proved live on the Cloud cluster from the HF Space)
+
+**Context:**
+For the HF Spaces backend (ADR-026), self-hosting Qdrant inside the Space
+is risky because the disk is ephemeral. We need an externally-hosted
+Qdrant that stays alive across HF Space restarts and supports both the
+RBAC payload filter and the native sparse field shape from ADR-020/ADR-024.
+
+**Decision:**
+Use **Qdrant Cloud free tier (1 GB / 1M vectors / always-on)**.
+
+- Cluster: 1 free node in AWS us-east-1 (~150 ms latency from Egypt)
+- Base collection: ``documents`` — 10 demo RBAC docs (138 chunks, 276
+  points incl. sparse), tagged engineer / compliance / executive
+- Per-session: ``documents_sess_<sanitized_session_id>`` (see ADR-029)
+- TTL: 24 hours via ``SAR_SESSION_TTL_HOURS``
+- Purge cron: ``scripts/byok_session_purge.py`` deletes session
+  collections past TTL
+- Credentials: ``SAR_QDRANT_URL`` + ``SAR_QDRANT_API_KEY`` as HF Space
+  secrets
+- Sparse: BGE-M3 dense + BM25 sparse (no SPLADE in production — keeps
+  cold path zero-dep)
+- ``SAR_MULTI_TENANT_COLLECTIONS=true`` so the base collection route
+  flows through the same ``for_org()`` path as the per-session ones
+
+**Consequences:**
+
+- (+) Always-on, no sleep on the vector store.
+- (+) Zero migration — the existing ``retrieval/qdrant_client.py``
+  already speaks to remote URLs.
+- (+) Per-session isolation is structural: each query targets exactly
+  one ``documents_sess_<sid>`` plus the base, both under the same RBAC
+  filter.
+- (+) The 24 h TTL is a clean answer to "what happens to my uploads".
+- (-) 1 GB cap. At peak (~50 concurrent visitors × 5 files × 60 chunks)
+  ~120 MB resident — comfortable. Purge cron is the safety net.
+- (-) Network round-trip from HF Space → Qdrant Cloud adds ~30–50 ms.
+  Dwarfed by LLM latency.
+- (-) Cluster URL embedded in HF Space secrets — rotation requires
+  updating the Space config.
+
+**Acceptance criteria (all met 2026-05-26):**
+
+- ✅ Qdrant Cloud free cluster provisioned and accessible from HF Space
+- ✅ Phase 1c sparse vector smoke green
+- ✅ Phase 7 demo corpus ingest (10 docs / 138 chunks) live
+- ✅ Purge cron tested against artificial old collections
+
+---
+
+## ADR-029: BYOK Document Uploads — Session-Scoped Qdrant Collections + Dual-Collection RRF Retrieval
+
+**Date:** 2026-05-27
+**Status:** Accepted
+
+**Context:**
+Visitors want to bring their own documents into the demo (resume,
+runbook, paper, etc.) and ask questions across them. Three patterns:
+
+1. Re-ingest into the base ``documents`` collection — would pollute the
+   shared corpus and require RBAC trickery to keep visitor docs scoped.
+   Rejected.
+2. Per-org collection via existing ``for_org()`` — assumes an authenticated
+   org_id which BYOK visitors don't have. Rejected.
+3. **Per-session collection** keyed on ``X-Session-ID``, with retrieval
+   fanning out to both the base collection and the session collection,
+   results fused by RRF. **Chosen.**
+
+**Decision:**
+
+- ``QdrantManager.for_session(session_id)`` mirrors ``for_org()``: caches
+  per-session managers, creates ``documents_sess_<sid>`` with the same
+  payload index set (``org_id``, ``sensitivity_level_int``, ``roles``,
+  ``user_id``, ``source_file``, ``source_file_id``) so the RBAC filter
+  shape is identical.
+- New endpoints in ``interfaces/api.py``:
+  - ``POST /byok/uploads`` — multipart upload, runs ``ingestion/pipeline``
+    against the session collection, returns ``{file_id, chunks, size_bytes}``
+  - ``GET /byok/uploads`` — list visitor's files
+  - ``DELETE /byok/uploads/{file_id}`` — delete by ``source_file_id``
+- Hard caps (env-tunable):
+  - ``SAR_BYOK_UPLOAD_MAX_BYTES=5*1024*1024`` (5 MB per file)
+  - ``SAR_BYOK_UPLOAD_MAX_FILES=5`` (per session)
+  - ``SAR_BYOK_UPLOAD_MAX_CHUNKS_PER_FILE=60`` (chatty PDFs rejected)
+  - ``SAR_BYOK_UPLOAD_ALLOWED_EXTENSIONS=[".txt", ".md", ".pdf"]``
+- ``HybridSearcher.search(session_id=...)`` runs parallel dense + sparse
+  against both base and session collections, RRF-fuses the four result
+  sets, returns top_k. The session collection ``top_k`` is bounded by
+  ``SAR_TOP_K`` (not ``*2``) to keep candidate count tight.
+- Pre-existing bug fixed during this work: ``HybridSearcher._embeddings``
+  attribute was actually ``_embedder`` (referenced incorrectly in two
+  call sites in ``interfaces/api.py``).
+
+**Consequences:**
+
+- (+) Structurally impossible cross-session leakage — each session's
+  collection name carries the session id; one query cannot scan two
+  sessions.
+- (+) Same RBAC filter applies to both collections (defense in depth
+  preserved).
+- (+) The 5 MB / 5 file / 60 chunk caps protect the 1 GB Qdrant Cloud
+  ceiling and the free-tier CPU budget.
+- (+) Frontend gets file-level granularity (list / delete by ``file_id``).
+- (-) Two extra round-trips per chat (dense + sparse against the session
+  collection). On a 0–5 file session this is negligible — ``top_k=10``
+  bound keeps it tight.
+- (-) Vercel Edge 30 s timeout is shorter than backend
+  ``SAR_REQUEST_TIMEOUT_S=180``. On long pipelines the Edge cuts first
+  and returns HTML; ``secureagentrag-web/src/lib/uploads.ts`` does a
+  text-then-parse fallback so the user sees an actionable error rather
+  than a JSON parse exception.
+- (-) Per-file chunk cap (60) rejects long PDFs. Trade-off chosen over
+  silent truncation — visitor gets a 422 with the chunk count so they
+  know to split the doc.
+
+**Acceptance criteria (all met):**
+
+- ✅ Upload + chat end-to-end smoke on the live demo (Discrete Mathematics
+  PDF 56 chunks + NIST AI RMF PDF 135 chunks both ingested and queried)
+- ✅ 6 MB file rejected with clear error
+- ✅ Delete-by-file_id removes points from the session collection
+- ✅ Cross-session isolation pinned by tests
+- ✅ Session purge cron deletes 24 h+ collections
+
+---
+
+## ADR-030: Free-Tier Groq Cost Optimisations (BYOK-mode pipeline cuts)
+
+**Date:** 2026-05-27
+**Status:** Accepted
+
+**Context:**
+Initial BYOK launch fired **5–6 Groq calls per chat** against the free
+tier's **30 RPM / 14,400 RPD / 6,000 TPM** budget. A single chatty answer
+exhausted the RPM bucket, the next visitor 429-ed, and the answer text
+on screen was "[Error generating response]". The Groq console showed the
+spike: one chat → ~30 calls/min as multiple visitors stacked.
+
+Per-call breakdown before the fix:
+
+1. Router classifier (1 call)
+2. RAG-fusion query reformulation (1 call → 3–5 parallel Qdrant searches)
+3. Grader LLM (1 call per candidate doc)
+4. Synthesizer (1 call, streaming)
+5. Faithfulness gate (1 call per cited sentence — 5–10 extra calls)
+6. Evaluator LLM (1 call)
+
+**Decision:**
+Pin the Groq model + disable the LLM nodes that don't materially help on
+a 10-doc demo corpus. Five env-var-controlled changes baked into
+``Dockerfile.hf``:
+
+- ``SAR_GROQ_MODEL=llama-3.1-8b-instant`` — was hardcoded
+  ``llama-3.3-70b-versatile``. The 70b model has lower TPM headroom and
+  slower throughput (heavier generation = more wall-clock per request);
+  8b finishes ~1 s on prompts under 4k tokens with comparable answer
+  quality on this corpus. ``inference/router.py::_get_model_for_provider``
+  now reads from ``settings.groq_model``.
+- ``SAR_RAG_FUSION_ENABLED=false`` — RAG-fusion fires 1 extra Groq call
+  per chat to generate N reformulations + N parallel Qdrant searches.
+  Useless on a 10-doc corpus where the original query already retrieves
+  the right chunks.
+- ``SAR_BYOK_SKIP_EVALUATOR=true`` (default in BYOK mode) — the evaluator
+  LLM call is replaced by a heuristic ``confidence = citation_coverage *
+  0.5 + evidence_strength * 0.5``. Saves 1 Groq call. The LLM evaluator
+  remains on the codepath; flag flip restores it.
+- ``SAR_BYOK_SKIP_GRADER=true`` (default in BYOK mode) — the grader's
+  per-document LLM relevance score is skipped; retrieved docs auto-marked
+  relevant. Saves N–10 calls. Loose relevance threshold
+  (``SAR_RELEVANCE_THRESHOLD=0.55`` / ``_RETRY=0.3``) keeps the corrective
+  loop active for genuine misses without LLM judgment.
+- ``SAR_FAITHFULNESS_GATE_ENABLED=false`` — gate makes 5–10 extra calls
+  per answer. The synthesizer's own citation discipline (mandatory inline
+  ``[N]`` markers + sources-only prompt) is strong enough for the demo.
+- Router classifier shortcut: queries ≤80 chars in BYOK mode skip the
+  classifier and short-circuit to ``query_type="simple"``. Saves 1 call
+  on the common "what is X?" / "how do I Y?" case.
+- ``SAR_MAX_RETRIES=1`` — cap the corrective-RAG retry loop. Two refines
+  is enough on a 10-doc corpus; further rewrites stack Groq calls without
+  meaningfully improving recall.
+- ``SAR_RERANK_TOP_K=10`` (was 5) — with the LLM grader bypassed, this
+  doubles as the synth doc budget. Bigger context here is the easiest
+  quality lever now that the reranker is off.
+- ``SAR_RERANKER_TYPE=none`` — the fine-tuned reranker is intentionally
+  off in production (no checkpoint on the HF Space; on a 10-doc corpus
+  the cross-encoder cold-load tax + top-5 cut routinely drops the
+  visitor's own chunk).
+
+**After the cuts:**
+
+- ~2 Groq calls per chat (router shortcut + synth). Worst case ~3 with
+  router classifier or 1 rewrite retry.
+- Live verification: kubectl rollback query returns full step-by-step
+  runbook with ``[9]``/``[10]`` citations, 13 s latency, ``groq · 8b``
+  badge, 2 citations panel, no sensitivity disclaimer, no 429.
+
+**Consequences:**
+
+- (+) Demo survives sustained traffic on the 30 RPM Groq budget.
+- (+) ``llama-3.1-8b-instant`` is fast enough that TTFB feels snappy
+  on Egypt's 200 ms RTT.
+- (+) Each toggle is a single env var; ``flag-flip`` to a paid Groq tier
+  or local Ollama deploy restores the full pipeline without a code
+  change.
+- (-) Faithfulness gate is off in production. ADR claim "NLI gate
+  enforces citation entailment" is true *in self-hosted mode*; the live
+  demo trades this for cost. The frontend renders citation chips but
+  doesn't show ``*[unsupported]*`` annotations.
+- (-) LLM grader is bypassed. Retrieved docs that are weakly relevant
+  reach synth; the synthesizer's "answer only from sources or refuse"
+  prompt is the only guard against irrelevant context. Holds on the demo
+  corpus; would not hold at scale.
+- (-) RAG-fusion off. Visitors with under-specified queries get fewer
+  reformulation chances. Acceptable on a small corpus.
+- (-) Reranker off. Top-K relies on dense + BM25 RRF only. Acceptable
+  for ≤200 doc corpora per ADR-022 bench data.
+
+**Acceptance criteria (all met):**
+
+- ✅ Same chat that 429-ed before now succeeds end-to-end in 13 s
+- ✅ Groq console shows ~2 calls / chat on the production trace
+- ✅ Test fixtures updated for the new bypass paths (``mock_settings.
+  rerank_top_k`` raised to 20, ``mock_settings.groq_model`` /
+  ``openai_model`` / ``anthropic_model`` added to router patches)
+- ✅ All 620 tests green
+- ✅ Live recorded screenshot of a successful Q+A with citations

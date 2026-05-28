@@ -22,7 +22,9 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Order matters — most specific patterns first so they win against the
-# broader phone regex.
+# broader phone regex. Provider-specific API-key shapes (added 2026-05-26
+# for BYOK mode) live ABOVE the generic ``[API_KEY]`` rule because their
+# prefixes are not catchable by the legacy ``(sk|pk|api|key)`` alternation.
 _REGEX_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"https?://[^\s/]+:[^\s/]+@[^\s]+"), "[URL_WITH_CREDS]"),
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "[EMAIL]"),
@@ -30,7 +32,27 @@ _REGEX_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "[CC]"),  # Luhn-validated below
     (re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b"), "[IBAN]"),
     (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[IP]"),
-    (re.compile(r"\b(?:sk|pk|api|key)[-_][A-Za-z0-9]{16,}\b", re.IGNORECASE), "[API_KEY]"),
+    # ── BYOK key shapes (P6 production launch) ──────────────────────────
+    # Anthropic must come BEFORE OpenAI because ``sk-ant-...`` also matches
+    # the generic ``sk-...`` rule below.
+    (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b"), "[API_KEY]"),
+    (re.compile(r"\bsk-(?:proj|svcacct)-[A-Za-z0-9_-]{20,}\b"), "[API_KEY]"),
+    (re.compile(r"\bgsk_[A-Za-z0-9]{40,}\b"), "[API_KEY]"),
+    (re.compile(r"\bhf_[A-Za-z0-9]{30,}\b"), "[API_KEY]"),
+    (re.compile(r"\bvcp_[A-Za-z0-9]{20,}\b"), "[API_KEY]"),
+    # JWT-format database API keys (Qdrant Cloud auth v2). Three dot-separated
+    # base64url segments — the middle one is always ``eyJ...`` start.
+    (re.compile(r"\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"), "[API_KEY]"),
+    # Qdrant Cloud management keys: ``<uuid>|<token>``.
+    (
+        re.compile(
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\|[A-Za-z0-9_-]{20,}\b"
+        ),
+        "[API_KEY]",
+    ),
+    # Legacy generic — keeps catching ``sk-...`` and ``api_...`` shapes from
+    # older docs and tests.
+    (re.compile(r"\b(?:sk|pk|api|key)[-_][A-Za-z0-9_-]{16,}\b", re.IGNORECASE), "[API_KEY]"),
     (re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b"), "[PHONE]"),
 ]
 

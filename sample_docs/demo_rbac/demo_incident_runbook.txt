@@ -1,0 +1,63 @@
+ACME PRODUCTION INCIDENT RUNBOOK — checkout-service outage playbook
+====================================================================
+Owner: Platform SRE  ·  Last drilled: 2026-02-14  ·  Page audience: engineering on-call
+
+1. SYMPTOM TRIAGE
+   Common first signals (Datadog dashboards `checkout-svc-overview` and
+   `checkout-svc-saturation`):
+     - p99 latency on `POST /v2/checkout/commit` > 1500 ms for 3 consecutive minutes
+     - 5xx rate on the same endpoint > 1.0% for any 1-minute bucket
+     - Kafka consumer lag on `orders.committed` topic > 50k messages
+     - Redis `INFO commandstats` shows `cmd_eval_lua` > 60% of total ops
+       (we use Lua for the inventory reservation script; hot loop = stuck script)
+
+2. IMMEDIATE ACTIONS (first 5 minutes)
+   2.1 Page secondary on-call if not yet paged. Open the war-room Slack channel
+       `#war-room-checkout` and post the alert link.
+   2.2 Open the Datadog dashboard `checkout-svc-overview`. Screenshot the
+       primary panels and paste into the war room.
+   2.3 If the latency spike correlates with a deploy < 60 min old, prepare a
+       rollback. Use `kubectl -n checkout rollout undo deploy/checkout-svc`.
+       Do NOT run rollback until you have approval from incident commander.
+
+3. ROLLBACK PROCEDURE
+   3.1 Confirm previous-revision sha:  kubectl -n checkout rollout history
+       deploy/checkout-svc.
+   3.2 Take a heap dump of one pod before rollback if memory is suspicious:
+       kubectl -n checkout exec <pod> -- jcmd 1 GC.heap_dump /tmp/dump.hprof
+       kubectl -n checkout cp <pod>:/tmp/dump.hprof ./incident-<ID>/dump.hprof
+   3.3 Execute: kubectl -n checkout rollout undo deploy/checkout-svc.
+   3.4 Watch the deployment: kubectl -n checkout rollout status deploy/checkout-svc.
+       Success criterion: all pods Ready within 4 minutes.
+   3.5 Verify SLI recovery: latency back under 300 ms p99 within 5 minutes of
+       rollout completion. If not, escalate to Severity 1.
+
+4. ALTERNATIVE: DEPENDENCY ISOLATION
+   When the root cause is downstream and rollback won't fix it:
+   4.1 Trip the Hystrix breaker on the affected dependency by setting the
+       feature flag `checkout_svc.disable_<dep>=true` in LaunchDarkly.
+   4.2 Confirm the request stream now degrades gracefully (orders persist, the
+       dependency is skipped, customer sees a "we'll confirm by email" page).
+   4.3 Open a tracking ticket against the downstream team. Tag with `incident-<ID>`.
+
+5. POST-INCIDENT
+   5.1 Schedule a blameless postmortem within 72 hours of resolution.
+   5.2 Required attendees: incident commander, primary on-call, downstream
+       teams whose service was implicated. CEO is read-only on the doc.
+   5.3 Action items go into the Engineering Effectiveness Board with owner
+       and date. The board reviews progress every other Tuesday.
+
+6. KNOWN PITFALLS
+   - `kubectl rollout undo` skips PodDisruptionBudget — do not chain it with
+     a node drain or you will scale below the PDB minimum and the cluster
+     autoscaler will spin up cold nodes (~3 min boot).
+   - The Lua reservation script in Redis MUST NOT call HGETALL on a hash with
+     > 50k fields. We've seen 12-second blocking calls take the whole shard
+     out. The new helper `inventory.cap_reserve_v3.lua` is the only blessed
+     path; the v2 helper is still in the codebase but marked deprecated.
+   - Do NOT scale the consumer group up to absorb lag during a Sev1. The
+     downstream warehouse worker is the bottleneck — adding consumers only
+     starves it of partitions.
+
+CONTACT
+   Pager: sre-checkout-oncall  ·  Slack: #sre-checkout

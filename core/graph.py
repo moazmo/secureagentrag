@@ -349,6 +349,8 @@ def create_initial_state(
     user_context: UserContext,
     prefer_cloud: bool = False,
     override_provider: str = "",
+    persona_style: str = "",
+    byok_session_id: str = "",
 ) -> GraphState:
     """Create the proper initial state dict for graph invocation.
 
@@ -370,6 +372,8 @@ def create_initial_state(
         "user_context": user_context.model_dump(),
         "prefer_cloud": prefer_cloud,
         "override_provider": override_provider,
+        "persona_style": persona_style,
+        "byok_session_id": byok_session_id,
         "_stream": False,
         "query_type": "",
         "rewritten_query": "",
@@ -439,6 +443,8 @@ async def run_rag_pipeline(
     thread_id: str = "default",
     prefer_cloud: bool = False,
     override_provider: str = "",
+    persona_style: str = "",
+    byok_session_id: str = "",
 ) -> GraphState:
     """Execute the full RAG pipeline and return the final state.
 
@@ -465,7 +471,12 @@ async def run_rag_pipeline(
     start_time = time.perf_counter()
     graph = await build_rag_graph_async()
     initial_state = create_initial_state(
-        query, user_context, prefer_cloud=prefer_cloud, override_provider=override_provider
+        query,
+        user_context,
+        prefer_cloud=prefer_cloud,
+        override_provider=override_provider,
+        persona_style=persona_style,
+        byok_session_id=byok_session_id,
     )
 
     config = {"configurable": {"thread_id": thread_id}}
@@ -543,6 +554,8 @@ async def run_rag_pipeline_stream(
     thread_id: str = "default",
     prefer_cloud: bool = False,
     override_provider: str = "",
+    persona_style: str = "",
+    byok_session_id: str = "",
 ) -> AsyncGenerator[dict, None]:
     """Execute the full RAG pipeline with real token-by-token streaming.
 
@@ -580,7 +593,12 @@ async def run_rag_pipeline_stream(
 
     graph = await build_rag_graph_async()
     initial_state = create_initial_state(
-        query, user_context, prefer_cloud=prefer_cloud, override_provider=override_provider
+        query,
+        user_context,
+        prefer_cloud=prefer_cloud,
+        override_provider=override_provider,
+        persona_style=persona_style,
+        byok_session_id=byok_session_id,
     )
     # Opt the synthesizer into the streaming dispatch path. The flag is
     # local to this run and is not part of the public state contract — it

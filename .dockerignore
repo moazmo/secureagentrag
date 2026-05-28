@@ -1,0 +1,60 @@
+# Build context exclusions for Dockerfile.hf.
+# Keeps the HF Space image lean and the build context tiny.
+
+.git
+.github
+.venv
+.venv-*
+.pytest_cache
+.ruff_cache
+.idea
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Local secrets and developer-only state
+.env
+.env.*
+private/
+INTERVIEW_DEFENSE.md
+CV_BLURB.md
+NOTES.md
+TODO.md
+
+# Test suite -- not needed at runtime
+tests/
+
+# Streamlit UI -- the public demo uses the Vercel Next.js frontend
+app/
+
+# Local development artefacts
+audit_logs/
+conversations/
+checkpoints/
+data/checkpoints/
+data/agent_evidence/
+sample_docs/
+docker-compose.yml
+Dockerfile
+
+# Launch plan + smoke artefacts are documentation, not runtime code
+launch-plan/
+
+# Helm + deploy specs unrelated to HF Space
+helm/
+deploy/
+
+# Misc large binaries that should never go into the build context
+*.safetensors
+*.bin
+*.pt
+*.pkl
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.log
+.coverage
+htmlcov/

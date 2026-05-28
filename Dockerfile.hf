@@ -1,0 +1,210 @@
+# =============================================================================
+# Dockerfile.hf — SecureAgentRAG backend for Hugging Face Spaces (CPU Basic).
+# =============================================================================
+# Two-stage build keeps the runtime image lean. The HF Space free tier is
+# CPU-only with 16 GB RAM and ~50 GB ephemeral disk, so we target a tight
+# memory footprint:
+#
+#   - Python 3.11-slim base (~150 MB)
+#   - Only [api, embeddings-local, pii] extras (no OCR, no Phoenix, no Postgres,
+#     no Redis, no MCP) -- those modules are present in the source but their
+#     dependencies are not installed
+#   - cross-encoder reranker downloaded on first request (auto-cached under
+#     /home/user/.cache/huggingface). Skips the 2.3 GB fine-tuned checkpoint
+#     for the initial deploy; phase 3.2 can swap to fine_tuned once the
+#     reranker repo is published on HF Hub.
+#
+# The Space-side README.md is uploaded separately by scripts/deploy_hf_space.py
+# with a YAML frontmatter declaring sdk=docker + app_port=7860.
+# =============================================================================
+
+# --- builder ----------------------------------------------------------------
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir uv
+
+# pyproject.toml + a copy of the source are required for uv to build the
+# editable install. README.md is referenced as the long_description.
+COPY pyproject.toml ./
+COPY README.md ./
+
+# Touch the package directories that hatchling treats as the wheel root --
+# we only need the directory tree to exist at build time so hatchling can
+# scan for __init__.py files. The actual code lands in the runtime stage.
+RUN mkdir -p config core inference retrieval interfaces ingestion utils evaluation app \
+    && touch config/__init__.py core/__init__.py inference/__init__.py \
+    && touch retrieval/__init__.py interfaces/__init__.py ingestion/__init__.py \
+    && touch utils/__init__.py evaluation/__init__.py app/__init__.py
+
+# Intentionally skip [pii] extras -- the regex patterns in utils/pii.py
+# already cover every BYOK key shape (Groq / OpenAI / Anthropic / HF / Vercel
+# / Qdrant JWT / Qdrant management). Adding Presidio would pull spaCy
+# en_core_web_lg (~770 MB) which auto-downloads at runtime and crashes the
+# container on the CPU Basic Space when the package installer is absent.
+RUN uv venv /app/.venv \
+    && uv pip install --python /app/.venv/bin/python \
+        -e ".[api,embeddings-local]"
+
+# --- runtime ----------------------------------------------------------------
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+# HF Spaces convention: run as uid 1000 with a writeable /home/user.
+RUN useradd -m -u 1000 user
+
+# System deps for PDF / image processing only -- no OCR / paddle.
+# Debian 12+ (trixie) renamed libgl1-mesa-glx -> libgl1 and libxrender-dev
+# is no longer needed at runtime (runtime is libxrender1).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libglib2.0-0 libsm6 libxext6 libxrender1 libgl1 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bring the virtualenv from the builder stage.
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Copy application source. Files that match .dockerignore are filtered out.
+COPY --chown=user:user . /app
+
+USER user
+
+# Pre-populate the HF cache so the cross-encoder lives on disk before the
+# first request. Defensive: never fails the build -- if HF Hub is unreachable
+# during build (offline mirrors etc.) the cache is populated on first query.
+RUN python -c "import os; \
+from huggingface_hub import snapshot_download; \
+import sys; \
+try: snapshot_download(repo_id='BAAI/bge-reranker-v2-m3', cache_dir='/home/user/.cache/huggingface/hub'); print('reranker cached') \
+except Exception as e: print(f'reranker cache skipped: {e!r}', file=sys.stderr)" \
+    || echo "build-time reranker download failed -- will lazy-load on first request"
+
+# --- BYOK production env ---------------------------------------------------
+# Real secrets (Qdrant URL + API key, Groq key) are injected via HF Space
+# secrets panel -- they ride the same SAR_* env-var protocol but are NOT
+# baked into the image. Only mode flags and safe defaults live here.
+ENV SAR_BYOK_MODE=true
+# Per-IP owner-key quota / hour. Cap protects the daily Groq 14 400-req
+# budget against any single abuser. Raised from 3 -> 10 because the
+# previous 3 was too tight: visitors blocked after their third query of
+# the same IP. With ~100 distinct visitor IPs / day the daily Groq cap
+# would still be defended; visitors who exceed the cap are nudged to
+# paste their own BYOK key via the UI 429 banner.
+ENV SAR_BYOK_OWNER_QUOTA=10
+ENV SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10
+ENV SAR_SESSION_TTL_HOURS=24
+ENV SAR_CORS_ALLOW_ORIGINS='["https://secureagentrag-web.vercel.app","https://secureagentrag.vercel.app"]'
+
+# Cloud LLM defaults -- Groq llama-3.1-8b-instant is the cheapest fast option
+# on the free tier. Visitor BYOK overrides this per request.
+ENV SAR_DEFAULT_PROVIDER=groq
+ENV SAR_CLOUD_PROVIDER=groq
+ENV SAR_LLM_MODEL=llama-3.1-8b-instant
+
+# Embedding stack -- local BGE-M3 via sentence-transformers (CPU). Avoids
+# Ollama entirely.
+ENV SAR_EMBEDDING_BACKEND=local
+ENV SAR_LOCAL_EMBEDDING_MODEL=BAAI/bge-m3
+ENV SAR_EMBEDDING_MODEL=bge-m3
+ENV SAR_EMBEDDING_DIM=1024
+
+# Reranker disabled for the BYOK demo. The cross-encoder adds a ~600 MB
+# model + 4-5 s cold-load latency, and on a 10-doc corpus + 1-5 visitor
+# uploads its top-5 cut routinely drops the visitor's own chunk before
+# it reaches the grader. Pure dense+sparse RRF order is good enough on
+# the demo corpus; bench shows the reranker only helps materially past
+# 200+ documents per query. Re-enable for production deploys with
+# SAR_RERANKER_TYPE=cross_encoder or fine_tuned.
+ENV SAR_RERANKER_TYPE=none
+ENV SAR_RERANKER_CHECKPOINT=BAAI/bge-reranker-v2-m3
+
+# Sparse retrieval -- BM25 keeps the cold path zero-dep; SPLADE adds an
+# extra ~600 MB model and is skipped on free CPU Basic.
+ENV SAR_SPARSE_BACKEND=bm25
+
+# Persistence paths -- /tmp is the only writable area on HF Spaces.
+ENV SAR_AUDIT_LOG_DIR=/tmp/secureagentrag/audit_logs
+ENV SAR_CONVERSATION_DIR=/tmp/secureagentrag/conversations
+ENV SAR_CHECKPOINT_DB_PATH=/tmp/secureagentrag/checkpoints.sqlite
+ENV SAR_BM25_INDEX_PATH=/tmp/secureagentrag/bm25_index.pkl
+
+# Multi-tenant collections route BYOK session -> documents_sess_<sid>.
+ENV SAR_MULTI_TENANT_COLLECTIONS=true
+
+# Pipeline safety -- BYOK uploads can push the candidate set up to 20
+# chunks (top_k=10 from base + top_k=10 from session) which the grader
+# scores one Groq call at a time. 180 s leaves headroom for the
+# reranker cold load + Groq free-tier rate-limit waits on a fresh boot.
+ENV SAR_REQUEST_TIMEOUT_S=180
+
+# Grader thresholds tuned looser for the BYOK demo so short user-uploaded
+# docs are not aggressively filtered out by the LLM judge. The default
+# 0.7 / 0.5 produced too many "all docs irrelevant" refusals on this
+# small corpus; 0.55 / 0.3 keeps the corrective-RAG retry loop active
+# but stops the demo from refusing on edge-case wording.
+ENV SAR_RELEVANCE_THRESHOLD=0.55
+ENV SAR_RELEVANCE_RETRY_THRESHOLD=0.3
+# Cap corrective-RAG retries -- two refines is enough; further rewrites
+# stack Groq calls without meaningfully improving recall on a 10-doc
+# corpus and just chew through the SLO.
+ENV SAR_MAX_RETRIES=1
+# RAG fusion fires 1 extra Groq call per chat to generate N query
+# reformulations + N parallel Qdrant searches. Useless on a 10-doc
+# demo corpus where the original query already retrieves the right
+# chunks; disabled here to cut Groq call count.
+ENV SAR_RAG_FUSION_ENABLED=false
+# Pin the Groq model to llama-3.1-8b-instant for the demo. The
+# default 70b-versatile model hits the 30 RPM cap faster (heavier
+# generation = slower throughput), and the 8b model finishes in
+# ~1 s on prompts under 4k tokens with comparable answer quality
+# on this small corpus.
+ENV SAR_GROQ_MODEL=llama-3.1-8b-instant
+# With the reranker disabled + grader bypassed, the synth context cap
+# (rerank_top_k) doubles as the doc budget into the synth prompt. Raise
+# from 5 -> 10 so all retrieved chunks reach the LLM; llama-3.1-8b has
+# a 131k context so 10 chunks × 600 chars = trivial. Bigger context here
+# is the easiest quality lever now that reranker is off.
+ENV SAR_RERANK_TOP_K=10
+# Faithfulness gate disabled on the public BYOK demo: it makes one Groq
+# call per cited sentence (typically 5-10 extra calls per answer). On
+# the free-tier 30 RPM budget a single chatty answer can exhaust the
+# bucket and the next query 429s with an empty completion. The
+# synthesizer's own citation discipline (mandatory inline [N] markers
+# + sources-only prompt) is strong enough for the demo. Re-enable for
+# production deploys with a paid Groq tier or local Ollama.
+ENV SAR_FAITHFULNESS_GATE_ENABLED=false
+ENV SAR_FAITHFULNESS_GATE_MODE=flag
+ENV SAR_FAITHFULNESS_THRESHOLD=0.7
+
+# Cloud LLM is the only inference path on the HF Space (no Ollama). Unlock
+# HIGH-sensitivity content for cloud synthesis -- the frontend warns the
+# visitor with a "sensitive: routed to cloud" badge.
+ENV SAR_ALLOW_CLOUD_FOR_HIGH=true
+
+# Public audit export -- caps the /byok/audit response so the panel is
+# usable but never floods the page on a long-running Space.
+ENV SAR_BYOK_AUDIT_MAX_ENTRIES=50
+
+# Logging
+ENV SAR_LOG_LEVEL=INFO
+
+# HF cache lives under the user home which is the only persistent writable
+# tree across Space restarts on CPU Basic.
+ENV HF_HOME=/home/user/.cache/huggingface
+ENV TRANSFORMERS_CACHE=/home/user/.cache/huggingface/hub
+
+EXPOSE 7860
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl --fail --silent --show-error http://localhost:7860/healthz || exit 1
+
+# uvicorn with 1 worker -- on CPU Basic two workers thrash the memory.
+CMD ["uvicorn", "interfaces.api:app", \
+     "--host", "0.0.0.0", \
+     "--port", "7860", \
+     "--workers", "1", \
+     "--timeout-keep-alive", "30", \
+     "--no-access-log"]

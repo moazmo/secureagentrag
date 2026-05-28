@@ -25,11 +25,27 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Retry decorator for transient connection failures only
+# Retry on transient connection failures AND 429 rate-limit responses.
+# Groq's free tier is 30 RPM; a single user query can fire grader +
+# synth + faith calls that exceed that bucket. We honour the Retry-After
+# header where present, fall back to exponential backoff otherwise.
+class _RateLimitError(Exception):
+    """Lift a 429 into something tenacity can catch and back off on."""
+
+
+def _raise_for_status_with_429(resp: httpx.Response) -> None:
+    """Like httpx.Response.raise_for_status but lifts 429 to _RateLimitError."""
+    if resp.status_code == 429:
+        raise _RateLimitError(resp.headers.get("Retry-After", ""))
+    resp.raise_for_status()
+
+
 _retry_on_connection = retry(
-    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
+    retry=retry_if_exception_type(
+        (httpx.ConnectError, httpx.TimeoutException, _RateLimitError)
+    ),
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
+    wait=wait_exponential(multiplier=1.5, min=2, max=20),
     reraise=True,
 )
 
@@ -139,6 +155,51 @@ class BaseCloudClient(ABC):
         await self.close()
 
 
+def make_byok_cloud_client(
+    *,
+    provider: str,
+    user_key: str,
+    model: str | None = None,
+    timeout: float = 60.0,
+) -> BaseCloudClient:
+    """Build a per-request cloud LLM client that uses the visitor's API key.
+
+    Each call returns a **fresh client instance** holding the supplied key
+    in its own ``self.api_key`` slot. The visitor's key never lands on any
+    module-level singleton, never mixes into the owner-key client, and is
+    discarded when the FastAPI request scope ends.
+
+    Args:
+        provider: One of ``"groq"`` / ``"openai"`` / ``"anthropic"``.
+        user_key: The visitor-supplied API key from ``X-User-LLM-Key``.
+        model: Override the provider's default model.
+        timeout: Per-request HTTP timeout in seconds.
+
+    Returns:
+        A new ``BaseCloudClient`` subclass instance bound to the visitor key.
+
+    Raises:
+        ValueError: ``provider`` is not in the BYOK allowlist or ``user_key``
+            is missing.
+    """
+    if not user_key or not user_key.strip():
+        raise ValueError("make_byok_cloud_client called without a user key")
+    prov = (provider or "").lower()
+    if prov == "groq":
+        return GroqClient(
+            api_key=user_key.strip(), model=model or "llama-3.1-8b-instant", timeout=timeout
+        )
+    if prov == "openai":
+        return OpenAIClient(api_key=user_key.strip(), model=model or "gpt-4o-mini", timeout=timeout)
+    if prov == "anthropic":
+        return AnthropicClient(
+            api_key=user_key.strip(),
+            model=model or "claude-sonnet-4-20250514",
+            timeout=timeout,
+        )
+    raise ValueError(f"BYOK provider not supported: {provider!r}")
+
+
 class OpenAICompatibleClient(BaseCloudClient):
     """Shared client for OpenAI Chat Completions-compatible APIs.
 
@@ -206,7 +267,7 @@ class OpenAICompatibleClient(BaseCloudClient):
             json=payload,
         )
         elapsed_ms = (time.perf_counter() - start) * 1000
-        response.raise_for_status()
+        _raise_for_status_with_429(response)
 
         data = response.json()
         choice = data.get("choices", [{}])[0]

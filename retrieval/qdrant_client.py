@@ -125,6 +125,83 @@ class QdrantManager:
         )
         return mgr
 
+    def for_session(self, session_id: str) -> QdrantManager:
+        """Return a QdrantManager bound to a BYOK visitor's session collection.
+
+        Mirrors ``for_org`` but uses the session-scoped naming convention
+        ``documents_sess_<sanitized_session>``. The collection is created
+        on first request with the same dense + sparse vector configuration
+        as the base collection, then cached on this root manager so repeat
+        requests are O(1) dict lookups.
+
+        BYOK uploads live in the visitor's session collection only; the
+        24-hour purge cron drops abandoned collections so 1 GB Qdrant
+        Cloud quota stays bounded.
+
+        Args:
+            session_id: Per-visitor session UUID (BYOK mode).
+
+        Returns:
+            A QdrantManager scoped to the session collection.
+        """
+        if not session_id:
+            return self
+        from retrieval.multitenancy import get_collection_name
+
+        # Force BYOK-style naming even when settings.byok_mode is False so
+        # tests can exercise the path without flipping the global flag.
+        base = self._collection_name
+        sanitized = "".join(c if c.isalnum() else "_" for c in session_id)
+        sess_collection = f"{base}_sess_{sanitized}"
+        # Honour the canonical helper when both flags align so a future rename
+        # of the prefix has a single source of truth.
+        if settings.byok_mode:
+            try:
+                sess_collection = get_collection_name(session_id=session_id)
+            except Exception:
+                pass
+
+        if sess_collection == self._collection_name:
+            return self
+        cached = self._tenant_cache.get(sess_collection)
+        if cached is not None:
+            return cached
+        mgr = QdrantManager(
+            url=self._url,
+            collection_name=sess_collection,
+            api_key=self._api_key,
+        )
+        mgr.ensure_collection()
+        # Qdrant Cloud requires explicit payload indexes on filterable fields.
+        # Mirror the indexes created on the base demo collection.
+        for field, schema in (
+            ("org_id", "keyword"),
+            ("sensitivity_level_int", "integer"),
+            ("roles", "keyword"),
+            ("user_id", "keyword"),
+            ("source_file", "keyword"),
+            # Per-upload group key used by the BYOK delete endpoint to drop
+            # all chunks of one upload. Qdrant Cloud refuses Filter()
+            # predicates on un-indexed payload keys, so this is mandatory.
+            ("source_file_id", "keyword"),
+        ):
+            try:
+                mgr._client.create_payload_index(
+                    collection_name=sess_collection,
+                    field_name=field,
+                    field_schema=schema,
+                )
+            except Exception:
+                # Index may already exist; safe to ignore.
+                pass
+        self._tenant_cache[sess_collection] = mgr
+        logger.info(
+            "byok_session_collection_cached",
+            collection=sess_collection,
+            cache_size=len(self._tenant_cache),
+        )
+        return mgr
+
     def ensure_collection(self, vector_size: int | None = None) -> None:
         """Create the collection if it does not already exist.
 

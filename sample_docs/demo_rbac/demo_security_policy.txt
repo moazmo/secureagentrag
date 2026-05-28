@@ -1,0 +1,64 @@
+ACME GLOBAL SECURITY POLICY v3.2
+================================
+Owner: Compliance / Security  ·  Effective: 2026-01-01  ·  Review cycle: 12 months
+Approver: VP, Compliance (Hadley Park)  ·  Document ID: ACME-SEC-001
+
+1. SCOPE
+   Applies to every ACME employee, contractor, and third-party vendor with logical
+   or physical access to ACME systems, data, or premises. Subsidiaries inherit
+   this policy unless an exemption is recorded in the ACME Policy Exemption
+   Register (PER-2026).
+
+2. CONTROL FRAMEWORK ALIGNMENT
+   This policy is mapped to:
+     - NIST SP 800-53 Rev. 5 (control families AC, AU, CM, IA, SC, SI)
+     - ISO/IEC 27001:2022 Annex A (clauses 5, 6, 8, 12, 13)
+     - SOC 2 Trust Services Criteria CC6, CC7, CC8
+     - PCI DSS v4.0 sections 3, 7, 8, 10 where cardholder data is in scope
+
+3. DATA CLASSIFICATION
+   ACME data is classified into four tiers, with handling rules below:
+     PUBLIC       — marketing site, press kits. No restriction.
+     INTERNAL     — internal wikis, runbooks, source code without secrets.
+                    Encrypted in transit (TLS 1.2+); at-rest encryption optional.
+     CONFIDENTIAL — customer PII, finance, contracts. AES-256 at rest, TLS 1.3
+                    in transit, access logged, RBAC enforced at storage layer.
+     RESTRICTED   — payment card data, secret keys, M&A materials.
+                    HSM-backed encryption, named-list access only, MFA mandatory,
+                    audit log integrity gate verified daily.
+
+4. ACCESS CONTROL
+   4.1 All production access requires single sign-on with phishing-resistant MFA
+       (FIDO2 hardware key or platform authenticator). SMS OTP is prohibited.
+   4.2 Standing privileged access is forbidden. Just-in-time elevation via the
+       ACME PAM ticket workflow is the only sanctioned path.
+   4.3 Service accounts must rotate credentials at least every 90 days for
+       INTERNAL data and every 30 days for CONFIDENTIAL or RESTRICTED data.
+   4.4 RBAC enforcement is implemented at the persistence layer (database row
+       level, object store payload filter) — never relying solely on the
+       application tier.
+
+5. INCIDENT RESPONSE
+   5.1 Severity 1 (active intrusion, customer data exfiltration in progress):
+       Page primary IR on-call within 5 minutes; activate the war room; CFO and
+       General Counsel notified within 30 minutes.
+   5.2 Severity 2 (potential breach, suspicious anomaly): Acknowledge within
+       30 minutes, triage within 4 hours, write-up within 24 hours.
+   5.3 Customer notification: required within 72 hours when CONFIDENTIAL or
+       RESTRICTED data is involved (GDPR Article 33 alignment).
+
+6. AUDIT AND EVIDENCE
+   6.1 All authentication, authorization, and data access events are logged
+       to an append-only audit store with SHA-256 hash chaining.
+   6.2 Integrity of the audit chain is verified nightly by an automated job.
+       A break triggers a Severity 1 incident automatically.
+   6.3 Retention: 7 years for CONFIDENTIAL/RESTRICTED events, 1 year for
+       INTERNAL, 90 days for PUBLIC.
+
+7. EXCEPTIONS
+   Any deviation must be recorded in PER-2026 with a business justification,
+   compensating controls, and an expiry date no later than 12 months from
+   approval. Renewals require fresh sign-off.
+
+CONTACT
+   Compliance Hotline: ext. 4244 · security@acme.example · pager: sec-oncall

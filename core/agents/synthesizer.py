@@ -43,6 +43,39 @@ def _max_sensitivity(docs_to_use: list[DocumentGrade]) -> str:
     return _max_label(*levels) if levels else "low"
 
 
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are an expert research assistant. You answer strictly from the "
+    "provided source documents and you always cite them inline. You write "
+    "clean, scannable Markdown: short lead sentence, then bullet points or "
+    "a numbered list when there are multiple facts, **bold** for the key "
+    "term in each point, and fenced code blocks for any command, config, "
+    "or identifier. You never invent facts that the sources do not support, "
+    "and when the sources fall short you say so plainly."
+)
+
+# Per-chunk context budget fed into the synthesis prompt. Raised from the
+# original 600 -> 1100: llama-3.1-8b-instant has a 131k context window, so
+# 10 chunks x ~1100 chars (~3k tokens total) is trivial on input, and the
+# extra per-chunk context measurably improves answer completeness on the
+# demo corpus (procedures + tables were getting truncated mid-step at 600).
+_CHUNK_CONTEXT_CHARS = 1100
+
+
+def _build_system_prompt(state: GraphState) -> str:
+    """Return the synthesizer's system prompt, optionally tuned per persona.
+
+    The BYOK demo populates ``state['persona_style']`` from the
+    ``X-Demo-Persona`` header (engineer / compliance / executive) so the
+    same retrieved chunks produce visibly distinct answers. Empty / missing
+    style falls back to the neutral default voice -- the production API
+    surface is unaffected.
+    """
+    style = (state.get("persona_style") or "").strip()
+    if not style:
+        return _DEFAULT_SYSTEM_PROMPT
+    return f"{_DEFAULT_SYSTEM_PROMPT}\n\n{style}"
+
+
 def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitivity: str) -> str:
     """Build the synthesis prompt with source markers for citation tracking.
 
@@ -58,12 +91,21 @@ def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitiv
     for i, doc in enumerate(documents, start=1):
         source = doc.get("metadata", {}).get("source_file", "unknown")
         page = doc.get("metadata", {}).get("page_number", 0)
-        context_parts.append(f"[{i}] (Source: {source}, Page: {page})\n{doc['text'][:600]}")
+        context_parts.append(
+            f"[{i}] (Source: {source}, Page: {page})\n{doc['text'][:_CHUNK_CONTEXT_CHARS]}"
+        )
 
     context_str = "\n\n".join(context_parts)
 
     sensitivity_instruction = ""
-    if sensitivity in ("high", "medium"):
+    # In BYOK demo mode the UI already renders a `sensitivity: <level>`
+    # badge next to every answer. Asking the LLM to also append a
+    # boilerplate disclaimer doubles the signal and clutters short
+    # answers ("Use MFA. -- Note: this references documents with moderate
+    # sensitivity..."). Suppress the prompt-side disclaimer in the demo
+    # so the answer stays clean; production deploys (byok_mode=False)
+    # still get the verbal disclaimer for compliance optics.
+    if sensitivity in ("high", "medium") and not settings.byok_mode:
         sensitivity_instruction = (
             "\n\nIMPORTANT: This involves sensitive information. "
             "Include appropriate disclaimers about data sensitivity and "
@@ -82,15 +124,21 @@ def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitiv
         "system extracts citations automatically from inline markers.\n"
         "5. If the context lacks information to answer fully, say so explicitly "
         "rather than inventing details.\n\n"
-        "STYLE:\n"
+        "STYLE (Markdown):\n"
+        "- Open with one short sentence that directly answers the question.\n"
+        "- When there are multiple facts, steps, or items, use a bulleted or "
+        "numbered Markdown list — one fact per line, each ending with its `[N]`.\n"
+        "- **Bold** the key term at the start of each bullet so the answer "
+        "scans fast.\n"
+        "- Put any command, file path, config value, code, or identifier in a "
+        "fenced code block (```) or inline code (`like this`).\n"
         "- Be concise but complete. Cover every part of the question.\n"
-        "- Use short paragraphs or bullet points for readability.\n"
         "- Do not preface the answer with phrases like 'Based on the context'.\n"
         "- Do not include `<think>` or reasoning trace blocks in the output.\n\n"
         f"Context:\n{context_str}\n\n"
         f"Question: {query}\n"
         f"{sensitivity_instruction}\n\n"
-        "Answer (with inline `[N]` citations on every factual claim):"
+        "Answer (clean Markdown, with inline `[N]` citations on every factual claim):"
     )
 
 
@@ -111,12 +159,21 @@ def _build_json_synthesis_prompt(
     for i, doc in enumerate(documents, start=1):
         source = doc.get("metadata", {}).get("source_file", "unknown")
         page = doc.get("metadata", {}).get("page_number", 0)
-        context_parts.append(f"[{i}] (Source: {source}, Page: {page})\n{doc['text'][:600]}")
+        context_parts.append(
+            f"[{i}] (Source: {source}, Page: {page})\n{doc['text'][:_CHUNK_CONTEXT_CHARS]}"
+        )
 
     context_str = "\n\n".join(context_parts)
 
     sensitivity_instruction = ""
-    if sensitivity in ("high", "medium"):
+    # In BYOK demo mode the UI already renders a `sensitivity: <level>`
+    # badge next to every answer. Asking the LLM to also append a
+    # boilerplate disclaimer doubles the signal and clutters short
+    # answers ("Use MFA. -- Note: this references documents with moderate
+    # sensitivity..."). Suppress the prompt-side disclaimer in the demo
+    # so the answer stays clean; production deploys (byok_mode=False)
+    # still get the verbal disclaimer for compliance optics.
+    if sensitivity in ("high", "medium") and not settings.byok_mode:
         sensitivity_instruction = (
             "\n\nIMPORTANT: This involves sensitive information. "
             "Include appropriate disclaimers about data sensitivity and "
@@ -318,6 +375,13 @@ def _compute_synthesis_confidence(
 def _add_disclaimers(response: str, sensitivity_level: str) -> str:
     """Add disclaimers to the response based on sensitivity level.
 
+    In BYOK demo mode the UI already shows a ``sensitivity: <level>``
+    badge under every answer, so appending a verbal disclaimer doubles
+    the signal and clutters short answers ("Use MFA. -- Note: this
+    response references documents with moderate sensitivity..."). The
+    badge is the canonical surface for the BYOK demo; the verbal
+    disclaimer stays on for production deploys.
+
     Args:
         response: The generated response text.
         sensitivity_level: The sensitivity level of the documents used.
@@ -325,6 +389,8 @@ def _add_disclaimers(response: str, sensitivity_level: str) -> str:
     Returns:
         Response text with appropriate disclaimers appended.
     """
+    if settings.byok_mode:
+        return response
     if sensitivity_level == "high":
         disclaimer = (
             "\n\n---\n"
@@ -400,6 +466,20 @@ async def synthesize_answer(state: GraphState) -> dict:
     # whole point of the grader + rewrite loop — we would synthesize from text
     # we already decided was off-topic. Refuse instead.
     docs_to_use = relevant_documents
+    # Cap the synthesis context. The grader bypass path can pass through
+    # the full retrieval set (10+); concatenating that many ~600-char
+    # chunks plus the system prompt pushes Groq llama-3.1-8b-instant
+    # close to its rate-limited token budget and the call can come back
+    # empty. Always trim to settings.rerank_top_k so the prompt is
+    # bounded regardless of how permissive the upstream nodes were.
+    try:
+        max_ctx = int(getattr(settings, "rerank_top_k", 5)) or 5
+    except (TypeError, ValueError):
+        # ``settings`` may be a MagicMock in unit tests; fall back to the
+        # conservative default rather than crashing the synth node.
+        max_ctx = 5
+    if len(docs_to_use) > max_ctx:
+        docs_to_use = docs_to_use[:max_ctx]
 
     logger.info(
         "synthesizing_answer",
@@ -478,7 +558,7 @@ async def synthesize_answer(state: GraphState) -> dict:
         collected: list[str] = []
         async for token in call_llm_stream(
             prompt,
-            system_prompt="You are an expert research assistant that always cites sources.",
+            system_prompt=_build_system_prompt(state),
             sensitivity_level=max_sensitivity,
             prefer_cloud=prefer_cloud,
         ):
@@ -499,7 +579,7 @@ async def synthesize_answer(state: GraphState) -> dict:
     else:
         response_text, decision, llm_response = await call_llm_with_decision(
             prompt,
-            system_prompt="You are an expert research assistant that always cites sources.",
+            system_prompt=_build_system_prompt(state),
             sensitivity_level=max_sensitivity,
             prefer_cloud=prefer_cloud,
             json_mode=json_mode,

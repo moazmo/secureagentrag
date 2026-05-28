@@ -94,8 +94,21 @@ class InferenceRouter:
                 forced_local=False,
             )
 
-        # 2. HIGH sensitivity -> always local
+        # 2. HIGH sensitivity -> always local UNLESS the deploy explicitly opts
+        # out via SAR_ALLOW_CLOUD_FOR_HIGH (set in HF Space production image
+        # where local Ollama is unavailable; visitor is warned client-side).
         if sensitivity_level == SensitivityLevel.HIGH and self.force_local_for_sensitive:
+            if settings.allow_cloud_for_high and self.cloud_provider and self._is_provider_configured(self.cloud_provider):
+                model = self._get_model_for_provider(self.cloud_provider)
+                return RoutingDecision(
+                    provider=self.cloud_provider,
+                    model=model,
+                    reason=(
+                        f"HIGH sensitivity — SAR_ALLOW_CLOUD_FOR_HIGH=true, "
+                        f"using {self.cloud_provider}"
+                    ),
+                    forced_local=False,
+                )
             return RoutingDecision(
                 provider="ollama",
                 model=settings.llm_model,
@@ -376,8 +389,8 @@ class InferenceRouter:
         """
         model_defaults: dict[str, str] = {
             "ollama": settings.llm_model,
-            "groq": "llama-3.3-70b-versatile",
-            "openai": "gpt-4o-mini",
-            "anthropic": "claude-sonnet-4-20250514",
+            "groq": settings.groq_model,
+            "openai": settings.openai_model,
+            "anthropic": settings.anthropic_model,
         }
         return model_defaults.get(provider, settings.llm_model)

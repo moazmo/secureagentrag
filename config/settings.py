@@ -84,6 +84,14 @@ class Settings(BaseSettings):
     groq_api_base: str = "https://api.groq.com/openai/v1"
     openai_api_base: str = "https://api.openai.com/v1"
     anthropic_api_base: str = "https://api.anthropic.com/v1"
+    # Per-provider default model. Used when the router falls back to a
+    # provider's default (no override_provider or BYOK model). Free-tier
+    # Groq's 30 RPM cap is shared across models, but the 8b-instant model
+    # has a higher TPM budget than 70b-versatile and finishes generations
+    # in ~1 s instead of ~5 s -- the right pick for the demo.
+    groq_model: str = "llama-3.1-8b-instant"
+    openai_model: str = "gpt-4o-mini"
+    anthropic_model: str = "claude-sonnet-4-20250514"
 
     # ── RAG Pipeline Thresholds ───────────────────────────────────────────────────
     relevance_retry_threshold: float = 0.5
@@ -214,6 +222,64 @@ class Settings(BaseSettings):
     # RBAC filtering but requires creating collections per org on first use.
     # When false, all docs share a single collection with RBAC at payload level.
     multi_tenant_collections: bool = False
+
+    # ── BYOK demo mode (P6 production launch, see launch-plan/03-backend-byok.md)
+    # In BYOK mode the FastAPI surface accepts per-request LLM keys from visitor
+    # headers, scopes Qdrant writes to per-session collections, and disables
+    # Phoenix instrumentation. Off in dev/staging, on in the Hugging Face Space
+    # production image (SAR_BYOK_MODE=true via Space secrets).
+    byok_mode: bool = False
+    # When BYOK is on and a visitor did NOT bring their own LLM key, the owner
+    # key in .env is used but throttled to this many requests per IP per hour.
+    # The cap is intentionally tight so the Groq free-tier 30 RPM / 14400 RPD
+    # is never exhausted by a single visitor.
+    byok_owner_key_quota_per_hour: int = 3
+    # Per-session Qdrant collections (documents_sess_<session_id>) are auto
+    # purged after this many hours by retrieval/session_purge.py.
+    session_collection_ttl_hours: int = 24
+    # CORS allowlist consulted by the FastAPI middleware when byok_mode=true.
+    # Empty list = no CORS middleware mounted (dev default).
+    cors_allow_origins: list[str] = []
+    # In production BYOK deploys (HF Space) there is no local Ollama. Setting
+    # this to True allows the inference router to use the configured cloud
+    # provider for HIGH-sensitivity content as well. Off by default so dev /
+    # staging keeps the strict local-only invariant for HIGH.
+    allow_cloud_for_high: bool = False
+    # Public-demo audit export — when BYOK is on, /byok/audit returns the last
+    # ``byok_audit_max_entries`` entries (no auth, but PII-redacted and
+    # session-scoped). Empty list disables the endpoint.
+    byok_audit_max_entries: int = 50
+    # Visitor doc upload limits. The HF Space CPU Basic has 16 GB RAM and the
+    # free-tier Qdrant Cloud cluster is 1 GB; these caps keep both bounded
+    # under realistic public-demo traffic. Override per environment but never
+    # raise without a Qdrant tier upgrade.
+    byok_upload_max_bytes: int = 5 * 1024 * 1024  # 5 MB per file
+    byok_upload_max_files: int = 5  # per session
+    # Hard chunk-count cap per uploaded file. A 50-page PDF can chunk to
+    # 100+ pieces -- on the HF Space CPU Basic each Groq call adds ~2 s
+    # so a single 135-chunk doc can blow past SAR_REQUEST_TIMEOUT_S.
+    # If the parsed file exceeds this cap, the ingest endpoint cleans up
+    # the partial points and returns 413 with a clear message.
+    byok_upload_max_chunks_per_file: int = 60
+    # Skip the LLM-as-judge document grader entirely when BYOK demo mode is on.
+    # The grader makes one Groq call per retrieved chunk to decide "is this
+    # relevant to the query?". On the free Groq tier with a tight 30 RPM
+    # budget the grader frequently returns "no" for genuinely-relevant docs
+    # (rate-limit retry, terse chunks, partial JSON parse), which gives the
+    # visitor a confusing "no docs relevant" refusal even when the retrieval
+    # ranking is correct. Bypass = trust the embedding + RRF ordering.
+    byok_skip_grader: bool = True
+    # Skip the evaluator node's two LLM calls (hallucination check +
+    # completeness check) when BYOK demo mode is on. On the free-tier
+    # Groq 30 RPM cap, the evaluator alone consumes 2 calls per chat
+    # which is enough to throttle a busy demo. The synthesizer's own
+    # citation discipline + the per-sentence faithfulness gate (still
+    # available for paid tiers) are stronger quality signals anyway.
+    byok_skip_evaluator: bool = True
+    # Extensions allowed on the BYOK upload endpoint. .pdf parsed via PyPDF2;
+    # .txt / .md pass through the text loader. OCR / docx / csv stay off to
+    # avoid pulling Paddle (~700 MB) into the image.
+    byok_upload_allowed_extensions: list[str] = [".txt", ".md", ".pdf"]
 
     # ── Multi-Modal RAG ──────────────────────────────────────────────────────────
     # When ingesting images, also generate a rich text description using a VLM.

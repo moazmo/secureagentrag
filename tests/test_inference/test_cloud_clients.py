@@ -120,16 +120,26 @@ class TestGroqClient:
 
     @pytest.mark.asyncio
     async def test_error_status_raises(self, client: GroqClient) -> None:
-        """Should raise on HTTP error status from API."""
+        """Should raise after retrying on a 429 rate-limit response.
+
+        The cloud client now retries 429 with exponential backoff and re-
+        raises ``_RateLimitError`` (an internal sentinel) once attempts are
+        exhausted. We assert *either* signal so the test matches both the
+        pre-retry HTTPStatusError contract and the new rate-limit handling.
+        """
+        from inference.cloud_clients import _RateLimitError
+
         mock_response = httpx.Response(
             status_code=429,
             json={"error": {"message": "Rate limit exceeded"}},
-            request=httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions"),
+            request=httpx.Request(
+                "POST", "https://api.groq.com/openai/v1/chat/completions"
+            ),
         )
 
         with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:
             mock_post.return_value = mock_response
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises((httpx.HTTPStatusError, _RateLimitError)):
                 await client.generate(prompt="test")
 
 

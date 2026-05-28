@@ -2,6 +2,8 @@
 
 Operational guide for running, testing, and debugging the platform.
 
+> 🚀 **Production launch P6 mostly shipped on branch `deploy/prod-launch` (Phases 0–7 + A/U/V/W/X series done; Phase 8 demo video + Phase 9 merge-to-main pending).** Sections 1–10 below describe the **local-dev / on-prem** topology. **§ 11** documents the **live BYOK production stack** (HF Space + Vercel + Qdrant Cloud + Groq) and the failure modes it brings. **§ 12** is the BYOK env-var reference.
+
 ---
 
 ## 1. Prerequisites
@@ -50,7 +52,7 @@ Runs in ~20 seconds, no external services needed.
 uv run pytest -q
 ```
 
-Expected: **497 passed** (use `--maxfail=1 -x` if you want to bail on first fail).
+Expected: **620 passed** (up from 497 / 484 — the BYOK launch series added ~120 new tests; use `--maxfail=1 -x` if you want to bail on first fail).
 
 This is what CI runs on every push. Use it after you change code.
 
@@ -171,7 +173,7 @@ curl -sf http://localhost:6333/collections && echo "Qdrant OK"
 curl -sf http://localhost:11434/api/tags  && echo "Ollama OK"
 
 # Tests
-uv run pytest -q                            # unit/integ (484 passed / 22 skipped, ~25 s)
+uv run pytest -q                            # unit/integ (620 passed, ~30 s)
 uv run python -m scripts.e2e_smoke          # real end-to-end (~2-5 min)
 uv run python -m scripts.interview_demo     # PASS/FAIL grid for hero features
 uv run python -m scripts.h2_gate            # 12 advanced real-world UI scenarios
@@ -283,7 +285,7 @@ uv run python -m scripts.calibrate_thresholds \
 Env override still wins — pin `SAR_CONFIDENCE_THRESHOLD` /
 `SAR_FAITHFULNESS_THRESHOLD` if your environment needs a fixed value.
 
-## 11. Keycloak (RS256 + JWKS, ADR-019)
+## 10.1 Keycloak (RS256 + JWKS, ADR-019)
 
 ```bash
 # Bring up Keycloak (auto-imports deploy/keycloak-realm.json)
@@ -298,3 +300,168 @@ uv run uvicorn interfaces.api:app --port 8080
 ```
 
 That's the full operating surface.
+
+---
+
+## 11. Production failure modes (live BYOK stack)
+
+The live demo at `secureagentrag-web.vercel.app` runs four moving parts:
+Vercel Edge (frontend + SSE proxy), HF Space (FastAPI + LangGraph),
+Qdrant Cloud (vector store), Groq Free Tier (LLM). Each has its own
+failure modes.
+
+### 11.1 Groq 429 ("rate-limit hit") on every chat
+
+**Symptom:** Frontend shows the red 429 banner with "Set my API key"
+CTA. Backend logs show `_RateLimitError` from `inference/cloud_clients.py`.
+
+**Root cause:** Either
+1. Owner-key per-IP throttle hit (10 / hour) — visitor needs to BYOK or wait.
+2. Groq 30 RPM bucket exhausted by stacked traffic across visitors.
+3. Pipeline regressed to >2 LLM calls/chat (someone re-enabled
+   faithfulness / evaluator / RAG-fusion or unpinned the 8b model).
+
+**Fix:**
+- Check the Groq console for actual call count per chat.
+- Confirm `Dockerfile.hf` still pins `SAR_GROQ_MODEL=llama-3.1-8b-instant`,
+  `SAR_RAG_FUSION_ENABLED=false`, `SAR_BYOK_SKIP_EVALUATOR=true`,
+  `SAR_BYOK_SKIP_GRADER=true`, `SAR_FAITHFULNESS_GATE_ENABLED=false`.
+- Confirm `interfaces/byok.py::client_ip_from_request` reads
+  `X-Forwarded-For` leftmost token. Without this every visitor shares
+  one throttle bucket.
+
+### 11.2 HF Space sleeping (cold start 30–60 s)
+
+**Symptom:** First request after 48 h idle hangs ~45 s; subsequent
+requests normal.
+
+**Mitigation:** GitHub Actions cron at 03:17 UTC daily hits `/healthz`
++ a tiny `/byok/chat`. Check
+`https://github.com/moazmo/secureagentrag/actions/workflows/keepalive.yml`
+— if the last run failed, the next chat will cold-start.
+
+**Manual nudge:**
+```bash
+curl -sS https://LeomordKaly-secureagentrag-api.hf.space/healthz
+```
+
+### 11.3 Vercel Edge 30 s timeout
+
+**Symptom:** Long pipelines (heavy upload + slow Groq) return
+`Unexpected token 'A' in JSON at position 0...` because Edge cut the
+upstream and returned an HTML error page.
+
+**Mitigation already in place:** `secureagentrag-web/src/lib/uploads.ts`
+does text-then-parse and maps 504/502 to actionable copy. The backend
+`SAR_REQUEST_TIMEOUT_S=180` is intentionally longer than the Edge cap
+so the backend completes and writes the audit row even if the user
+sees a timeout. Re-asking returns the now-warm answer.
+
+### 11.4 Upload rejected (413 / 422)
+
+**Symptom:** Visitor sees a clear error from the upload drawer.
+
+**Cause + fix:**
+- 413 → file > 5 MB. Cap is `SAR_BYOK_UPLOAD_MAX_BYTES`.
+- 422 with `chunks: N` → PDF chunked to >60 pieces. Cap is
+  `SAR_BYOK_UPLOAD_MAX_CHUNKS_PER_FILE`. Tell visitor to split the doc.
+- 422 with `extension` → not `.txt`/`.md`/`.pdf`. Cap is
+  `SAR_BYOK_UPLOAD_ALLOWED_EXTENSIONS`.
+- 422 with `count: 6` → already 5 files in session. Have visitor delete
+  one via the drawer.
+
+### 11.5 Qdrant Cloud capacity warning
+
+**Symptom:** Qdrant Cloud dashboard shows storage approaching 1 GB.
+
+**Cause:** Session collections not purging. Either the lifespan cron
+didn't start (check HF Space logs for `byok_session_purge` startup
+line) or visitor traffic + 5 files × 60 chunks × 50 concurrent
+sessions briefly spiked.
+
+**Manual purge:**
+```bash
+uv run python -m scripts.byok_session_purge --force
+```
+
+### 11.6 Audit chain "broken" on /byok/audit export
+
+**Symptom:** `scripts/verify_audit_chain.py` flags a row in the
+downloaded JSONL.
+
+**Cause:** The HF Space ephemeral disk wiped the previous-row hash
+across a restart. The audit chain is per-process; restarts reset to a
+fresh genesis row. **This is intentional** for the BYOK demo (no
+durable audit across restarts). Sessions within one process boot have
+a valid chain.
+
+### 11.7 Frontend shows "blocked: guardrails" on a benign query
+
+**Symptom:** Regex gate over-matched (e.g. query contains "drop
+column" or "system prompt").
+
+**Cause:** LlamaGuard escalation is intentionally OFF in BYOK mode (to
+save Groq calls). The regex gate fails-closed on ambiguous strings.
+
+**Workaround for visitor:** rephrase. **For owner:** flip
+`SAR_GUARDRAILS_BACKEND=llamaguard` if a paid Groq tier or local
+Ollama is available.
+
+### 11.8 HIGH-classified query reaches cloud
+
+**Symptom:** Audit row shows `synth_provider=groq`,
+`query_sensitivity=high`, `forced_local=false`.
+
+**Cause:** Production explicitly sets `SAR_ALLOW_CLOUD_FOR_HIGH=true`
+because the HF Space has no Ollama. The frontend renders a
+`sensitivity: high` badge so the visitor is informed.
+
+**Self-hosted fix:** unset the flag (defaults to `false`). HIGH
+content will refuse on the public demo because there is no Ollama
+fallback.
+
+---
+
+## 12. BYOK env-var reference
+
+All `SAR_*` prefixed. Pin in `.env` (local) or HF Space secrets panel
+(production). Values shown are the live demo defaults.
+
+| Variable | Default | Why |
+|---|---|---|
+| `SAR_BYOK_MODE` | `true` (prod) / `false` (dev) | Master gate for all BYOK behavior |
+| `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR` | `10` | Owner-key per-IP throttle |
+| `SAR_BYOK_OWNER_QUOTA` | `10` | Alias for compatibility |
+| `SAR_SESSION_TTL_HOURS` | `24` | Auto-purge cutoff for `documents_sess_<sid>` |
+| `SAR_CORS_ALLOW_ORIGINS` | `["https://secureagentrag-web.vercel.app","https://secureagentrag.vercel.app"]` | Frontend allowlist |
+| `SAR_BYOK_AUDIT_MAX_ENTRIES` | `50` | Cap on `/byok/audit` response size |
+| `SAR_BYOK_UPLOAD_MAX_BYTES` | `5242880` | 5 MB per-file upload cap |
+| `SAR_BYOK_UPLOAD_MAX_FILES` | `5` | Per-session file cap |
+| `SAR_BYOK_UPLOAD_MAX_CHUNKS_PER_FILE` | `60` | Chatty PDF rejection bar |
+| `SAR_BYOK_UPLOAD_ALLOWED_EXTENSIONS` | `[".txt", ".md", ".pdf"]` | MIME allowlist |
+| `SAR_BYOK_SKIP_GRADER` | `true` | Skip per-doc LLM relevance grade (ADR-030) |
+| `SAR_BYOK_SKIP_EVALUATOR` | `true` | Skip evaluator LLM, use heuristic confidence (ADR-030) |
+| `SAR_GROQ_MODEL` | `llama-3.1-8b-instant` | Cheap + fast Groq model |
+| `SAR_OPENAI_MODEL` | `gpt-4o-mini` | Visitor BYOK OpenAI default |
+| `SAR_ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Visitor BYOK Anthropic default |
+| `SAR_RAG_FUSION_ENABLED` | `false` | Disabled for cost (ADR-030) |
+| `SAR_FAITHFULNESS_GATE_ENABLED` | `false` | Disabled for cost; self-hosted flips back |
+| `SAR_RERANKER_TYPE` | `none` | Disabled for CPU Basic disk budget |
+| `SAR_RELEVANCE_THRESHOLD` | `0.55` | Loose to keep small-corpus answers flowing |
+| `SAR_RELEVANCE_RETRY_THRESHOLD` | `0.3` | Loose retry threshold |
+| `SAR_MAX_RETRIES` | `1` | One refine is enough |
+| `SAR_RERANK_TOP_K` | `10` | Doubles as synth doc budget |
+| `SAR_REQUEST_TIMEOUT_S` | `180` | Backend SLO; Vercel Edge cuts at 30 s first |
+| `SAR_ALLOW_CLOUD_FOR_HIGH` | `true` (prod) | No Ollama on HF Space → HIGH unlocks cloud (UI badge informs visitor) |
+| `SAR_MULTI_TENANT_COLLECTIONS` | `true` | Routes base + session through `for_org()` / `for_session()` |
+| `SAR_AUDIT_LOG_DIR` | `/tmp/secureagentrag/audit_logs` | HF Space ephemeral disk |
+| `SAR_CONVERSATION_DIR` | `/tmp/secureagentrag/conversations` | Same |
+| `SAR_CHECKPOINT_DB_PATH` | `/tmp/secureagentrag/checkpoints.sqlite` | Same |
+| `SAR_BM25_INDEX_PATH` | `/tmp/secureagentrag/bm25_index.pkl` | Same |
+| `SAR_EMBEDDING_BACKEND` | `local` | sentence-transformers BGE-M3 on CPU |
+| `SAR_LOCAL_EMBEDDING_MODEL` | `BAAI/bge-m3` | 1024-d multilingual embeddings |
+| `SAR_LOG_LEVEL` | `INFO` | Production verbosity |
+| `HF_HOME` | `/home/user/.cache/huggingface` | HF Spaces convention |
+
+For the rest of the `SAR_*` surface, see `config/settings.py`.
+
