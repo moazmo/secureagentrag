@@ -4,6 +4,14 @@
 >
 > ⚙️ **Production launch shipped + merged to `main`** (2026-05-28, tagged **`v1.0.0-launch`**, CI green). Public BYOK demo on Next.js 16 + Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier. SSE streaming, session-scoped uploads (dual-collection RRF), persona presets, X-Forwarded-For throttle, audit export, in-chat knowledge-base browser, Markdown answer rendering, 50%+ Groq RPM cut. **623 tests pass** (626 collected, 3 optional-dep skips), **30 ADRs** (24 historical + ADR-025..028 launch + ADR-029 uploads + ADR-030 cost cuts). Only the 4-minute demo video remains. See [`launch-plan/`](./launch-plan/README.md) + [`DECISIONS.md`](./DECISIONS.md) ADR-025..030.
 
+## 🎬 Demo video (101s)
+
+Real-page walkthrough with narration + captions — RBAC personas, token-by-token streaming, inline citations, the in-chat knowledge base, uploads, and the SHA-256 audit chain. Built with Remotion from live screen captures.
+
+<video src="https://github.com/moazmo/secureagentrag/releases/download/v1.0.0-launch/secureagentrag-demo.mp4" controls width="100%"></video>
+
+▶️ **[Watch / download the demo (1080p MP4)](https://github.com/moazmo/secureagentrag/releases/download/v1.0.0-launch/secureagentrag-demo.mp4)** · or **[try it live](https://secureagentrag-web.vercel.app)** yourself.
+
 ## What the live demo does
 
 1. **You pick a persona** (engineer / compliance / executive) → RBAC + clearance get applied to every Qdrant search.
