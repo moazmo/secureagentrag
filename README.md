@@ -86,7 +86,7 @@ uv run python -m scripts.interview_demo
 | **Prompt-Injection Guardrails (3 backends)** | Regex always runs first. `SAR_GUARDRAILS_BACKEND` flips escalation between `llm` (legacy SAFE/UNSAFE on qwen3:8b) and `llamaguard` (Meta `llama-guard3:8b`, S1-S14 taxonomy → audit-friendly reason). Fail-open on Ollama transport errors. |
 | **True Token Streaming** | Synthesis tokens stream end-to-end. Works for Ollama, Groq, OpenAI, Anthropic. |
 | **Arabic + Multilingual** | BGE-M3 multilingual embeddings + PaddleOCR / Qwen-VL OCR for English + Arabic. |
-| **Observability** | Structured `structlog`, Phoenix / OpenTelemetry tracing, per-stage latency in the audit trail. |
+| **Observability** | Structured `structlog`, Phoenix / OpenTelemetry tracing, Prometheus `/metrics` + Grafana dashboard, per-stage latency in the audit trail. |
 | **Eval Pipeline + CI Gating** | Ragas faithfulness / relevancy / context-precision; nightly job opens an issue on >5 pp regression. |
 | **Prompt-Injection Guardrails** | Dedicated graph node blocks jailbreak / system-prompt-override attempts before retrieval. Output scanned for system-prompt leakage. |
 | **Tamper-Evident Audit Chain** | SHA-256 hash chain across audit entries. `scripts/verify_audit_chain.py` detects edits, insertions, and deletions. |
@@ -201,6 +201,38 @@ Full env-var reference: [`docs/configuration.md`](docs/configuration.md). Deeper
 
 ---
 
+## Metrics & Dashboards
+
+Two complementary observability layers, both **self-hosted** (the public BYOK demo runs neither — see the privacy note below):
+
+- **Tracing** — Arize Phoenix / OpenTelemetry captures per-LLM-call spans (prompts, completions, latency). Enabled with `SAR_PHOENIX_ENDPOINT`.
+- **Metrics** — Prometheus counters + histograms exposed at `GET /metrics`, scraped into Grafana.
+
+The metrics layer ([`utils/metrics.py`](utils/metrics.py)) emits four custom RAG signals on top of the standard HTTP request metrics from `prometheus-fastapi-instrumentator`:
+
+| Metric | Type | Labels | Meaning |
+|--------|------|--------|---------|
+| `rag_pipeline_latency_seconds` | histogram | `outcome` | End-to-end pipeline wall-clock, bucketed to the 180 s SLO |
+| `rag_pipeline_requests_total` | counter | `outcome` | Runs by terminal outcome (`success` / `blocked` / `timeout` / `review`) |
+| `guardrails_blocked_total` | counter | `gate`, `reason` | Requests stopped at a safety gate, by reason category |
+| `inference_routed_by_provider_total` | counter | `provider` | Synthesis calls by provider (`ollama` / `groq` / `openai` / `anthropic`) |
+| `faithfulness_dropped_total` | counter | — | Cited sentences the NLI gate flagged/dropped |
+
+Bring the stack up on top of the base compose:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up
+# Grafana    → http://localhost:3000  (admin / admin) → "SecureAgentRAG — RAG Pipeline"
+# Prometheus → http://localhost:9090
+# API        → http://localhost:8000/metrics
+```
+
+Grafana auto-provisions the Prometheus datasource and the dashboard from [`deploy/grafana/`](deploy/grafana/); Prometheus scrape config is [`deploy/prometheus.yml`](deploy/prometheus.yml).
+
+> **Privacy by design.** Metrics are aggregate counters only — no prompt, completion, key, or user text ever lands in a label, so they are safe even under BYOK. The public Hugging Face Space (CPU Basic) ships **without** the `[metrics]` extra and runs no collector; `/metrics` there is a 501 no-op. Phoenix tracing is *hard-disabled* under BYOK regardless of config, since spans would capture request content.
+
+---
+
 ## Tech Stack
 
 | Category | Technology | Why |
@@ -217,7 +249,7 @@ Full env-var reference: [`docs/configuration.md`](docs/configuration.md). Deeper
 | **Backend host (public demo)** | Hugging Face Spaces Docker CPU Basic | $0/mo, 16 GB RAM, 48 h sleep defeated by GitHub Actions cron — ADR-026 |
 | **Vector store (public demo)** | Qdrant Cloud Free Tier (1 GB) | Always-on, sparse + dense, AWS us-east-1 — ADR-028 |
 | **LLM (public demo)** | Groq Free Tier (`llama-3.1-8b-instant`) | 14,400 RPD, 30 RPM, per-IP throttle + visitor BYOK unlock — ADR-030 |
-| **Observability** | Arize Phoenix + structlog | OpenTelemetry-compatible distributed tracing + structured JSON logging |
+| **Observability** | Arize Phoenix + Prometheus/Grafana + structlog | OpenTelemetry tracing + aggregate RAG metrics dashboard + structured JSON logging |
 | **Evaluation** | Ragas + Custom Metrics | Industry-standard RAG metrics with custom latency/confidence tracking |
 | **Package Manager** | uv | 10-100x faster than pip/Poetry; Rust-based with native lockfile support |
 | **Containerization** | Docker Compose | One-command deployment for Qdrant, Ollama, and the application |

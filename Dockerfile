@@ -11,10 +11,15 @@ RUN pip install --no-cache-dir uv
 # Copy dependency manifest
 COPY pyproject.toml ./
 
+# Optional extras appended to the editable install, e.g. "[api,metrics]".
+# Defaults to empty so the base image stays lean; the observability overlay
+# passes INSTALL_EXTRAS=[api,metrics] to get the uvicorn API + /metrics.
+ARG INSTALL_EXTRAS=""
+
 # Create virtual environment and install dependencies
 # Using uv pip install instead of uv sync to avoid uv.lock requirement
 RUN uv venv /app/.venv && \
-    uv pip install --python /app/.venv/bin/python -e "."
+    uv pip install --python /app/.venv/bin/python -e ".${INSTALL_EXTRAS}"
 
 # ==============================================================================
 # Stage 2: Runtime — lean production image

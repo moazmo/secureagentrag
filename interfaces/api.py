@@ -110,6 +110,42 @@ if _FASTAPI_AVAILABLE:
     if _tracing_enabled:
         logger.info("phoenix_tracing_active_in_api")
 
+    # ── Prometheus metrics ───────────────────────────────────────────────
+    # Aggregate counters/histograms only — no prompts, completions, keys, or
+    # user text ever lands in a label, so this is safe to expose even under
+    # BYOK (unlike Phoenix tracing, which is hard-disabled above). When the
+    # ``[metrics]`` extra is installed we mount prometheus-fastapi-
+    # instrumentator for HTTP-level metrics and let it serve ``/metrics``;
+    # the custom RAG metrics in utils.metrics share the same default registry
+    # so they appear in the same exposition. Without the extra we fall back to
+    # a manual ``/metrics`` route that 501s until prometheus_client is present.
+    try:
+        from prometheus_fastapi_instrumentator import Instrumentator
+
+        Instrumentator(
+            should_group_status_codes=True,
+            excluded_handlers=["/metrics", "/healthz"],
+        ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+        logger.info("prometheus_metrics_enabled", mode="instrumentator")
+    except ImportError:
+        from fastapi import Response
+
+        from utils.metrics import render_latest
+
+        @app.get("/metrics", include_in_schema=False, tags=["ops"])
+        async def metrics() -> Response:
+            try:
+                payload, content_type = render_latest()
+            except RuntimeError:
+                return Response(
+                    "prometheus_client not installed; install the [metrics] extra",
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    media_type="text/plain",
+                )
+            return Response(payload, media_type=content_type)
+
+        logger.info("prometheus_metrics_enabled", mode="manual_fallback")
+
     # ── BYOK CORS middleware ─────────────────────────────────────────────
     # Only mount CORS when:
     #   1) BYOK mode is on (public demo path), AND

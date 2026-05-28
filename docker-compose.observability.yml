@@ -1,0 +1,89 @@
+# =============================================================================
+# docker-compose.observability.yml — self-hosted metrics overlay.
+# =============================================================================
+# Compose ON TOP of the base stack:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up
+#
+# Adds three services:
+#   - api        : uvicorn running interfaces.api:app on :8000, built with the
+#                  [api,metrics] extras so /metrics is live.
+#   - prometheus : scrapes api:8000/metrics every 10s.
+#   - grafana    : auto-provisioned datasource + the SecureAgentRAG dashboard.
+#
+# This stack is SELF-HOSTED ONLY. The public BYOK Hugging Face Space (CPU
+# Basic) cannot host Grafana and ships without the [metrics] extra, so /metrics
+# there is a 501 no-op by design — aggregate metrics are still privacy-safe,
+# we simply don't run the collector on the free tier.
+#
+# Open Grafana at http://localhost:3000 (admin/admin) → "SecureAgentRAG —
+# RAG Pipeline" dashboard. Prometheus UI is at http://localhost:9090.
+# =============================================================================
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_EXTRAS: "[api,metrics,embeddings-local]"
+    container_name: secureagentrag-api
+    command:
+      - uvicorn
+      - interfaces.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "1"
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Metrics are aggregate-safe; keep tracing off here so the API boots
+      # without a Phoenix collector.
+      - SAR_PHOENIX_ENDPOINT=
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: secureagentrag-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: secureagentrag-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus_data:
+  grafana_data:

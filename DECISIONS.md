@@ -1276,3 +1276,86 @@ a 10-doc demo corpus. Five env-var-controlled changes baked into
   ``openai_model`` / ``anthropic_model`` added to router patches)
 - ✅ All tests green (623 pass / 3 skip / 626 collected; CI gates with `--extra api`)
 - ✅ Live recorded screenshot of a successful Q+A with citations
+
+---
+
+## ADR-031: Prometheus/Grafana Metrics Layer (self-hosted, BYOK-safe)
+
+**Date:** 2026-05-28
+**Status:** Accepted
+
+**Context:**
+The project already had Arize Phoenix / OpenTelemetry *tracing* — per-LLM-call
+spans capturing prompts, completions, and latency. Tracing is the right tool
+for "what happened in this one request," but it is *hard-disabled under BYOK*
+(``utils/observability.py::setup_tracing`` short-circuits when
+``settings.byok_mode``) because spans would capture a visitor's keys-in-context
+and uploaded text. That left the public demo with **no aggregate operational
+view** — no answer to "what's the p95 pipeline latency," "how often does the
+guardrails gate fire," or "what fraction of traffic routes to Groq vs Ollama."
+
+A friend's repo praised by an "AI engineering expert" shipped a
+Prometheus + Grafana + exporters stack as a headline signal. We had the
+harder substance (RBAC, faithfulness, audit chain) but were missing the
+legible operational dashboard that reviewers skim for first.
+
+**Decision:**
+Add a second, complementary observability layer: **aggregate metrics** via
+Prometheus, visualised in Grafana. Crucially, metrics are *counters and
+histograms only* — no request content ever enters a label — so unlike
+tracing they are privacy-safe even under BYOK.
+
+- ``utils/metrics.py`` — zero-hard-dependency module. Imports
+  ``prometheus_client`` behind a try/except; without the ``[metrics]`` extra
+  every recorder is a no-op and ``METRICS_ENABLED`` is ``False``. Four custom
+  RAG metrics on the global registry:
+  ``rag_pipeline_latency_seconds`` (histogram, ``outcome`` label, buckets to
+  the 180 s SLO), ``rag_pipeline_requests_total`` (counter, ``outcome``),
+  ``guardrails_blocked_total`` (counter, ``gate`` + ``reason``),
+  ``inference_routed_by_provider_total`` (counter, ``provider``), and
+  ``faithfulness_dropped_total`` (counter).
+- Label cardinality is bounded: providers clamp to a known set or ``other``;
+  guardrails reasons clamp to a controlled vocabulary or ``other`` — an
+  attacker-controlled rejection string can never explode the series count.
+- ``record_pipeline_run(state, latency_ms)`` is called at **all four** pipeline
+  terminal points in ``core/graph.py`` (sync success, sync timeout, streaming
+  final, streaming timeout). It derives the outcome from the final state
+  (``blocked`` / ``timeout`` / ``review`` / ``success``) and never raises.
+- ``interfaces/api.py`` mounts ``prometheus-fastapi-instrumentator`` for
+  HTTP-level metrics and serves ``/metrics`` from the shared default registry;
+  if the extra is absent it falls back to a manual ``/metrics`` route that
+  501s. Either way the custom RAG metrics appear in the same exposition.
+- ``docker-compose.observability.yml`` overlays Prometheus + Grafana + a
+  uvicorn ``api`` service (built with ``INSTALL_EXTRAS=[api,metrics,...]`` via a
+  new Dockerfile ARG). Grafana auto-provisions the datasource
+  (``deploy/grafana/provisioning/``) and the "SecureAgentRAG — RAG Pipeline"
+  dashboard (``deploy/grafana/dashboards/secureagentrag.json``).
+
+**Consequences:**
+
+- (+) Self-hosted deploys get a real operational dashboard: pipeline latency
+  percentiles, request outcomes, provider routing mix, guardrails blocks, and
+  faithfulness drops — the legible signal reviewers look for.
+- (+) Privacy-safe by construction: aggregate-only, so it can run even where
+  Phoenix tracing cannot. Two layers with a clear split (tracing = per-request
+  detail, self-hosted-only via Phoenix; metrics = aggregate, always-safe).
+- (+) Zero cost on the public demo: the HF Space ships without the ``[metrics]``
+  extra, so ``/metrics`` is a 501 no-op and no collector runs. No new attack
+  surface, no memory overhead on CPU Basic.
+- (−) The Grafana stack is self-hosted only — the free HF Space CPU tier can't
+  host Grafana, so the public demo has no live dashboard (README documents the
+  local ``docker compose`` path instead).
+- (−) HTTP metrics depend on ``prometheus-fastapi-instrumentator``; the manual
+  fallback exposes only the custom RAG metrics, not per-handler HTTP latency.
+
+**Acceptance criteria (all met):**
+
+- ✅ ``utils/metrics.py`` degrades to no-ops without the extra; ``/metrics``
+  501s rather than erroring.
+- ✅ 9 new tests green (6 unit on ``record_pipeline_run`` + 3 on the endpoint).
+- ✅ ``record_pipeline_run`` hooked into all four pipeline terminal paths.
+- ✅ Dashboard JSON + all provisioning YAML parse; ``docker-compose`` overlay
+  validated.
+- ✅ Ruff clean; existing api + graph tests unaffected (2 unrelated WinError
+  10055 socket-exhaustion failures reproduce only in the long combined run and
+  pass in isolation).

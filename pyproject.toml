@@ -45,6 +45,10 @@ observability = [
     "opentelemetry-api>=1.28.0",
     "opentelemetry-sdk>=1.28.0",
 ]
+metrics = [
+    "prometheus-client>=0.21.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
+]
 persistence = [
     "psycopg[binary,pool]>=3.2.0",
     "langgraph-checkpoint-postgres>=2.0.0",
@@ -66,7 +70,7 @@ pii = [
     "presidio-anonymizer>=2.2.0",
 ]
 all = [
-    "secureagentrag[ocr,embeddings-local,evaluation,observability,persistence,cache,api,mcp,pii]",
+    "secureagentrag[ocr,embeddings-local,evaluation,observability,metrics,persistence,cache,api,mcp,pii]",
 ]
 
 [build-system]

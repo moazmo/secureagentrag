@@ -1,0 +1,14 @@
+# Prometheus scrape config for the SecureAgentRAG observability overlay.
+# Targets the uvicorn API's /metrics endpoint (HTTP-level metrics from
+# prometheus-fastapi-instrumentator + custom RAG metrics from utils.metrics).
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: secureagentrag-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          service: secureagentrag

@@ -29,6 +29,7 @@ from core.agents.security import check_security, security_gate
 from core.agents.synthesizer import synthesize_answer
 from core.state import GraphState
 from utils.logging import get_logger
+from utils.metrics import record_pipeline_run
 from utils.observability import trace_graph_execution
 
 if TYPE_CHECKING:
@@ -497,9 +498,11 @@ async def run_rag_pipeline(
             user_id=user_context.user_id,
             thread_id=thread_id,
         )
-        return _build_timeout_state(
+        timeout_state = _build_timeout_state(
             query, user_context, elapsed_ms, prefer_cloud, override_provider
         )
+        record_pipeline_run(timeout_state, elapsed_ms)
+        return timeout_state
 
     elapsed_ms = (time.perf_counter() - start_time) * 1000
 
@@ -515,6 +518,7 @@ async def run_rag_pipeline(
         final_confidence=final_state.get("confidence_score", 0.0),
         retries=final_state.get("retry_count", 0),
     )
+    record_pipeline_run(final_state, elapsed_ms)
 
     logger.info(
         "rag_pipeline_completed",
@@ -699,6 +703,7 @@ async def run_rag_pipeline_stream(
         )
         state["needs_human_review"] = True
         state["evaluation_notes"] = "request_timeout"
+        record_pipeline_run(state, elapsed_ms)
         yield {
             "type": "blocked",
             "message": (
@@ -720,6 +725,7 @@ async def run_rag_pipeline_stream(
         final_confidence=state.get("confidence_score", 0.0),
         retries=state.get("retry_count", 0),
     )
+    record_pipeline_run(state, elapsed_ms)
 
     logger.info(
         "rag_pipeline_stream_completed",
