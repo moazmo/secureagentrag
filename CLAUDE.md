@@ -2,7 +2,7 @@
 
 This file is the canonical entry point for any AI agent (Claude / Hermes / Kimi / Cursor / Aider) picking up work on SecureAgentRAG. Read it before touching code.
 
-> 🚀 **Launch complete — `main` is the trunk.** The production BYOK demo (P6) shipped and merged: `deploy/prod-launch` → `main` on 2026-05-28, tagged **`v1.0.0-launch`**, CI green. The old freeze at `56c8c98` is lifted; new work goes on `main` directly or a feature branch. The only launch item still open is the 4-minute demo video (Phase 8 — owner action). `launch-plan/` + `private/roadmap.md` hold the history; `private/review-2026-05-28.md` is the current deep review.
+> 🚀 **Launch complete — `main` is the trunk.** The production BYOK demo (P6) shipped and merged: `deploy/prod-launch` → `main` on 2026-05-28, tagged **`v1.0.0-launch`**, CI green. The old freeze at `56c8c98` is lifted; new work goes on `main` directly or a feature branch. **All launch phases are done** — incl. the 101 s demo video (Remotion, on the `v1.0.0-launch` release + inline in both READMEs). `private/roadmap.md` holds the history; `private/review-2026-05-28.md` is the current deep review.
 
 ---
 
@@ -195,11 +195,10 @@ Lives behind `SAR_BYOK_MODE=true`. The HF Space Dockerfile sets it; local dev do
 - **Sensitivity disclaimer suppressed** in BYOK mode (both prompt-side gate in `_build_system_prompt` and post-synth `_add_disclaimers` early-return). The frontend's `sensitivity:` badge is the user-facing signal.
 - **No Phoenix / Postgres / Ollama in BYOK mode.** Audit on /tmp; checkpointer in-memory.
 
-## 6. Genuinely remaining work (audited 2026-05-27)
+## 6. Genuinely remaining work (audited 2026-05-28)
 
-The BYOK launch is complete, merged to `main`, tagged `v1.0.0-launch`, CI green. A follow-up quality + transparency pass also shipped (Y-series web product surface, Z-series Markdown answers + in-chat knowledge base). Pipeline survives Egypt-from-mobile traffic on $0/mo. What's left:
+The BYOK launch is complete, merged to `main`, tagged `v1.0.0-launch`, CI green. Follow-up quality + transparency pass shipped (Y-series web product surface, Z-series Markdown answers + in-chat knowledge base). **101 s demo video shipped** (Remotion in `secureagentrag-video/`, on the release + inline in both READMEs). Pipeline survives Egypt-from-mobile traffic on $0/mo. **No launch items open.** Optional polish only:
 
-- **Phase 8 — record 4-minute demo video** against `secureagentrag-web.vercel.app`. Owner action. Script lives in `launch-plan/08-demo-video.md`. **This is the only open launch item.**
 - **Optional:** enable Vercel Web Analytics + Speed Insights in the dashboard (code already wired in `secureagentrag-web` layout — no-op until toggled).
 - **Optional:** upload fine-tuned reranker to `LeomordKaly/secureagentrag-reranker-v1` HF Hub model repo and flip `SAR_RERANKER_TYPE=fine_tuned` on the Space. **Not recommended** on the 10-doc corpus — ADR-022/030 bench shows the cross-encoder's top-5 cut drops the visitor's own chunk; helps only past ~200 docs/query.
 - **Optional:** selective guardrails escalation (regex hit → LlamaGuard on suspicious only). Would catch unicode-obfuscation without burning Groq budget on every chat.

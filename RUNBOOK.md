@@ -2,7 +2,7 @@
 
 Operational guide for running, testing, and debugging the platform.
 
-> 🚀 **Production launch shipped + merged to `main`** (2026-05-28, tagged `v1.0.0-launch`, CI green). Phases 0–7 + A/B/U/V/W/X/Y/Z series done; only the demo video (Phase 8) is open. Sections 1–10 below describe the **local-dev / on-prem** topology. **§ 11** documents the **live BYOK production stack** (HF Space + Vercel + Qdrant Cloud + Groq) and its failure modes. **§ 12** is the BYOK env-var reference.
+> 🚀 **Production launch shipped + merged to `main`** (2026-05-28, tagged `v1.0.0-launch`, CI green). Phases 0–9 + A/B/U/V/W/X/Y/Z series done, incl. the 101 s demo video. Sections 1–10 below describe the **local-dev / on-prem** topology. **§ 11** documents the **live BYOK production stack** (HF Space + Vercel + Qdrant Cloud + Groq) and its failure modes. **§ 12** is the BYOK env-var reference.
 
 ---
 

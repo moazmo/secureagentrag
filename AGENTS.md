@@ -4,7 +4,7 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
 
 **Prerequisite:** read `CLAUDE.md` first.
 
-> 🚀 **Launch complete — `main` is the trunk.** The production BYOK demo (P6) merged `deploy/prod-launch` → `main` on 2026-05-28, tagged **`v1.0.0-launch`**, CI green. The old freeze at `56c8c98` is lifted; commit to `main` directly or a feature branch. The launch history lives in `launch-plan/` and `private/roadmap.md`; the current deep review is `private/review-2026-05-28.md`. Only the 4-minute demo video (Phase 8) is still open.
+> 🚀 **Launch complete — `main` is the trunk.** The production BYOK demo (P6) merged `deploy/prod-launch` → `main` on 2026-05-28, tagged **`v1.0.0-launch`**, CI green. The old freeze at `56c8c98` is lifted; commit to `main` directly or a feature branch. The launch history lives in `launch-plan/` and `private/roadmap.md`; the current deep review is `private/review-2026-05-28.md`. **All launch phases done**, incl. the 101 s demo video (inline in both READMEs).
 
 ---
 

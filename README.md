@@ -2,7 +2,7 @@
 
 > **🚀 Live demo:** [secureagentrag-web.vercel.app](https://secureagentrag-web.vercel.app) · **API:** [`LeomordKaly-secureagentrag-api.hf.space`](https://LeomordKaly-secureagentrag-api.hf.space/healthz) · **Cost:** $0/mo · **Egypt-tested · no credit card · no cold-start delay**
 >
-> ⚙️ **Production launch shipped + merged to `main`** (2026-05-28, tagged **`v1.0.0-launch`**, CI green). Public BYOK demo on Next.js 16 + Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier. SSE streaming, session-scoped uploads (dual-collection RRF), persona presets, X-Forwarded-For throttle, audit export, in-chat knowledge-base browser, Markdown answer rendering, 50%+ Groq RPM cut. **623 tests pass** (626 collected, 3 optional-dep skips), **30 ADRs** (24 historical + ADR-025..028 launch + ADR-029 uploads + ADR-030 cost cuts). Only the 4-minute demo video remains. See [`launch-plan/`](./launch-plan/README.md) + [`DECISIONS.md`](./DECISIONS.md) ADR-025..030.
+> ⚙️ **Production launch shipped + merged to `main`** (2026-05-28, tagged **`v1.0.0-launch`**, CI green). Public BYOK demo on Next.js 16 + Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier. SSE streaming, session-scoped uploads (dual-collection RRF), persona presets, X-Forwarded-For throttle, audit export, in-chat knowledge-base browser, Markdown answer rendering, 50%+ Groq RPM cut. **623 tests pass** (626 collected, 3 optional-dep skips), **30 ADRs** (24 historical + ADR-025..028 launch + ADR-029 uploads + ADR-030 cost cuts). 101-second demo video at the top of this README. See [`DECISIONS.md`](./DECISIONS.md) ADR-025..030 for the launch architecture.
 
 ## 🎬 Demo video (101s)
 
@@ -627,67 +627,9 @@ Key design choices are documented in [DECISIONS.md](DECISIONS.md). Highlights:
 
 ---
 
-## Roadmap
+## Status
 
-Delivered:
-
-- [x] **True token streaming** — synthesis tokens stream from the LLM through `run_rag_pipeline_stream` to the Streamlit UI (Ollama, Groq, OpenAI, Anthropic)
-- [x] **Persistent checkpointing** — SQLite by default (Postgres optional) for LangGraph thread state
-- [x] **Input validation + prompt-injection guardrails** — regex-based gate before retrieval
-- [x] **Query caching** — Redis-backed result cache for identical queries (in-memory fallback)
-- [x] **Health checks** — service dependency monitoring with latency tracking
-- [x] **Correlation ID logging** — distributed request tracing across all components
-- [x] **Graceful degradation** — BM25 fallback when embedding services are unavailable
-- [x] **Rate limiting** — token-bucket per-user with optional Redis backend
-- [x] **Audit trail with SHA-256 hash chain** — tamper-evident; verify with `scripts/verify_audit_chain.py`
-- [x] **RAG fusion** — multiple query reformulations with parallel RRF
-- [x] **Contextual Retrieval** — Anthropic-style LLM context prepended per chunk (opt-in)
-- [x] **HyDE** — hypothetical-answer embeddings for complex queries (opt-in)
-- [x] **PII redaction** — emails/phones/SSN/CC scrubbed before audit + cache persistence
-- [x] **FastAPI REST surface** — auth: `/query`, `/ingest`, `/audit`, `/audit/verify`, `/healthz`, `/readyz`; public BYOK: `/byok/chat`, `/byok/chat/stream` (SSE), `/byok/audit`, `/byok/uploads` (GET/POST/DELETE), `/byok/personas`, `/byok/corpus`
-- [x] **MCP server** — `retrieve` and `query` tools for Claude Desktop / Code / Cursor
-- [x] **Cost dashboard** — per-query $ for cloud calls, kWh-equivalent for local
-- [x] **CI eval gating** — nightly Ragas run on golden set, regression > 5pp opens an issue
-- [x] **Structured response schema** — Pydantic `QueryResponse` shared by FastAPI + MCP
-
-- [x] **Multi-modal RAG** — VLM image understanding via `ingestion/vlm_ocr.py` + `ingestion/multimodal.py` (Qwen-VL primary, PaddleOCR fallback). Opt-in via `SAR_VLM_OCR_ENABLED` and `SAR_MULTIMODAL_DESCRIPTIONS_ENABLED`.
-- [x] **JSON-mode synth** — structured citation output via `_build_json_synthesis_prompt`. Opt-in via `SAR_JSON_CITATIONS_ENABLED`.
-- [x] **Self-query** — natural-language filter extraction in `retrieval/self_query.py`. Opt-in via `SAR_SELF_QUERY_ENABLED`.
-- [x] **HyDE retrieval** — hypothetical-document embeddings via `retrieval/hyde.py`. Opt-in via `SAR_HYDE_ENABLED`.
-- [x] **Multi-tenant deployment** — per-org Qdrant collections via `QdrantManager.for_org()`. Opt-in via `SAR_MULTI_TENANT_COLLECTIONS`.
-- [x] **Kubernetes Helm chart** — production deployment manifests in `helm/secureagentrag/`.
-- [x] **LLM-based guardrails escalation** — `core/agents/guardrails_llm.py` runs a local-LLM second opinion on ambiguous queries after the regex gate. Opt-in via `SAR_GUARDRAILS_STRICT`.
-- [x] **NLI citation faithfulness gate** — per-sentence entailment check in `core/agents/faithfulness.py`. Opt-in via `SAR_FAITHFULNESS_GATE_ENABLED`.
-- [x] **Pipeline SLO deadline** — wall-clock budget via `SAR_REQUEST_TIMEOUT_S`.
-- [x] **Signed JWT auth — HS256 + RS256/JWKS** — `utils/auth.py` dispatches on `SAR_JWT_ALGORITHM`. RS256 mode pulls public keys from `SAR_JWKS_URL` with a TTL cache in `utils/jwks_cache.py`. Keycloak realm export at `deploy/keycloak-realm.json`; `docker compose --profile auth up -d keycloak` brings it up.
-- [x] **Qdrant native sparse vectors** — replaces the `rank_bm25` pickle. `retrieval/sparse_embeddings.py` supports `bm25` (default, no new deps) and `splade` (`naver/splade-cocondenser-ensembledistil` via transformers) backends. Sparse search hits Qdrant under the same RBAC filter as dense — entire BM25-bypass class of bugs is structurally impossible. Benchmark in `evaluation/benchmarks/splade_vs_bm25.md`. Migrate existing collections with `uv run python -m scripts.migrate_to_splade`.
-- [x] **LlamaGuard 3 escalation backend** — `core/agents/guardrails_llamaguard.py` wraps Meta's `llama-guard3:8b` via Ollama. Maps the S1-S14 category taxonomy to audit-friendly `guardrails_reason` values. Selector via `SAR_GUARDRAILS_BACKEND` (`regex` / `llm` / `llamaguard`); regex always runs first, escalation kicks in for strict-mode passes.
-- [x] **Fine-tuned reranker scaffolding** — `scripts/train_reranker.py` fine-tunes from BGE-Reranker-v2-M3 on MS-MARCO triplets with optional hard-negative mining from the local Qdrant index. `scripts/bench_reranker.py` measures NDCG@10 on MS-MARCO hold-out + optional in-domain NIST gold set. New flag `SAR_RERANKER_TYPE=fine_tuned`. Actual training run is opt-in GPU work; the bench harness accepts any cross-encoder so the baseline is reproducible without it.
-- [x] **Run the fine-tune + publish the checkpoint** — trained on RTX 3060 (100k MS-MARCO rows, 1 epoch, AMP fp16, ~4 hr wall). **+1.60pp NDCG@10 on MS-MARCO** (0.7744 → 0.7904) and **+0.54pp on the 20-row NIST in-domain gold** (0.9162 → 0.9215). Both ADR-022 acceptance criteria met. Bench: `evaluation/benchmarks/reranker_finetune.md`. Checkpoint `data/checkpoints/reranker-domain-v1/` (2.27 GB, gitignored).
-- [x] **NIST in-domain rerank gold set** — `evaluation/nist_rerank_gold.jsonl` ships 20 hand-picked query / positive-chunk / negative-chunks triplets sampled from `sample_docs/real/NIST_AI_RMF.pdf` (135 chunks). Unlocks the NIST arm of `scripts/bench_reranker.py` (no more "skipped — gold absent").
-- [x] **Per-tenant SPLADE isolation + manager cache** — `QdrantManager.for_org(org_id)` now caches per-tenant managers (one HTTP client pool + one `ensure_collection` round-trip per distinct tenant instead of per request). Each per-tenant collection still gets its own dense + sparse vector slot via `ensure_collection`, so cross-tenant sparse leakage is structurally impossible. Three new tests pin the contract. ADR-024.
-- [x] **Threshold calibration against a labelled gold set** — 50-row gold set at `evaluation/golden_set.jsonl` (NIST AI RMF + ACME synthetic + RBAC negatives + out-of-scope + injection probes + bilingual + adversarial). `scripts/calibrate_thresholds.py` sweeps the confidence and faithfulness signals end-to-end, picks the Youden-J-optimal cut-off, and persists to `evaluation/calibration.json`. `config/settings.py::_apply_calibration` loads those values at import; `SAR_CONFIDENCE_THRESHOLD` / `SAR_FAITHFULNESS_THRESHOLD` env still wins. Nightly CI compares `evaluation/baseline.json` against the same gold-set output (>5pp drop fails the build via `evaluation.nightly`). ADR-023.
-
-**P6 — Production launch (shipped 2026-05-26..27):**
-
-- [x] **Phase 1 smoke signups** — HF + Qdrant Cloud + Vercel + Groq + Hostinger inventory verified from Egypt with no credit card.
-- [x] **Phase 2 — BYOK backend mode** — `/byok/chat`, `/byok/chat/stream` (SSE), `/byok/audit`, `/byok/uploads` (GET/POST/DELETE), per-IP throttle on `X-Forwarded-For`, session-scoped Qdrant collections. ADR-025.
-- [x] **Phase 3 — HF Space backend live** — `LeomordKaly-secureagentrag-api.hf.space`, 16 GB CPU Basic, 0.54 s TTFB from Egypt. ADR-026.
-- [x] **Phase 4 — Vercel Next.js 16 frontend live** — `secureagentrag-web.vercel.app`, SSE streaming, BYOK drawer, eye-comfort palette. ADR-027.
-- [x] **Phase 6 — Keepalive cron** — daily GitHub Actions ping at 03:17 UTC defeats HF Space 48 h sleep.
-- [x] **Phase 7 — Demo corpus ingested** — 10 RBAC docs, 138 chunks, 276 points incl. sparse on Qdrant Cloud free tier. ADR-028.
-- [x] **U-series — Visitor document upload** — drag-drop + progress + delete, 5 MB / 5 files / 60 chunks caps, dual-collection RRF retrieval. ADR-029.
-- [x] **V-series — Upload + chat quality hardening** — chunk-count cap, session top_k bound, robust JSON parse on Vercel Edge 30 s timeout, eye-comfort palette.
-- [x] **W-series — Sensitivity disclaimer dropped + 429 banner** — owner-key throttle raised 3 → 10/h, dedicated red "Set my API key" banner.
-- [x] **X-series — Groq cost optimisations** — pin `llama-3.1-8b-instant`, kill RAG-fusion, bypass evaluator LLM, router shortcut for short queries; ~2 Groq calls/chat. ADR-030.
-- [x] **Y-series — Web frontend product surface** — split single-page chat into `/`, `/chat`, `/corpus`, `/personas`, `/status`. Two new public backend endpoints (`/byok/corpus`, `/byok/personas`) wired through Edge proxies, plus Vercel-Edge cold-start warmer pinging `/healthz` at module load, client-side suggested-follow-up chips below each answer, robots.txt + sitemap.xml, richer OG/Twitter cards. Live at `secureagentrag-web.vercel.app/{corpus,personas,status}`.
-- [x] **Z-series — Answer quality + transparency** — Markdown synthesis contract + 1100-char per-chunk context; zero-dep Markdown answer renderer (lists, code, `[N]` citation chips); in-chat 📚 Knowledge Base panel showing every base doc with a per-persona ✅/🔒 access badge; OG social image via `next/og`; Vercel Analytics + Speed Insights wired.
-- [x] **Phase 9 — merge `deploy/prod-launch` → `main`, tag `v1.0.0-launch`** (2026-05-28, merge `e6f2507`, CI green at 623 tests).
-
-Planned (not yet implemented):
-- [ ] **Phase 8** — 4-minute demo video against the live URL (the only open launch item).
-
----
+Production-ready and **live**. The public BYOK demo runs at $0/month on Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier; **623 tests** pass in CI; **30 ADRs** document every decision in [DECISIONS.md](DECISIONS.md). Tagged [`v1.0.0-launch`](https://github.com/moazmo/secureagentrag/releases/tag/v1.0.0-launch). Full feature breadth is in the feature table above and the ADR list below.
 
 ## License
 
