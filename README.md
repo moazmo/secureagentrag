@@ -6,11 +6,13 @@
 
 ## 🎬 Demo video (101s)
 
-Real-page walkthrough with narration + captions — RBAC personas, token-by-token streaming, inline citations, the in-chat knowledge base, uploads, and the SHA-256 audit chain. Built with Remotion from live screen captures.
+Real-page walkthrough — RBAC personas, token-by-token streaming, inline citations, the in-chat knowledge base, uploads, and the SHA-256 audit chain. Built with Remotion from live screen captures.
 
-<video src="https://github.com/moazmo/secureagentrag/releases/download/v1.0.0-launch/secureagentrag-demo.mp4" controls width="100%"></video>
+[![SecureAgentRAG demo — click for the full 1080p video with narration](https://github.com/moazmo/secureagentrag/releases/download/v1.0.0-launch/demo.gif)](https://github.com/moazmo/secureagentrag/releases/download/v1.0.0-launch/secureagentrag-demo.mp4)
 
-▶️ **[Watch / download the demo (1080p MP4)](https://github.com/moazmo/secureagentrag/releases/download/v1.0.0-launch/secureagentrag-demo.mp4)** · or **[try it live](https://secureagentrag-web.vercel.app)** yourself.
+*(Preview autoplays above — click it, or the link below, for the full 101s 1080p video with TTS narration + captions.)*
+
+▶️ **[Watch / download the full 1080p video](https://github.com/moazmo/secureagentrag/releases/download/v1.0.0-launch/secureagentrag-demo.mp4)** · or **[try it live](https://secureagentrag-web.vercel.app)** yourself.
 
 ## What the live demo does
 
