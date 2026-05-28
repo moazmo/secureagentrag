@@ -98,7 +98,11 @@ class InferenceRouter:
         # out via SAR_ALLOW_CLOUD_FOR_HIGH (set in HF Space production image
         # where local Ollama is unavailable; visitor is warned client-side).
         if sensitivity_level == SensitivityLevel.HIGH and self.force_local_for_sensitive:
-            if settings.allow_cloud_for_high and self.cloud_provider and self._is_provider_configured(self.cloud_provider):
+            if (
+                settings.allow_cloud_for_high
+                and self.cloud_provider
+                and self._is_provider_configured(self.cloud_provider)
+            ):
                 model = self._get_model_for_provider(self.cloud_provider)
                 return RoutingDecision(
                     provider=self.cloud_provider,

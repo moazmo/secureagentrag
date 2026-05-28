@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from typing import Any
 
@@ -156,10 +157,8 @@ class QdrantManager:
         # Honour the canonical helper when both flags align so a future rename
         # of the prefix has a single source of truth.
         if settings.byok_mode:
-            try:
+            with contextlib.suppress(Exception):
                 sess_collection = get_collection_name(session_id=session_id)
-            except Exception:
-                pass
 
         if sess_collection == self._collection_name:
             return self
@@ -185,15 +184,13 @@ class QdrantManager:
             # predicates on un-indexed payload keys, so this is mandatory.
             ("source_file_id", "keyword"),
         ):
-            try:
+            # Index may already exist; safe to ignore.
+            with contextlib.suppress(Exception):
                 mgr._client.create_payload_index(
                     collection_name=sess_collection,
                     field_name=field,
                     field_schema=schema,
                 )
-            except Exception:
-                # Index may already exist; safe to ignore.
-                pass
         self._tenant_cache[sess_collection] = mgr
         logger.info(
             "byok_session_collection_cached",

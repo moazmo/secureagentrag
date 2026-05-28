@@ -53,9 +53,12 @@ client.set_payload(
 )
 print("Patched demo_finance_q3.txt -> sensitivity=high (3)")
 
-count, _ = client.count(
-    collection_name=collection,
-    count_filter=source_match,
-    exact=True,
-), None
+count, _ = (
+    client.count(
+        collection_name=collection,
+        count_filter=source_match,
+        exact=True,
+    ),
+    None,
+)
 print(f"Affected chunks: {count.count}")

@@ -66,6 +66,7 @@ def test_client_ip_anonymous_when_everything_missing() -> None:
     req = _fake_request({}, peer=None)
     assert client_ip_from_request(req) == "anon"
 
+
 # ── Pure factory tests ──────────────────────────────────────────────────────
 
 

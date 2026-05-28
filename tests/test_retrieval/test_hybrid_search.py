@@ -316,9 +316,7 @@ class TestSessionScopedSearch:
         return m
 
     @pytest.mark.asyncio
-    async def test_session_id_invokes_for_session(
-        self, mock_qdrant, mock_embedder, user_context
-    ):
+    async def test_session_id_invokes_for_session(self, mock_qdrant, mock_embedder, user_context):
         """When session_id is passed, hybrid search must call for_session(sid)."""
         # Base + session managers
         base_mgr = MagicMock()
@@ -344,9 +342,7 @@ class TestSessionScopedSearch:
         sess_mgr.search_with_rbac.return_value = [sess_point]
 
         searcher = HybridSearcher(mock_qdrant, mock_embedder, sparse_service=None)
-        results = await searcher.search(
-            "test", user_context, top_k=10, session_id="xyz"
-        )
+        results = await searcher.search("test", user_context, top_k=10, session_id="xyz")
 
         mock_qdrant.for_session.assert_called_once_with("xyz")
         ids = {r.id for r in results}
@@ -388,8 +384,6 @@ class TestSessionScopedSearch:
         sess_mgr.search_with_rbac.side_effect = RuntimeError("session-down")
 
         searcher = HybridSearcher(mock_qdrant, mock_embedder, sparse_service=None)
-        results = await searcher.search(
-            "test", user_context, top_k=5, session_id="broken"
-        )
+        results = await searcher.search("test", user_context, top_k=5, session_id="broken")
         # The base result must survive even when the session path raises.
         assert any(r.id == "base-1" for r in results)

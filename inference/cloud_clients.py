@@ -25,6 +25,7 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
 # Retry on transient connection failures AND 429 rate-limit responses.
 # Groq's free tier is 30 RPM; a single user query can fire grader +
 # synth + faith calls that exceed that bucket. We honour the Retry-After
@@ -41,9 +42,7 @@ def _raise_for_status_with_429(resp: httpx.Response) -> None:
 
 
 _retry_on_connection = retry(
-    retry=retry_if_exception_type(
-        (httpx.ConnectError, httpx.TimeoutException, _RateLimitError)
-    ),
+    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException, _RateLimitError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1.5, min=2, max=20),
     reraise=True,

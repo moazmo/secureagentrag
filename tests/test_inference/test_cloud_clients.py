@@ -132,9 +132,7 @@ class TestGroqClient:
         mock_response = httpx.Response(
             status_code=429,
             json={"error": {"message": "Rate limit exceeded"}},
-            request=httpx.Request(
-                "POST", "https://api.groq.com/openai/v1/chat/completions"
-            ),
+            request=httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions"),
         )
 
         with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:

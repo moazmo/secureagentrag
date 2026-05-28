@@ -376,7 +376,7 @@ if _FASTAPI_AVAILABLE:
 
         # Runtime import — FastAPI dependency injection reads the annotation
         # at request time, so this must NOT be a TYPE_CHECKING-only import.
-        from fastapi import Request as _FastApiRequest  # noqa: TC002
+        from fastapi import Request as _FastApiRequest
 
         @app.post("/byok/chat", tags=["byok"])
         async def byok_chat_endpoint(
@@ -711,8 +711,8 @@ if _FASTAPI_AVAILABLE:
         @app.post("/byok/uploads", tags=["byok"])
         async def byok_uploads_ingest(
             request: _FastApiRequest,
-            file: UploadFile = File(...),
-            creds: ByokCreds = Depends(extract_byok),
+            file: Annotated[UploadFile, File(...)],
+            creds: Annotated[ByokCreds, Depends(extract_byok)],
         ) -> dict:
             """Accept a multipart upload from the BYOK visitor.
 

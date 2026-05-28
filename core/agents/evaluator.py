@@ -273,9 +273,7 @@ async def evaluate_response(state: GraphState) -> dict:
     from config.settings import settings as _settings
 
     if _settings.byok_mode and _settings.byok_skip_evaluator:
-        confidence = round(
-            (citation_coverage * 0.5 + evidence_strength * 0.5), 3
-        )
+        confidence = round((citation_coverage * 0.5 + evidence_strength * 0.5), 3)
         return {
             "confidence_score": confidence,
             "needs_human_review": confidence < _settings.confidence_threshold,

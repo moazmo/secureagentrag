@@ -177,8 +177,7 @@ def _push_secrets(api: HfApi, dry_run: bool = False) -> None:
     missing = [k for k, v in needed.items() if not v]
     if missing:
         raise SystemExit(
-            f"Missing env vars in .env: {missing}. "
-            "Phase 1 smokes must complete before phase 3."
+            f"Missing env vars in .env: {missing}. Phase 1 smokes must complete before phase 3."
         )
     for name, value in needed.items():
         # Truncate so logs never echo a full key.

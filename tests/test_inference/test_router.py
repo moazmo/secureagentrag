@@ -103,9 +103,7 @@ class TestInferenceRouterRouting:
         assert decision.provider == "ollama"
         assert decision.forced_local is True
 
-    def test_high_sensitivity_cloud_unlock(
-        self, router_with_cloud: InferenceRouter
-    ) -> None:
+    def test_high_sensitivity_cloud_unlock(self, router_with_cloud: InferenceRouter) -> None:
         """SAR_ALLOW_CLOUD_FOR_HIGH=True routes HIGH to the cloud provider.
 
         Production HF Space deploys have no local Ollama; the opt-in flag

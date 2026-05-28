@@ -99,9 +99,7 @@ def test_byok_chat_uses_owner_key_when_no_user_key(byok_app) -> None:
     client, _ = byok_app
     fake_state = _make_state()
 
-    with patch(
-        "interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_state)
-    ):
+    with patch("interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_state)):
         r = client.post("/byok/chat", json={"query": "ping"})
     assert r.status_code == 200
     body = r.json()
@@ -113,9 +111,7 @@ def test_byok_chat_owner_key_quota_returns_429_after_three(byok_app) -> None:
     """Same IP → fourth owner-key call returns 429 with BYOK hint."""
     client, _ = byok_app
     fake_state = _make_state()
-    with patch(
-        "interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_state)
-    ):
+    with patch("interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_state)):
         for _ in range(3):
             r = client.post("/byok/chat", json={"query": "ping"})
             assert r.status_code == 200
@@ -130,9 +126,7 @@ def test_byok_chat_with_user_key_bypasses_throttle(byok_app) -> None:
     """Visitor BYOK never consumes owner-key quota."""
     client, _ = byok_app
     fake_state = _make_state()
-    with patch(
-        "interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_state)
-    ):
+    with patch("interfaces.api.run_rag_pipeline", new=AsyncMock(return_value=fake_state)):
         for _ in range(10):  # 10 > quota_per_hour=3
             r = client.post(
                 "/byok/chat",
@@ -161,9 +155,7 @@ def test_byok_chat_translates_persona_to_user_ctx(byok_app) -> None:
         seen_ctx["user_context"] = kwargs["user_context"]
         return fake_state
 
-    with patch(
-        "interfaces.api.run_rag_pipeline", new=AsyncMock(side_effect=_capture)
-    ):
+    with patch("interfaces.api.run_rag_pipeline", new=AsyncMock(side_effect=_capture)):
         r = client.post(
             "/byok/chat",
             json={"query": "ping"},
@@ -186,9 +178,7 @@ def test_byok_chat_unknown_persona_falls_back_to_anon_clearance_1(byok_app) -> N
         seen_ctx["user_context"] = kwargs["user_context"]
         return fake_state
 
-    with patch(
-        "interfaces.api.run_rag_pipeline", new=AsyncMock(side_effect=_capture)
-    ):
+    with patch("interfaces.api.run_rag_pipeline", new=AsyncMock(side_effect=_capture)):
         r = client.post(
             "/byok/chat",
             json={"query": "ping"},
