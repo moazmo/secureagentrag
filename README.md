@@ -2,7 +2,7 @@
 
 > **🚀 Live demo:** [secureagentrag-web.vercel.app](https://secureagentrag-web.vercel.app) · **API:** [`LeomordKaly-secureagentrag-api.hf.space`](https://LeomordKaly-secureagentrag-api.hf.space/healthz) · **Cost:** $0/mo · **Egypt-tested · no credit card · no cold-start delay**
 >
-> ⚙️ **Production launch shipped** (2026-05-26..27). Public BYOK demo on Next.js 16 + Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier is live on branch `deploy/prod-launch`. 80 launch tasks complete: SSE streaming, session-scoped uploads (dual-collection RRF), persona presets, X-Forwarded-For throttle, audit export, eye-comfort palette, 50%+ Groq RPM cut. **620 tests pass** (+136 from main), **30 ADRs** (24 historical + 4 launch + 2 cost). `main` frozen at `56c8c98`; merge after demo video. See [`launch-plan/`](./launch-plan/README.md) + [`DECISIONS.md`](./DECISIONS.md) ADR-025..030.
+> ⚙️ **Production launch shipped + merged to `main`** (2026-05-28, tagged **`v1.0.0-launch`**, CI green). Public BYOK demo on Next.js 16 + Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier. SSE streaming, session-scoped uploads (dual-collection RRF), persona presets, X-Forwarded-For throttle, audit export, in-chat knowledge-base browser, Markdown answer rendering, 50%+ Groq RPM cut. **623 tests pass** (626 collected, 3 optional-dep skips), **30 ADRs** (24 historical + ADR-025..028 launch + ADR-029 uploads + ADR-030 cost cuts). Only the 4-minute demo video remains. See [`launch-plan/`](./launch-plan/README.md) + [`DECISIONS.md`](./DECISIONS.md) ADR-025..030.
 
 ## What the live demo does
 
@@ -636,7 +636,7 @@ Delivered:
 - [x] **Contextual Retrieval** — Anthropic-style LLM context prepended per chunk (opt-in)
 - [x] **HyDE** — hypothetical-answer embeddings for complex queries (opt-in)
 - [x] **PII redaction** — emails/phones/SSN/CC scrubbed before audit + cache persistence
-- [x] **FastAPI REST surface** — `/query`, `/ingest`, `/audit`, `/audit/verify`, `/healthz`, `/readyz`
+- [x] **FastAPI REST surface** — auth: `/query`, `/ingest`, `/audit`, `/audit/verify`, `/healthz`, `/readyz`; public BYOK: `/byok/chat`, `/byok/chat/stream` (SSE), `/byok/audit`, `/byok/uploads` (GET/POST/DELETE), `/byok/personas`, `/byok/corpus`
 - [x] **MCP server** — `retrieve` and `query` tools for Claude Desktop / Code / Cursor
 - [x] **Cost dashboard** — per-query $ for cloud calls, kWh-equivalent for local
 - [x] **CI eval gating** — nightly Ragas run on golden set, regression > 5pp opens an issue
@@ -673,10 +673,11 @@ Delivered:
 - [x] **W-series — Sensitivity disclaimer dropped + 429 banner** — owner-key throttle raised 3 → 10/h, dedicated red "Set my API key" banner.
 - [x] **X-series — Groq cost optimisations** — pin `llama-3.1-8b-instant`, kill RAG-fusion, bypass evaluator LLM, router shortcut for short queries; ~2 Groq calls/chat. ADR-030.
 - [x] **Y-series — Web frontend product surface** — split single-page chat into `/`, `/chat`, `/corpus`, `/personas`, `/status`. Two new public backend endpoints (`/byok/corpus`, `/byok/personas`) wired through Edge proxies, plus Vercel-Edge cold-start warmer pinging `/healthz` at module load, client-side suggested-follow-up chips below each answer, robots.txt + sitemap.xml, richer OG/Twitter cards. Live at `secureagentrag-web.vercel.app/{corpus,personas,status}`.
+- [x] **Z-series — Answer quality + transparency** — Markdown synthesis contract + 1100-char per-chunk context; zero-dep Markdown answer renderer (lists, code, `[N]` citation chips); in-chat 📚 Knowledge Base panel showing every base doc with a per-persona ✅/🔒 access badge; OG social image via `next/og`; Vercel Analytics + Speed Insights wired.
+- [x] **Phase 9 — merge `deploy/prod-launch` → `main`, tag `v1.0.0-launch`** (2026-05-28, merge `e6f2507`, CI green at 623 tests).
 
 Planned (not yet implemented):
-- [ ] **Phase 8** — 4-minute demo video against the live URL.
-- [ ] **Phase 9** — merge `deploy/prod-launch` → `main`, tag `v1.0.0-launch`.
+- [ ] **Phase 8** — 4-minute demo video against the live URL (the only open launch item).
 
 ---
 

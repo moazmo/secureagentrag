@@ -4,7 +4,7 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
 
 **Prerequisite:** read `CLAUDE.md` first.
 
-> 🚀 **Active branch: `deploy/prod-launch`.** Production launch P6 in progress. Before reading section 1 below, read [`launch-plan/12-agent-handoff.md`](./launch-plan/12-agent-handoff.md) — it is the operating contract for this launch and supersedes any conflicting instruction here. `main` is frozen at `56c8c98`.
+> 🚀 **Launch complete — `main` is the trunk.** The production BYOK demo (P6) merged `deploy/prod-launch` → `main` on 2026-05-28, tagged **`v1.0.0-launch`**, CI green. The old freeze at `56c8c98` is lifted; commit to `main` directly or a feature branch. The launch history lives in `launch-plan/` and `private/roadmap.md`; the current deep review is `private/review-2026-05-28.md`. Only the 4-minute demo video (Phase 8) is still open.
 
 ---
 
@@ -21,7 +21,7 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
 ### Before
 1. `git status` — must be clean. Don't start work on a dirty tree.
 2. `git pull origin main` — make sure you're on the latest.
-3. `uv run pytest -q` — must be **620+ passed, 0 failed** (current baseline: 620 passed — the BYOK launch series lifted this from 484; never regress). If it's not, stop and fix the baseline first.
+3. `uv run pytest -q` — must be **623+ passed, 0 failed** (current baseline: 623 passed / 3 skipped / 626 collected; never regress). On a clean checkout that lacks the `api` extra, FastAPI-gated tests skip — CI installs `--extra api` so they actually run. If the baseline is red, stop and fix it first.
 4. `uv run ruff check . && uv run ruff format --check .` — both clean.
 5. Read the relevant module top-to-bottom before touching it. Read its test file.
 6. Have a working `qdrant` (`docker compose up -d qdrant`) and `ollama serve` running. If you need cloud, ensure `SAR_GROQ_API_KEY` is in `.env`.
@@ -541,9 +541,11 @@ against `secureagentrag-web.vercel.app` after any `Dockerfile.hf` or
     with chunk count in the error.
 
 31. **Session purge after 24 h.** Manually back-date a session
-    collection's `created_at` payload, run
-    `scripts/byok_session_purge.py`, confirm only the expired
-    collection is dropped, base `documents` untouched.
+    collection's `created_at` payload, call
+    `retrieval.session_purge.purge_expired_sessions(client)` (the same
+    function `schedule_session_purge` runs every 6 h in the FastAPI
+    lifespan), confirm only the expired collection is dropped and base
+    `documents` is untouched.
 
 32. **HF Space cold start.** Disable the GitHub Actions cron for 49 h
     (or wait), hit `/healthz` cold. First request waits 30–60 s, second
@@ -605,7 +607,7 @@ Types: `feat | fix | docs | style | refactor | test | chore | perf | build | ci`
 - One-line bullet for any breaking change or migration step.
 
 ## Test plan
-- [ ] uv run pytest -q  → 620+ passed
+- [ ] uv run pytest -q  → 623+ passed
 - [ ] uv run ruff check .  → All checks passed!
 - [ ] uv run ruff format --check .  → clean
 - [ ] (Feature-specific real-data test from section 4)
@@ -655,7 +657,7 @@ When in doubt: open an issue with a one-paragraph proposal and the trade-offs.
 - All work goes to `main` via small focused commits (single-developer flow).
 - For larger sequences (a multi-day feature), use a feature branch `feat/<short-name>` and rebase onto `main` before merge.
 - Push to `origin/main` only after the full test + lint + format gate is green.
-- Tag releases as `v0.X.Y` once we hit a milestone. Currently pre-1.0.
+- Tag releases at milestones. **`v1.0.0-launch`** is the current release (public BYOK demo live). Next tags follow semver from there.
 
 ---
 

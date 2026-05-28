@@ -1,6 +1,6 @@
 # SecureAgentRAG — Architecture Documentation
 
-> 🚀 **Production topology shipped 2026-05-26..27 on `deploy/prod-launch`.** Sections 1–12 below describe the **local-dev** architecture (everything in docker-compose on one host). **§13** is the live production topology: Vercel Next.js → Hugging Face Space FastAPI → Qdrant Cloud + Groq. Read both when reasoning about the running system.
+> 🚀 **Production topology shipped + merged to `main`** (2026-05-28, tagged `v1.0.0-launch`). Sections 1–12 below describe the **local-dev** architecture (everything in docker-compose on one host). **§13** is the live production topology: Vercel Next.js → Hugging Face Space FastAPI → Qdrant Cloud + Groq. Read both when reasoning about the running system.
 
 ## 1. System Architecture
 

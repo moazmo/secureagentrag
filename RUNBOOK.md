@@ -2,7 +2,7 @@
 
 Operational guide for running, testing, and debugging the platform.
 
-> 🚀 **Production launch P6 mostly shipped on branch `deploy/prod-launch` (Phases 0–7 + A/U/V/W/X series done; Phase 8 demo video + Phase 9 merge-to-main pending).** Sections 1–10 below describe the **local-dev / on-prem** topology. **§ 11** documents the **live BYOK production stack** (HF Space + Vercel + Qdrant Cloud + Groq) and the failure modes it brings. **§ 12** is the BYOK env-var reference.
+> 🚀 **Production launch shipped + merged to `main`** (2026-05-28, tagged `v1.0.0-launch`, CI green). Phases 0–7 + A/B/U/V/W/X/Y/Z series done; only the demo video (Phase 8) is open. Sections 1–10 below describe the **local-dev / on-prem** topology. **§ 11** documents the **live BYOK production stack** (HF Space + Vercel + Qdrant Cloud + Groq) and its failure modes. **§ 12** is the BYOK env-var reference.
 
 ---
 
@@ -52,7 +52,7 @@ Runs in ~20 seconds, no external services needed.
 uv run pytest -q
 ```
 
-Expected: **620 passed** (up from 497 / 484 — the BYOK launch series added ~120 new tests; use `--maxfail=1 -x` if you want to bail on first fail).
+Expected: **623 passed** (626 collected, 3 optional-dep skips). CI runs the same suite with `--extra api` so the FastAPI/BYOK surface is exercised rather than skipped. Use `--maxfail=1 -x` to bail on first fail.
 
 This is what CI runs on every push. Use it after you change code.
 
@@ -173,7 +173,7 @@ curl -sf http://localhost:6333/collections && echo "Qdrant OK"
 curl -sf http://localhost:11434/api/tags  && echo "Ollama OK"
 
 # Tests
-uv run pytest -q                            # unit/integ (620 passed, ~30 s)
+uv run pytest -q                            # unit/integ (623 passed / 3 skipped, ~30 s)
 uv run python -m scripts.e2e_smoke          # real end-to-end (~2-5 min)
 uv run python -m scripts.interview_demo     # PASS/FAIL grid for hero features
 uv run python -m scripts.h2_gate            # 12 advanced real-world UI scenarios
@@ -374,14 +374,19 @@ sees a timeout. Re-asking returns the now-warm answer.
 
 **Symptom:** Qdrant Cloud dashboard shows storage approaching 1 GB.
 
-**Cause:** Session collections not purging. Either the lifespan cron
-didn't start (check HF Space logs for `byok_session_purge` startup
-line) or visitor traffic + 5 files × 60 chunks × 50 concurrent
-sessions briefly spiked.
+**Cause:** Session collections not purging. Either the lifespan
+scheduler didn't start (check HF Space logs for a
+`session_purge_scheduled` line emitted by
+`retrieval/session_purge.py::schedule_session_purge`) or visitor
+traffic + 5 files × 60 chunks × 50 concurrent sessions briefly spiked.
 
-**Manual purge:**
+**Manual purge** (no CLI — call the function directly against the cluster):
 ```bash
-uv run python -m scripts.byok_session_purge --force
+uv run python -c "from qdrant_client import QdrantClient; \
+from config.settings import settings; \
+from retrieval.session_purge import purge_expired_sessions; \
+c = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key); \
+print(purge_expired_sessions(c))"
 ```
 
 ### 11.6 Audit chain "broken" on /byok/audit export

@@ -2,7 +2,7 @@
 
 This file is the canonical entry point for any AI agent (Claude / Hermes / Kimi / Cursor / Aider) picking up work on SecureAgentRAG. Read it before touching code.
 
-> 🚀 **Active branch: `deploy/prod-launch`.** A production launch is in progress (P6 from `private/roadmap.md`). Read [`launch-plan/12-agent-handoff.md`](./launch-plan/12-agent-handoff.md) **before** continuing any work — it is the operating contract for this launch and overrides any conflicting instruction below. `main` is frozen at `56c8c98`; do not push to it directly.
+> 🚀 **Launch complete — `main` is the trunk.** The production BYOK demo (P6) shipped and merged: `deploy/prod-launch` → `main` on 2026-05-28, tagged **`v1.0.0-launch`**, CI green. The old freeze at `56c8c98` is lifted; new work goes on `main` directly or a feature branch. The only launch item still open is the 4-minute demo video (Phase 8 — owner action). `launch-plan/` + `private/roadmap.md` hold the history; `private/review-2026-05-28.md` is the current deep review.
 
 ---
 
@@ -92,7 +92,7 @@ secureagentrag/
 ├── scripts/                # smoke, seed_corpus, interview_demo, quick_bench,
 │                           # cloud_bench, h2_gate, migrate_to_splade,
 │                           # train_reranker, bench_reranker, verify_audit_chain
-├── tests/                  # pytest, 497 passing
+├── tests/                  # pytest, 623 passing (626 collected, 3 optional-dep skips)
 ├── helm/secureagentrag/    # Kubernetes manifests
 ├── deploy/                 # docker-compose auth profile + keycloak-realm.json
 ├── data/agent_evidence/    # 24-scenario gate evidence (results.md, screenshots)
@@ -136,12 +136,12 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ---
 
-## 5. State of the codebase (as of `e848ecf` on `deploy/prod-launch`)
+## 5. State of the codebase (as of `abe100e` on `main`)
 
-- **620 tests pass**, 0 failed. Lint + format clean. (Baseline lifted +136 from 484 during the BYOK launch series.)
-- **~33.8k Python LOC** across 161 files.
+- **623 tests pass** (626 collected, 3 optional-dep skips), 0 failed. Lint + format clean. **CI green on `main`** (`uv sync --frozen --group dev --extra api` → ruff check + ruff format --check + pytest). Baseline lifted from 484 during the launch.
+- **~34.1k Python LOC** across 162 files.
 - **30 ADRs** in `DECISIONS.md` (24 historical + ADR-025/026/027/028 promoted from launch drafts + ADR-029 BYOK uploads + ADR-030 Groq cost optimisations).
-- **18 commits ahead of `main`** on `deploy/prod-launch`. `main` frozen at `56c8c98` until launch closes.
+- **Launch merged to `main`** 2026-05-28 (merge `e6f2507`), tagged **`v1.0.0-launch`**. 25 commits past the old frozen point `56c8c98`. The freeze is lifted — `main` is the trunk.
 - **Live $0/month production deploy:**
   - Frontend: `https://secureagentrag-web.vercel.app` — Next.js 16 + Tailwind v4 + SSE streaming on Vercel Hobby
   - Backend: `https://LeomordKaly-secureagentrag-api.hf.space` — FastAPI BYOK on HF Spaces Docker CPU Basic, 16 GB RAM, 48 h sleep defeated by GitHub Actions cron
@@ -170,7 +170,13 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
   - `9b430cc` feat(byok): phase 2 backend BYOK mode — `/byok/chat` live, 113 new tests (ADR-025)
   - `5edc858`/`7890234`/`05e6d6e`/`cb3cdd3` deploy: phase 1 smoke signups (HF + Vercel + Groq + Qdrant Cloud + Hostinger inventory)
   - `d6625d8` docs(launch): P6 plan + handoff contract
-  - `56c8c98` *(frozen `main` HEAD)* feat(retrieval): cache per-tenant QdrantManagers + pin sparse isolation (ADR-024)
+  - `abe100e` fix(ci): install api extra so the BYOK + REST suite runs (623 tests gate CI)
+  - `ffa23d0` fix(ci): clear ruff lint + format failures surfaced by the first main CI run
+  - `e6f2507` merge: production launch P6 + answer-quality + transparency (**v1.0.0-launch**)
+  - `8a1eab6` *(web)* feat: Markdown answers + in-chat knowledge base + OG image + analytics
+  - `3ffd311` feat(synth): richer Markdown answers + 1100-char per-chunk context
+  - `d8639f6` feat(byok): public corpus + personas metadata endpoints + full doc sweep
+  - `56c8c98` *(old pre-launch baseline)* feat(retrieval): cache per-tenant QdrantManagers + pin sparse isolation (ADR-024)
 
 ---
 
@@ -184,19 +190,20 @@ Lives behind `SAR_BYOK_MODE=true`. The HF Space Dockerfile sets it; local dev do
 - **Persona presets:** `_DEMO_PERSONAS` in `interfaces/api.py` maps each persona to `(clearance, roles, style)`. Style is threaded into the synth system prompt via `GraphState.persona_style`.
 - **Cost-cut toggles (ADR-030):** `SAR_GROQ_MODEL=llama-3.1-8b-instant`, `SAR_RAG_FUSION_ENABLED=false`, `SAR_BYOK_SKIP_EVALUATOR=true`, `SAR_BYOK_SKIP_GRADER=true`, `SAR_FAITHFULNESS_GATE_ENABLED=false`, `SAR_RERANKER_TYPE=none`, `SAR_RELEVANCE_THRESHOLD=0.55`, `SAR_MAX_RETRIES=1`, `SAR_RERANK_TOP_K=10`. Router classifier short-circuits queries ≤80 chars to `query_type="simple"`. Net effect: ~2 Groq calls/chat vs ~5–6 before.
 - **HIGH-on-cloud unlock:** `SAR_ALLOW_CLOUD_FOR_HIGH=true` in production because the HF Space has no Ollama. Frontend renders a `sensitivity:` badge so the visitor is informed. *Hero claim "HIGH never leaves local" is true in self-hosted mode only.*
-- **Session collections:** `documents_sess_<sanitized_session_id>`. Dual-collection retrieval (base ∪ session) under one RBAC filter; RRF-fused. 24 h TTL via `SAR_SESSION_TTL_HOURS=24` + `scripts/byok_session_purge.py`.
+- **Session collections:** `documents_sess_<sanitized_session_id>`. Dual-collection retrieval (base ∪ session) under one RBAC filter; RRF-fused. 24 h TTL via `SAR_SESSION_TTL_HOURS=24` — `retrieval/session_purge.py::purge_expired_sessions` runs every 6 h via `schedule_session_purge` in the FastAPI lifespan (APScheduler).
 - **Audit:** session-scoped only (`/byok/audit` filters `user_id == "demo-<sid>"`). SHA-256 chain intact; downloadable JSONL.
 - **Sensitivity disclaimer suppressed** in BYOK mode (both prompt-side gate in `_build_system_prompt` and post-synth `_add_disclaimers` early-return). The frontend's `sensitivity:` badge is the user-facing signal.
 - **No Phoenix / Postgres / Ollama in BYOK mode.** Audit on /tmp; checkpointer in-memory.
 
 ## 6. Genuinely remaining work (audited 2026-05-27)
 
-The 80-task BYOK launch is complete. Pipeline survives Egypt-from-mobile traffic on $0/mo. What's left:
+The BYOK launch is complete, merged to `main`, tagged `v1.0.0-launch`, CI green. A follow-up quality + transparency pass also shipped (Y-series web product surface, Z-series Markdown answers + in-chat knowledge base). Pipeline survives Egypt-from-mobile traffic on $0/mo. What's left:
 
-- **Phase 8 — record 4-minute demo video** against `secureagentrag-web.vercel.app`. Owner action. Script lives in `launch-plan/08-demo-video.md`.
-- **Phase 9 — merge `deploy/prod-launch` → `main`, tag `v1.0.0-launch`**. After Phase 8.
-- **Optional:** upload fine-tuned reranker to `LeomordKaly/secureagentrag-reranker-v1` HF Hub model repo and flip `SAR_RERANKER_TYPE=fine_tuned` on the Space. Skipped for now — 10-doc corpus does not benefit materially.
+- **Phase 8 — record 4-minute demo video** against `secureagentrag-web.vercel.app`. Owner action. Script lives in `launch-plan/08-demo-video.md`. **This is the only open launch item.**
+- **Optional:** enable Vercel Web Analytics + Speed Insights in the dashboard (code already wired in `secureagentrag-web` layout — no-op until toggled).
+- **Optional:** upload fine-tuned reranker to `LeomordKaly/secureagentrag-reranker-v1` HF Hub model repo and flip `SAR_RERANKER_TYPE=fine_tuned` on the Space. **Not recommended** on the 10-doc corpus — ADR-022/030 bench shows the cross-encoder's top-5 cut drops the visitor's own chunk; helps only past ~200 docs/query.
 - **Optional:** selective guardrails escalation (regex hit → LlamaGuard on suspicious only). Would catch unicode-obfuscation without burning Groq budget on every chat.
+- **Optional:** wire SonarCloud quality gate (currently "not computed" — neutral, non-blocking) or bump the Node 20 GitHub Actions to v5/Node 24 before the June 2026 deprecation.
 
 **Recently shipped** (was in this section, now done):
 - ✅ **Per-tenant SPLADE manager cache** — `QdrantManager.for_org(org_id)` now caches per-tenant managers; cross-tenant sparse isolation is pinned by 3 new regression tests. ADR-024 (2026-05-23).

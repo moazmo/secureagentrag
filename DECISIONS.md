@@ -1065,8 +1065,9 @@ Use **Qdrant Cloud free tier (1 GB / 1M vectors / always-on)**.
   points incl. sparse), tagged engineer / compliance / executive
 - Per-session: ``documents_sess_<sanitized_session_id>`` (see ADR-029)
 - TTL: 24 hours via ``SAR_SESSION_TTL_HOURS``
-- Purge cron: ``scripts/byok_session_purge.py`` deletes session
-  collections past TTL
+- Purge: ``retrieval/session_purge.py::purge_expired_sessions`` deletes
+  session collections past TTL; ``schedule_session_purge`` runs it every
+  6 h via APScheduler in the FastAPI lifespan
 - Credentials: ``SAR_QDRANT_URL`` + ``SAR_QDRANT_API_KEY`` as HF Space
   secrets
 - Sparse: BGE-M3 dense + BM25 sparse (no SPLADE in production — keeps
@@ -1273,5 +1274,5 @@ a 10-doc demo corpus. Five env-var-controlled changes baked into
 - ✅ Test fixtures updated for the new bypass paths (``mock_settings.
   rerank_top_k`` raised to 20, ``mock_settings.groq_model`` /
   ``openai_model`` / ``anthropic_model`` added to router patches)
-- ✅ All 620 tests green
+- ✅ All tests green (623 pass / 3 skip / 626 collected; CI gates with `--extra api`)
 - ✅ Live recorded screenshot of a successful Q+A with citations
