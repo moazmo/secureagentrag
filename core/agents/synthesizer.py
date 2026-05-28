@@ -44,8 +44,21 @@ def _max_sensitivity(docs_to_use: list[DocumentGrade]) -> str:
 
 
 _DEFAULT_SYSTEM_PROMPT = (
-    "You are an expert research assistant that always cites sources."
+    "You are an expert research assistant. You answer strictly from the "
+    "provided source documents and you always cite them inline. You write "
+    "clean, scannable Markdown: short lead sentence, then bullet points or "
+    "a numbered list when there are multiple facts, **bold** for the key "
+    "term in each point, and fenced code blocks for any command, config, "
+    "or identifier. You never invent facts that the sources do not support, "
+    "and when the sources fall short you say so plainly."
 )
+
+# Per-chunk context budget fed into the synthesis prompt. Raised from the
+# original 600 -> 1100: llama-3.1-8b-instant has a 131k context window, so
+# 10 chunks x ~1100 chars (~3k tokens total) is trivial on input, and the
+# extra per-chunk context measurably improves answer completeness on the
+# demo corpus (procedures + tables were getting truncated mid-step at 600).
+_CHUNK_CONTEXT_CHARS = 1100
 
 
 def _build_system_prompt(state: GraphState) -> str:
@@ -78,7 +91,9 @@ def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitiv
     for i, doc in enumerate(documents, start=1):
         source = doc.get("metadata", {}).get("source_file", "unknown")
         page = doc.get("metadata", {}).get("page_number", 0)
-        context_parts.append(f"[{i}] (Source: {source}, Page: {page})\n{doc['text'][:600]}")
+        context_parts.append(
+            f"[{i}] (Source: {source}, Page: {page})\n{doc['text'][:_CHUNK_CONTEXT_CHARS]}"
+        )
 
     context_str = "\n\n".join(context_parts)
 
@@ -109,15 +124,21 @@ def _build_synthesis_prompt(query: str, documents: list[DocumentGrade], sensitiv
         "system extracts citations automatically from inline markers.\n"
         "5. If the context lacks information to answer fully, say so explicitly "
         "rather than inventing details.\n\n"
-        "STYLE:\n"
+        "STYLE (Markdown):\n"
+        "- Open with one short sentence that directly answers the question.\n"
+        "- When there are multiple facts, steps, or items, use a bulleted or "
+        "numbered Markdown list — one fact per line, each ending with its `[N]`.\n"
+        "- **Bold** the key term at the start of each bullet so the answer "
+        "scans fast.\n"
+        "- Put any command, file path, config value, code, or identifier in a "
+        "fenced code block (```) or inline code (`like this`).\n"
         "- Be concise but complete. Cover every part of the question.\n"
-        "- Use short paragraphs or bullet points for readability.\n"
         "- Do not preface the answer with phrases like 'Based on the context'.\n"
         "- Do not include `<think>` or reasoning trace blocks in the output.\n\n"
         f"Context:\n{context_str}\n\n"
         f"Question: {query}\n"
         f"{sensitivity_instruction}\n\n"
-        "Answer (with inline `[N]` citations on every factual claim):"
+        "Answer (clean Markdown, with inline `[N]` citations on every factual claim):"
     )
 
 
@@ -138,7 +159,9 @@ def _build_json_synthesis_prompt(
     for i, doc in enumerate(documents, start=1):
         source = doc.get("metadata", {}).get("source_file", "unknown")
         page = doc.get("metadata", {}).get("page_number", 0)
-        context_parts.append(f"[{i}] (Source: {source}, Page: {page})\n{doc['text'][:600]}")
+        context_parts.append(
+            f"[{i}] (Source: {source}, Page: {page})\n{doc['text'][:_CHUNK_CONTEXT_CHARS]}"
+        )
 
     context_str = "\n\n".join(context_parts)
 
