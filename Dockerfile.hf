@@ -93,9 +93,8 @@ ENV SAR_BYOK_MODE=true
 # the same IP. With ~100 distinct visitor IPs / day the daily Groq cap
 # would still be defended; visitors who exceed the cap are nudged to
 # paste their own BYOK key via the UI 429 banner.
-ENV SAR_BYOK_OWNER_QUOTA=10
 ENV SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10
-ENV SAR_SESSION_TTL_HOURS=24
+ENV SAR_SESSION_COLLECTION_TTL_HOURS=24
 ENV SAR_CORS_ALLOW_ORIGINS='["https://secureagentrag-web.vercel.app","https://secureagentrag.vercel.app"]'
 
 # Cloud LLM defaults -- Groq llama-3.1-8b-instant is the cheapest fast option

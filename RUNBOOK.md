@@ -435,9 +435,8 @@ All `SAR_*` prefixed. Pin in `.env` (local) or HF Space secrets panel
 | Variable | Default | Why |
 |---|---|---|
 | `SAR_BYOK_MODE` | `true` (prod) / `false` (dev) | Master gate for all BYOK behavior |
-| `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR` | `10` | Owner-key per-IP throttle |
-| `SAR_BYOK_OWNER_QUOTA` | `10` | Alias for compatibility |
-| `SAR_SESSION_TTL_HOURS` | `24` | Auto-purge cutoff for `documents_sess_<sid>` |
+| `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR` | `10` | Owner-key per-IP throttle (canonical name) |
+| `SAR_SESSION_COLLECTION_TTL_HOURS` | `24` | Auto-purge cutoff for `documents_sess_<sid>` |
 | `SAR_CORS_ALLOW_ORIGINS` | `["https://secureagentrag-web.vercel.app","https://secureagentrag.vercel.app"]` | Frontend allowlist |
 | `SAR_BYOK_AUDIT_MAX_ENTRIES` | `50` | Cap on `/byok/audit` response size |
 | `SAR_BYOK_UPLOAD_MAX_BYTES` | `5242880` | 5 MB per-file upload cap |

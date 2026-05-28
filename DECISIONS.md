@@ -878,7 +878,7 @@ Implement a BYOK mode behind ``SAR_BYOK_MODE=true``. Concretely:
 - Each session gets a Qdrant collection named
   ``documents_sess_<sanitized_session_id>`` for uploads (see ADR-029).
 - A purge cron deletes session collections older than
-  ``SAR_SESSION_TTL_HOURS=24``.
+  ``SAR_SESSION_COLLECTION_TTL_HOURS=24``.
 - Phoenix instrumentation is forcibly disabled when BYOK mode is on so
   no observability layer sees the visitor key.
 - Audit log redacts API key patterns (Groq ``gsk_*``, OpenAI ``sk-*``
@@ -1064,7 +1064,7 @@ Use **Qdrant Cloud free tier (1 GB / 1M vectors / always-on)**.
 - Base collection: ``documents`` — 10 demo RBAC docs (138 chunks, 276
   points incl. sparse), tagged engineer / compliance / executive
 - Per-session: ``documents_sess_<sanitized_session_id>`` (see ADR-029)
-- TTL: 24 hours via ``SAR_SESSION_TTL_HOURS``
+- TTL: 24 hours via ``SAR_SESSION_COLLECTION_TTL_HOURS``
 - Purge: ``retrieval/session_purge.py::purge_expired_sessions`` deletes
   session collections past TTL; ``schedule_session_purge`` runs it every
   6 h via APScheduler in the FastAPI lifespan

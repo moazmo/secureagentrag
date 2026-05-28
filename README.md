@@ -183,6 +183,24 @@ graph TB
 
 ---
 
+## Code Walkthrough
+
+Want to read the code, not the marketing? Follow one query from HTTP entry to cited answer. Anchors are `file::symbol` so they survive line-number drift.
+
+1. **Entry.** A request hits FastAPI at [`interfaces/api.py`](interfaces/api.py) (`/query`, or `/byok/chat` in demo mode). In BYOK mode, [`interfaces/byok.py`](interfaces/byok.py)`::extract_byok` pulls the per-request key, provider, persona, and session ID from headers; the persona maps to an RBAC `UserContext` via `_DEMO_PERSONAS` / `_persona_to_user_ctx` in `api.py`.
+2. **Compile + run the graph.** [`core/graph.py`](core/graph.py)`::run_rag_pipeline` wraps `graph.ainvoke()` in an `asyncio.timeout()` SLO budget. The graph itself is built once by `_compose_workflow()` — a 9-node `StateGraph` with conditional edges. State is the `GraphState` TypedDict in [`core/state.py`](core/state.py).
+3. **Router.** [`core/agents/router.py`](core/agents/router.py)`::router_node` classifies the query (`simple`/`complex`/`out_of_scope`) and tags sensitivity by regex (no LLM call). All LLM calls in the graph funnel through `call_llm_async` / `call_llm_with_decision` here.
+4. **Guardrails → security.** [`core/agents/guardrails.py`](core/agents/guardrails.py) runs regex injection patterns first, then optionally escalates to `llm` or `llamaguard` ([`guardrails_llamaguard.py`](core/agents/guardrails_llamaguard.py)). [`core/agents/security.py`](core/agents/security.py) applies the RBAC clearance gate (fail-closed on LLM error).
+5. **Retrieve (the RBAC payload filter).** [`core/agents/retriever.py`](core/agents/retriever.py) calls [`retrieval/hybrid_search.py`](retrieval/hybrid_search.py), which fuses dense (BGE-M3) + Qdrant native sparse via RRF. **The access-control invariant lives in** [`retrieval/qdrant_client.py`](retrieval/qdrant_client.py)`::build_rbac_filter` — `org_id` + `sensitivity_level_int ≤ clearance` + `roles` match-any, applied to dense *and* sparse under one filter, so cross-tenant bypass is structurally impossible.
+6. **Grade → rewrite loop.** The grader (in `retriever.py`) scores relevance; if it's below `SAR_RELEVANCE_THRESHOLD` and retries remain, the rewriter (in `router.py`) reformulates and the graph loops back to retrieve.
+7. **Synthesize.** [`core/agents/synthesizer.py`](core/agents/synthesizer.py) generates the answer with inline `[N]` citations, streaming tokens via LangGraph custom events. The provider is chosen by [`inference/router.py`](inference/router.py)`::route` — HIGH sensitivity → local Ollama unless `SAR_ALLOW_CLOUD_FOR_HIGH` (see [privacy trade-offs](docs/BYOK_PRIVACY_TRADEOFFS.md)).
+8. **Faithfulness → evaluate.** [`core/agents/faithfulness.py`](core/agents/faithfulness.py) runs a per-sentence NLI entailment check on each cited sentence and flags/drops unsupported ones. [`core/agents/evaluator.py`](core/agents/evaluator.py) sets `needs_human_review` and the confidence score.
+9. **Audit.** Every node and every API call lands in the SHA-256 hash-chained log via [`utils/audit.py`](utils/audit.py), PII-redacted first by [`utils/pii.py`](utils/pii.py). Verify integrity with `scripts/verify_audit_chain.py`.
+
+Full env-var reference: [`docs/configuration.md`](docs/configuration.md). Deeper diagrams: [`architecture.md`](architecture.md).
+
+---
+
 ## Tech Stack
 
 | Category | Technology | Why |
@@ -483,7 +501,7 @@ The cloud router reduces LLM generation time from ~10-40s (Ollama) to ~0.3-2s (G
 
 ## Configuration
 
-All settings are managed via environment variables (prefix: `SAR_`):
+All settings are managed via environment variables (prefix: `SAR_`). The table below is a curated subset — the **full canonical reference (every variable, grouped, with the exact names pydantic reads) is in [`docs/configuration.md`](docs/configuration.md)**.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -529,7 +547,7 @@ The HF Space Dockerfile sets these. They change the meaning of the pipeline — 
 |----------|----------------|-------------|
 | `SAR_BYOK_MODE` | `true` | Master gate: enables per-request key extraction + session collections + cost-cut toggles |
 | `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR` | `10` | Owner-key per-IP throttle |
-| `SAR_SESSION_TTL_HOURS` | `24` | Auto-purge cutoff for `documents_sess_<sid>` collections |
+| `SAR_SESSION_COLLECTION_TTL_HOURS` | `24` | Auto-purge cutoff for `documents_sess_<sid>` collections |
 | `SAR_CORS_ALLOW_ORIGINS` | Vercel URL allowlist | CORS origins (JSON array) |
 | `SAR_BYOK_AUDIT_MAX_ENTRIES` | `50` | Cap on `/byok/audit` response size |
 | `SAR_BYOK_UPLOAD_MAX_BYTES` | `5242880` (5 MB) | Per-file upload cap |
