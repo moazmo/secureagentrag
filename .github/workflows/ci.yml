@@ -26,8 +26,12 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install project (core + dev)
-        run: uv sync --frozen --group dev
+      - name: Install project (core + dev + api)
+        # The `api` extra (FastAPI, uvicorn, python-jose, python-multipart)
+        # is required so the BYOK + REST surface is actually exercised in CI
+        # — the public demo runs on it, so its tests must gate the build
+        # rather than silently skip via importorskip.
+        run: uv sync --frozen --group dev --extra api
 
       - name: Ruff (lint)
         run: uv run ruff check .
