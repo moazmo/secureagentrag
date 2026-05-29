@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from pathlib import Path
@@ -144,9 +145,14 @@ class IngestionPipeline:
                 processing_time_seconds=time.time() - start_time,
             )
 
-        # Step 2: OCR for pages with little/no text
+        # Step 2: OCR for pages with little/no text.
+        # PaddleOCR is CPU-bound and the VLM fallback's sync wrappers spin
+        # their own event loop, so running _apply_ocr_fallback inline would
+        # block this coroutine's loop for the whole OCR pass (seconds to
+        # minutes on a scanned PDF). Off-load it to a worker thread so the
+        # API stays responsive and concurrent ingests interleave.
         if self._ocr.is_available():
-            documents = self._apply_ocr_fallback(documents, file_path)
+            documents = await asyncio.to_thread(self._apply_ocr_fallback, documents, file_path)
 
         # Step 3: Chunk text
         chunked = self._chunker.chunk_documents(documents, source_file=file_path)
