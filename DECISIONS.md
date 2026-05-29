@@ -1440,3 +1440,69 @@ spanning both repos:
   ``/`` and ``/chat`` still 200.
 - ✅ Backend CI green; Vercel build + lint green.
 
+---
+
+## ADR-033: Cost & Coverage Hardening (batch NLI, live-Qdrant CI, Node 24, selective guardrails)
+
+**Date:** 2026-05-29
+**Status:** Accepted
+
+**Context:**
+Four follow-ups after the security wave, spanning pipeline cost, test coverage,
+and CI hygiene:
+
+1. **Faithfulness was the most expensive node.** The NLI gate made one LLM call
+   per cited sentence (5-10 per answer) — the single largest call multiplier in
+   the pipeline, and the reason it is disabled on the free-tier demo (ADR-030).
+2. **The hero invariant had no live test.** RBAC-at-the-vector-layer was only
+   covered by mocked Qdrant clients; nothing proved the payload filter against a
+   real server.
+3. **CI ran on the deprecated Node 20 actions runtime.**
+4. **Strict guardrails escalated every query.** ``guardrails_strict`` added an
+   LLM/LlamaGuard call to every benign chat, making it too costly to leave on.
+
+**Decision:**
+
+- **Batch NLI faithfulness.** All resolved (claim, source) pairs go into one
+  numbered prompt that returns a verdict line per claim, cutting calls from N to
+  ``ceil(N / SAR_FAITHFULNESS_BATCH_SIZE)`` (default size 8). Claims the model
+  fails to score in the batch fall back to individual calls, so a model that
+  ignores the format degrades to the old per-claim path — correctness never
+  regresses. Default on; ``SAR_FAITHFULNESS_BATCH_ENABLED=false`` restores it.
+- **Real-Qdrant RBAC integration test.** A ``@pytest.mark.integration`` test
+  upserts documents across two orgs / three sensitivity levels / disjoint role
+  sets and asserts ``search_with_rbac`` returns only entitled rows
+  (cross-tenant, over-clearance, and role-mismatch all filtered by Qdrant). A
+  new CI job runs it against a ``qdrant/qdrant`` service container; the unit job
+  excludes integration via ``-m "not integration"``.
+- **CI on Node 24.** ``checkout@v5``, ``setup-python@v6``, ``setup-uv@v6``.
+- **Selective guardrails escalation.** In strict mode, escalate to the
+  classifier only when ``is_suspicious(query)`` (injection-adjacent keyword,
+  zero-width/bidi obfuscation char, or over length). Benign queries skip the
+  call. ``SAR_GUARDRAILS_SELECTIVE_ESCALATION=false`` restores escalate-all.
+
+**Consequences:**
+
+- (+) Faithfulness becomes affordable on cloud tiers — 1-2 calls instead of
+  5-10 — so it can be re-enabled on the demo without blowing the Groq budget.
+- (+) The security hero claim is now proven against a real Qdrant in CI, not
+  just unit mocks.
+- (+) Strict guardrails are cheap enough to leave on: only suspicious queries
+  pay the LLM cost, while obfuscation/keyword attacks still get a second look.
+- (+) CI off the deprecated runtime ahead of GitHub's cutoff.
+- (−) The batch faithfulness prompt is longer; on very large answers it is
+  chunked by ``batch_size`` to stay within context. The integration job adds
+  ~30 s to CI (Qdrant pull + collection indexing) but runs in parallel with the
+  unit job.
+- (−) ``is_suspicious`` is intentionally permissive — some benign queries with
+  trigger words still escalate. That is the safe direction (classifier decides).
+
+**Acceptance criteria (all met):**
+
+- ✅ Faithfulness: 16 tests (3 new batch tests) green; existing per-claim tests
+  pass via the fallback path.
+- ✅ Live-Qdrant RBAC test passes against a real server (3 contexts +
+  over-clearance); skips cleanly without ``SAR_QDRANT_URL``.
+- ✅ Guardrails: 23 tests (8 new) green; benign queries verified to skip
+  escalation, suspicious ones to escalate.
+- ✅ Ruff clean; CI unit + integration jobs green on Node 24.
