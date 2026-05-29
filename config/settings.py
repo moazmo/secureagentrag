@@ -221,6 +221,15 @@ class Settings(BaseSettings):
     #                  the standard S1-S14 taxonomy.
     guardrails_backend: str = "llm"
     llamaguard_model: str = "llama-guard3:8b"
+    # Selective escalation: in strict mode, only escalate regex-passed queries
+    # to the classifier when they look *suspicious* (soft injection keywords,
+    # zero-width / bidi-control obfuscation, or unusually long). Benign queries
+    # skip the extra LLM call entirely. Set False to escalate every query
+    # (legacy strict behaviour).
+    guardrails_selective_escalation: bool = True
+    # Queries longer than this many characters are treated as suspicious and
+    # escalated (longer prompts carry more room to hide an injection).
+    guardrails_suspicious_length: int = 1500
 
     # ── Contextual Retrieval (Anthropic 2024 technique) ──────────────────────────
     # Prepend a short LLM-generated context summary to each chunk before

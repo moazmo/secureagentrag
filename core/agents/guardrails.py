@@ -75,6 +75,55 @@ _INJECTION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
 ]
 
+# Soft signals that a regex-passed query still warrants an LLM/LlamaGuard
+# second opinion. Broader (and noisier) than the hard injection patterns above
+# on purpose — escalation is cheap relative to a missed jailbreak, and the
+# classifier makes the final call. Benign domain questions hit none of these.
+_SUSPICION_KEYWORDS: tuple[str, ...] = (
+    "ignore",
+    "disregard",
+    "override",
+    "system prompt",
+    "instruction",
+    "bypass",
+    "jailbreak",
+    "pretend",
+    "roleplay",
+    "role-play",
+    "role play",
+    "act as",
+    "developer mode",
+    "dan mode",
+    "sudo",
+    "root access",
+    "admin access",
+    "reveal",
+    "leak",
+    "forget everything",
+    "new instructions",
+)
+# Zero-width / bidi-control characters used to smuggle hidden instructions
+# past the regex layer.
+_OBFUSCATION_CHARS = frozenset("​‌‍⁠‪‫‬‭‮﻿")
+
+
+def is_suspicious(query: str) -> bool:
+    """Return True when a regex-passed query still merits LLM escalation.
+
+    Soft heuristic: matches a suspicion keyword, contains zero-width/bidi
+    obfuscation characters, or exceeds the configured length. Deliberately
+    permissive — the escalation classifier renders the final verdict.
+    """
+    if not query:
+        return False
+    if len(query) > settings.guardrails_suspicious_length:
+        return True
+    if any(ch in _OBFUSCATION_CHARS for ch in query):
+        return True
+    lowered = query.lower()
+    return any(kw in lowered for kw in _SUSPICION_KEYWORDS)
+
+
 # Patterns that signal the model leaked its system prompt back into the answer.
 _LEAK_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\byou are a helpful (?:assistant|RAG)\b", re.IGNORECASE),
@@ -146,12 +195,20 @@ async def guardrails_check(state: GraphState) -> dict:
 
     passed, reason = check_query(state["query"])
 
-    # Strict mode: escalate to the configured classifier for a second
-    # opinion. Regex-blocked queries are blocked immediately; regex-passed
-    # queries get the escalation. The backend is selected by
-    # SAR_GUARDRAILS_BACKEND ("llm" — legacy, "llamaguard" — Meta's
-    # LlamaGuard 3 via Ollama).
-    if passed and settings.guardrails_strict:
+    # Strict mode: escalate regex-passed queries to the configured classifier
+    # for a second opinion (regex-blocked queries are blocked immediately).
+    # With selective escalation on (default), only *suspicious* queries pay the
+    # LLM cost — benign domain questions skip it. The backend is selected by
+    # SAR_GUARDRAILS_BACKEND ("llm" — legacy, "llamaguard" — Meta's LlamaGuard
+    # 3 via Ollama).
+    escalated = False
+    _should_escalate = (
+        passed
+        and settings.guardrails_strict
+        and (not settings.guardrails_selective_escalation or is_suspicious(state["query"]))
+    )
+    if _should_escalate:
+        escalated = True
         backend = (settings.guardrails_backend or "llm").lower()
         if backend == "llamaguard":
             from core.agents.guardrails_llamaguard import check as llamaguard_check
@@ -181,6 +238,7 @@ async def guardrails_check(state: GraphState) -> dict:
                 "action": "guardrails_check",
                 "passed": passed,
                 "reason": reason,
+                "escalated": escalated,
                 "timestamp": datetime.now(UTC).isoformat(),
             }
         ],
