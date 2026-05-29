@@ -39,9 +39,53 @@ jobs:
       - name: Ruff (format check)
         run: uv run ruff format --check .
 
-      - name: Pytest
+      - name: Pytest (unit — no external services)
         env:
-          # Tests should not need external services. If any require them,
-          # mark them with @pytest.mark.integration and add `-m "not integration"`.
           SAR_DEBUG: "false"
-        run: uv run pytest -q --maxfail=1
+        # Integration tests need a live Qdrant; they run in the `integration`
+        # job below. Everything else must pass without external services.
+        run: uv run pytest -q --maxfail=1 -m "not integration"
+
+  integration:
+    name: Integration (live Qdrant)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install project (core + dev + api)
+        run: uv sync --frozen --group dev --extra api
+
+      - name: Wait for Qdrant
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:6333/readyz >/dev/null; then echo "qdrant ready"; exit 0; fi
+            sleep 2
+          done
+          echo "qdrant did not become ready" >&2; exit 1
+
+      - name: Pytest (integration only)
+        env:
+          SAR_DEBUG: "false"
+          SAR_QDRANT_URL: "http://localhost:6333"
+        # -m integration selects the marked tests; the RBAC test asserts the
+        # vector-layer access-control invariant against a real Qdrant.
+        run: uv run pytest -q -m integration
