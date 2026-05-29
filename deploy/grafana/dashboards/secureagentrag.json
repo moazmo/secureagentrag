@@ -2,130 +2,507 @@
   "annotations": { "list": [] },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "links": [],
-  "liveNow": false,
+  "liveNow": true,
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["secureagentrag", "rag"],
+  "tags": ["secureagentrag", "rag", "observability"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "",
   "title": "SecureAgentRAG — RAG Pipeline",
   "uid": "secureagentrag-rag",
-  "version": 1,
+  "version": 2,
   "panels": [
     {
+      "type": "row",
+      "id": 100,
+      "title": "Overview",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
       "id": 1,
-      "title": "Pipeline latency (p50 / p95 / p99)",
-      "type": "timeseries",
+      "title": "Total pipeline requests",
+      "type": "stat",
       "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.50, sum(rate(rag_pipeline_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p50"
-        },
-        {
-          "refId": "B",
-          "expr": "histogram_quantile(0.95, sum(rate(rag_pipeline_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p95"
-        },
-        {
-          "refId": "C",
-          "expr": "histogram_quantile(0.99, sum(rate(rag_pipeline_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p99"
+          "expr": "sum(rag_pipeline_requests_total)",
+          "instant": true
         }
       ]
     },
     {
       "id": 2,
-      "title": "Pipeline requests by outcome (rate/5m)",
-      "type": "timeseries",
+      "title": "Success rate",
+      "type": "stat",
       "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 90 },
+              { "color": "green", "value": 98 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "graphMode": "area",
+        "colorMode": "background",
+        "textMode": "auto"
+      },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(rag_pipeline_requests_total[5m])) by (outcome)",
-          "legendFormat": "{{outcome}}"
+          "expr": "100 * sum(rag_pipeline_requests_total{outcome=\"success\"}) / clamp_min(sum(rag_pipeline_requests_total), 1)",
+          "instant": true
         }
       ]
     },
     {
       "id": 3,
-      "title": "Inference routed by provider",
-      "type": "piechart",
+      "title": "Pipeline latency p95",
+      "type": "stat",
       "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
-      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 30 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(inference_routed_by_provider_total[1h])) by (provider)",
-          "legendFormat": "{{provider}}"
+          "expr": "histogram_quantile(0.95, sum(rate(rag_pipeline_latency_seconds_bucket[5m])) by (le))"
         }
       ]
     },
     {
       "id": 4,
-      "title": "Guardrails blocks by reason (rate/5m)",
-      "type": "timeseries",
+      "title": "Requests / min",
+      "type": "stat",
       "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqpm",
+          "color": { "mode": "fixed", "fixedColor": "purple" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(guardrails_blocked_total[5m])) by (gate, reason)",
-          "legendFormat": "{{gate}}:{{reason}}"
+          "expr": "sum(rate(rag_pipeline_requests_total[5m])) * 60"
         }
       ]
     },
     {
       "id": 5,
-      "title": "Faithfulness sentences dropped (cumulative)",
+      "title": "Guardrails blocks",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "fixed", "fixedColor": "orange" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
       "targets": [
-        { "refId": "A", "expr": "sum(faithfulness_dropped_total)", "legendFormat": "dropped" }
+        {
+          "refId": "A",
+          "expr": "sum(guardrails_blocked_total)",
+          "instant": true
+        }
       ]
     },
     {
       "id": 6,
-      "title": "HTTP request rate by handler",
-      "type": "timeseries",
+      "title": "Audit chain",
+      "type": "stat",
       "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "TAMPER", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "VALID", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value"
+      },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(http_requests_total[5m])) by (handler)",
-          "legendFormat": "{{handler}}"
+          "expr": "audit_chain_valid",
+          "instant": true
         }
       ]
     },
     {
-      "id": 7,
+      "type": "row",
+      "id": 101,
+      "title": "Pipeline",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false
+    },
+    {
+      "id": 10,
+      "title": "Pipeline latency percentiles",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "p99" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "p95" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "p50" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max", "mean"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(rag_pipeline_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(rag_pipeline_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(rag_pipeline_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Request rate by outcome",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 35,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "success" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "blocked" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "timeout" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "review" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(rag_pipeline_requests_total[5m])) by (outcome)", "legendFormat": "{{outcome}}" }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 102,
+      "title": "Inference & Safety",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "collapsed": false
+    },
+    {
+      "id": 20,
+      "title": "Inference routed by provider",
+      "type": "piechart",
+      "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": {
+        "pieType": "donut",
+        "displayLabels": ["percent"],
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "tooltip": { "mode": "single" },
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        { "refId": "A", "expr": "sum(increase(inference_routed_by_provider_total[1h])) by (provider)", "legendFormat": "{{provider}}", "instant": true }
+      ]
+    },
+    {
+      "id": 21,
+      "title": "Provider routing rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(inference_routed_by_provider_total[5m])) by (provider)", "legendFormat": "{{provider}}" }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "Guardrails blocks by reason",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "expr": "sum(increase(guardrails_blocked_total[5m])) by (gate, reason)", "legendFormat": "{{gate}}:{{reason}}" }
+      ]
+    },
+    {
+      "id": 23,
+      "title": "Faithfulness sentences dropped",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 25 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "continuous-GrYlRd" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "graphMode": "area",
+        "colorMode": "value",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "targets": [
+        { "refId": "A", "expr": "sum(faithfulness_dropped_total)", "legendFormat": "dropped (cumulative)", "instant": true },
+        { "refId": "B", "expr": "sum(rate(faithfulness_dropped_total[5m])) * 60", "legendFormat": "dropped / min" }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 103,
+      "title": "HTTP (API)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 },
+      "collapsed": false
+    },
+    {
+      "id": 30,
+      "title": "HTTP request rate by handler",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 30 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(http_requests_total[5m])) by (handler)", "legendFormat": "{{handler}}" }
+      ]
+    },
+    {
+      "id": 31,
       "title": "HTTP latency p95 by handler",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 30 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      },
       "targets": [
-        {
-          "refId": "A",
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler))",
-          "legendFormat": "{{handler}}"
-        }
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler))", "legendFormat": "{{handler}}" }
+      ]
+    },
+    {
+      "id": 32,
+      "title": "HTTP responses by status",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "sar-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 30 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "2.*" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "4.*" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "5.*" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(http_requests_total[5m])) by (status)", "legendFormat": "{{status}}" }
       ]
     }
   ]
