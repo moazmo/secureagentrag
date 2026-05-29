@@ -27,9 +27,7 @@ def test_metrics_enabled_with_extra():
 
 def test_success_run_records_outcome_provider_latency():
     before_req = _sample("rag_pipeline_requests_total", {"outcome": "success"})
-    before_provider = _sample(
-        "inference_routed_by_provider_total", {"provider": "groq"}
-    )
+    before_provider = _sample("inference_routed_by_provider_total", {"provider": "groq"})
     before_count = _sample("rag_pipeline_latency_seconds_count", {"outcome": "success"})
 
     metrics.record_pipeline_run(
@@ -45,13 +43,9 @@ def test_success_run_records_outcome_provider_latency():
 
     assert _sample("rag_pipeline_requests_total", {"outcome": "success"}) == before_req + 1
     assert (
-        _sample("inference_routed_by_provider_total", {"provider": "groq"})
-        == before_provider + 1
+        _sample("inference_routed_by_provider_total", {"provider": "groq"}) == before_provider + 1
     )
-    assert (
-        _sample("rag_pipeline_latency_seconds_count", {"outcome": "success"})
-        == before_count + 1
-    )
+    assert _sample("rag_pipeline_latency_seconds_count", {"outcome": "success"}) == before_count + 1
 
 
 def test_blocked_run_records_guardrails_reason():
@@ -77,9 +71,7 @@ def test_blocked_run_records_guardrails_reason():
 
 
 def test_unknown_reason_collapses_to_other():
-    before = _sample(
-        "guardrails_blocked_total", {"gate": "guardrails", "reason": "other"}
-    )
+    before = _sample("guardrails_blocked_total", {"gate": "guardrails", "reason": "other"})
     metrics.record_pipeline_run(
         {
             "guardrails_passed": False,
@@ -89,8 +81,7 @@ def test_unknown_reason_collapses_to_other():
         latency_ms=5.0,
     )
     assert (
-        _sample("guardrails_blocked_total", {"gate": "guardrails", "reason": "other"})
-        == before + 1
+        _sample("guardrails_blocked_total", {"gate": "guardrails", "reason": "other"}) == before + 1
     )
 
 
@@ -119,9 +110,7 @@ def test_timeout_outcome_label():
         },
         latency_ms=180000.0,
     )
-    assert (
-        _sample("rag_pipeline_requests_total", {"outcome": "timeout"}) == before + 1
-    )
+    assert _sample("rag_pipeline_requests_total", {"outcome": "timeout"}) == before + 1
 
 
 def test_render_latest_returns_exposition():
