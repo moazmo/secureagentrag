@@ -54,9 +54,14 @@ _retry_on_connection = retry(
 # exceptions raised during iteration escape the retry wrapper). Streaming must
 # therefore retry by hand, *before the first token is yielded* — once tokens
 # have streamed we cannot safely replay a partial response.
-_STREAM_MAX_ATTEMPTS = 3
-_STREAM_BACKOFF_MIN = 2.0
-_STREAM_BACKOFF_MAX = 20.0
+# 4 attempts with a tight cadence (≈1.5 + 2.25 + 3.4 s ≈ 7 s worst-case before
+# the first token) keeps the pre-token wait safely under the Vercel Edge 30 s
+# proxy cut while still spanning a few Groq per-minute retries. Retry-After is
+# honoured but capped at _STREAM_BACKOFF_MAX so one slow hint can't blow the
+# Edge budget.
+_STREAM_MAX_ATTEMPTS = 4
+_STREAM_BACKOFF_MIN = 1.5
+_STREAM_BACKOFF_MAX = 12.0
 
 
 def _retry_after_seconds(header_value: str | None) -> float | None:
