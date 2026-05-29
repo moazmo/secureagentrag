@@ -185,6 +185,12 @@ class Settings(BaseSettings):
     faithfulness_gate_mode: str = "flag"  # "flag" | "drop"
     faithfulness_threshold: float = 0.7  # min entailment ratio to consider answer faithful
     faithfulness_max_concurrent: int = 4  # parallel NLI checks
+    # Batch many cited-sentence entailment checks into one LLM call (numbered
+    # claims, one verdict line each). Cuts the per-sentence call count from N
+    # to ceil(N / batch_size). Any claim the model fails to score in the batch
+    # falls back to an individual call, so correctness never regresses.
+    faithfulness_batch_enabled: bool = True
+    faithfulness_batch_size: int = 8
 
     # ── Redis (for distributed rate limiting / caching) ──────────────────────────
     redis_url: str = "redis://localhost:6379/0"

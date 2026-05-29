@@ -111,21 +111,12 @@ def _parse_yes_no(response: str) -> bool:
     return head.startswith("yes")
 
 
-async def _check_one(
-    sentence: str,
-    cited_indices: list[int],
-    documents: list[DocumentGrade],
-    sensitivity: str,
-    prefer_cloud: bool,
-    semaphore: asyncio.Semaphore,
-) -> tuple[bool, str]:
-    """Run one entailment check.
+def _resolve_source(cited_indices: list[int], documents: list[DocumentGrade]) -> tuple[str, str]:
+    """Resolve cited chunk(s) -> concatenated source text.
 
-    Returns:
-        (supported, reason) — ``reason`` is empty on success or a short tag
-        on failure ("no_cited_index", "empty_source", "llm_no", "llm_error").
+    Returns ``(source, reason)``. ``source`` is empty when unresolvable, with
+    ``reason`` set to ``"no_cited_index"`` or ``"empty_source"``.
     """
-    # Resolve cited chunk(s) -> concatenate text. Skip out-of-range refs.
     snippets: list[str] = []
     for idx in cited_indices:
         i = idx - 1
@@ -133,11 +124,21 @@ async def _check_one(
             continue
         snippets.append(documents[i].get("text", ""))
     if not snippets:
-        return False, "no_cited_index"
+        return "", "no_cited_index"
     source = "\n\n---\n\n".join(snippets).strip()
     if not source:
-        return False, "empty_source"
+        return "", "empty_source"
+    return source, ""
 
+
+async def _judge_single(
+    sentence: str,
+    source: str,
+    sensitivity: str,
+    prefer_cloud: bool,
+    semaphore: asyncio.Semaphore,
+) -> tuple[bool, str]:
+    """One entailment LLM call for a single (resolved) claim/source pair."""
     prompt = _build_nli_prompt(sentence, source)
     async with semaphore:
         try:
@@ -154,6 +155,98 @@ async def _check_one(
             return True, "llm_error"
     supported = _parse_yes_no(response)
     return supported, "" if supported else "llm_no"
+
+
+def _build_batch_prompt(items: list[tuple[str, str]]) -> str:
+    """Build a numbered multi-claim entailment prompt.
+
+    ``items`` is a list of ``(claim, source)``. The model is asked to emit one
+    verdict line per claim, e.g. ``1: yes`` / ``2: no``.
+    """
+    blocks = []
+    for n, (claim, source) in enumerate(items, start=1):
+        blocks.append(f"[{n}] SOURCE:\n{source[:1200]}\n[{n}] CLAIM: {claim}")
+    body = "\n\n".join(blocks)
+    return (
+        "You are a strict fact-checker. For EACH numbered CLAIM below, decide "
+        "whether its SOURCE directly supports it.\n\n"
+        f"{body}\n\n"
+        "Respond with exactly one line per claim in the form '<number>: yes' or "
+        "'<number>: no' — nothing else. 'yes' only if the SOURCE clearly "
+        "supports that CLAIM."
+    )
+
+
+_BATCH_VERDICT_RE = re.compile(r"(?m)^\s*\[?(\d+)\]?\s*[:.)\-]?\s*(yes|no|y|n)\b", re.IGNORECASE)
+
+
+def _parse_batch(response: str, count: int) -> dict[int, bool]:
+    """Parse ``N: yes/no`` lines into a 1-based index -> supported map.
+
+    Only indices in ``[1, count]`` are kept. Missing indices are simply absent
+    from the map so the caller can fall back to an individual check.
+    """
+    if not response:
+        return {}
+    cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL | re.IGNORECASE)
+    out: dict[int, bool] = {}
+    for m in _BATCH_VERDICT_RE.finditer(cleaned):
+        n = int(m.group(1))
+        if 1 <= n <= count and n not in out:
+            out[n] = m.group(2).lower().startswith("y")
+    return out
+
+
+async def _judge_batch(
+    items: list[tuple[str, str]],
+    sensitivity: str,
+    prefer_cloud: bool,
+    semaphore: asyncio.Semaphore,
+) -> list[tuple[bool, str]]:
+    """Judge a batch of resolved (claim, source) pairs with one LLM call.
+
+    Any claim the batch response does not clearly score falls back to an
+    individual :func:`_judge_single` call, so a model that ignores the batch
+    format degrades to the per-claim path (never worse than today).
+    """
+    prompt = _build_batch_prompt(items)
+    async with semaphore:
+        try:
+            response = await call_llm_async(
+                prompt=prompt,
+                system_prompt="You are a strict factual entailment checker.",
+                sensitivity_level=sensitivity,
+                prefer_cloud=prefer_cloud,
+            )
+        except Exception as exc:
+            logger.warning("faithfulness_batch_llm_error", error=str(exc))
+            response = ""
+
+    verdicts = _parse_batch(response, len(items))
+    results: list[tuple[bool, str]] = []
+    fallbacks: list[int] = []
+    for i in range(len(items)):
+        n = i + 1
+        if n in verdicts:
+            supported = verdicts[n]
+            results.append((supported, "" if supported else "llm_no"))
+        else:
+            results.append((True, "llm_unparsed"))  # placeholder; may be replaced
+            fallbacks.append(i)
+
+    # Re-check any unparsed claims individually so a malformed batch response
+    # never silently passes a fabricated claim.
+    if fallbacks:
+        logger.info("faithfulness_batch_fallback", unparsed=len(fallbacks), batch=len(items))
+        retried = await asyncio.gather(
+            *[
+                _judge_single(items[i][0], items[i][1], sensitivity, prefer_cloud, semaphore)
+                for i in fallbacks
+            ]
+        )
+        for i, res in zip(fallbacks, retried, strict=True):
+            results[i] = res
+    return results
 
 
 async def check_faithfulness(state: GraphState) -> dict:
@@ -240,11 +333,44 @@ async def check_faithfulness(state: GraphState) -> dict:
     prefer_cloud = bool(state.get("prefer_cloud", False))
     semaphore = asyncio.Semaphore(max(1, int(settings.faithfulness_max_concurrent)))
 
-    tasks = [
-        _check_one(sentence, cites, documents, sensitivity, prefer_cloud, semaphore)
-        for _, sentence, cites in cited_pairs
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=False)
+    # Resolve each cited sentence's source up front. Claims with no resolvable
+    # source fail immediately (no LLM); the rest go to the LLM (batched).
+    results: list[tuple[bool, str]] = [(True, "")] * len(cited_pairs)
+    llm_positions: list[int] = []
+    llm_items: list[tuple[str, str]] = []
+    for pos, (_sent_idx, sentence, cites) in enumerate(cited_pairs):
+        source, reason = _resolve_source(cites, documents)
+        if not source:
+            results[pos] = (False, reason)
+        else:
+            llm_positions.append(pos)
+            llm_items.append((sentence, source))
+
+    batch_size = max(1, int(settings.faithfulness_batch_size))
+    use_batch = settings.faithfulness_batch_enabled and batch_size > 1
+
+    if llm_items and use_batch:
+        # One LLM call per batch of claims (with per-claim fallback inside).
+        batch_tasks = []
+        batch_pos_groups: list[list[int]] = []
+        for start in range(0, len(llm_items), batch_size):
+            group_items = llm_items[start : start + batch_size]
+            batch_pos_groups.append(llm_positions[start : start + batch_size])
+            batch_tasks.append(_judge_batch(group_items, sensitivity, prefer_cloud, semaphore))
+        group_results = await asyncio.gather(*batch_tasks)
+        for positions, verdicts in zip(batch_pos_groups, group_results, strict=True):
+            for pos, verdict in zip(positions, verdicts, strict=True):
+                results[pos] = verdict
+    elif llm_items:
+        # Legacy per-claim path (one call each).
+        single = await asyncio.gather(
+            *[
+                _judge_single(sentence, source, sensitivity, prefer_cloud, semaphore)
+                for sentence, source in llm_items
+            ]
+        )
+        for pos, verdict in zip(llm_positions, single, strict=True):
+            results[pos] = verdict
 
     unsupported: list[dict] = []
     annotated_sentences = list(sentences)
@@ -304,6 +430,7 @@ async def check_faithfulness(state: GraphState) -> dict:
                 "node": "faithfulness",
                 "action": "check",
                 "mode": mode,
+                "batched": bool(use_batch and llm_items),
                 "cited_sentences": total_cited,
                 "supported": supported_count,
                 "unsupported": len(unsupported),

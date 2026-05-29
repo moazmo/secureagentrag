@@ -221,5 +221,70 @@ class TestGateEnabled:
         assert result["faithfulness_unsupported"] == []
 
 
+class TestBatching:
+    def test_batch_single_call_scores_all_claims(self):
+        """When the model returns numbered verdicts, one LLM call scores all."""
+        docs = [_doc(1, "Cats are mammals."), _doc(2, "Dogs bark.")]
+        state = _state("Cats are mammals [1]. Cats can fly [2].", docs)
+
+        calls = {"n": 0}
+
+        async def _fake_llm(prompt, **_kwargs):
+            calls["n"] += 1
+            # One batched response covering both numbered claims.
+            return "1: yes\n2: no"
+
+        with (
+            patch.object(settings, "faithfulness_gate_enabled", True),
+            patch.object(settings, "faithfulness_gate_mode", "flag"),
+            patch.object(settings, "faithfulness_batch_enabled", True),
+            patch.object(settings, "faithfulness_batch_size", 8),
+            patch.object(faith_mod, "call_llm_async", _fake_llm),
+        ):
+            result = asyncio.run(check_faithfulness(state))
+
+        assert calls["n"] == 1  # single batched call, no per-sentence fan-out
+        assert result["faithfulness_ratio"] == 0.5
+        assert len(result["faithfulness_unsupported"]) == 1
+        assert "Cats can fly" in result["faithfulness_unsupported"][0]["sentence"]
+        assert result["audit_trail"][0]["batched"] is True
+
+    def test_batch_unparsed_falls_back_to_individual(self):
+        """A batch response missing a verdict line re-checks that claim alone."""
+        docs = [_doc(1, "Cats are mammals."), _doc(2, "Dogs bark.")]
+        state = _state("Cats are mammals [1]. Cats can fly [2].", docs)
+
+        prompts: list[str] = []
+
+        async def _fake_llm(prompt, **_kwargs):
+            prompts.append(prompt)
+            # Batch prompt lists both claims; only score claim 1, omit claim 2.
+            if "[2] CLAIM" in prompt and "[1] CLAIM" in prompt:
+                return "1: yes"  # claim 2 unscored -> triggers fallback
+            # Individual fallback prompt for the unscored claim.
+            return "no" if "can fly" in prompt else "yes"
+
+        with (
+            patch.object(settings, "faithfulness_gate_enabled", True),
+            patch.object(settings, "faithfulness_batch_enabled", True),
+            patch.object(faith_mod, "call_llm_async", _fake_llm),
+        ):
+            result = asyncio.run(check_faithfulness(state))
+
+        # One batch call + one fallback call.
+        assert len(prompts) == 2
+        assert result["faithfulness_ratio"] == 0.5
+        assert len(result["faithfulness_unsupported"]) == 1
+
+    def test_parse_batch_formats(self):
+        from core.agents.faithfulness import _parse_batch
+
+        assert _parse_batch("1: yes\n2: no\n3: YES", 3) == {1: True, 2: False, 3: True}
+        assert _parse_batch("[1] yes\n[2] - no", 2) == {1: True, 2: False}
+        # Out-of-range indices ignored; missing indices absent.
+        assert _parse_batch("1: yes\n9: no", 2) == {1: True}
+        assert _parse_batch("garbage", 2) == {}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
