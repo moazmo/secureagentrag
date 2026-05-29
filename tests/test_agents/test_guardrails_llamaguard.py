@@ -94,6 +94,9 @@ class TestBackendSelector:
         with (
             patch.object(settings, "guardrails_enabled", True),
             patch.object(settings, "guardrails_strict", True),
+            # Backend-routing test: escalate every query regardless of the
+            # suspicion heuristic so this stays focused on which backend fires.
+            patch.object(settings, "guardrails_selective_escalation", False),
             patch.object(settings, "guardrails_backend", "llamaguard"),
             patch(
                 "core.agents.guardrails_llamaguard.check",
@@ -116,6 +119,7 @@ class TestBackendSelector:
         with (
             patch.object(settings, "guardrails_enabled", True),
             patch.object(settings, "guardrails_strict", True),
+            patch.object(settings, "guardrails_selective_escalation", False),
             patch.object(settings, "guardrails_backend", "llm"),
             patch(
                 "core.agents.guardrails_llm.llm_guardrails_check",
