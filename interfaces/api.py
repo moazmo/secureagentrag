@@ -21,6 +21,7 @@ verification (left as a hook in ``_resolve_user``).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import json
@@ -108,6 +109,7 @@ if _FASTAPI_AVAILABLE:
         startup on failure.
         """
         schedulers: list = []
+        bg_tasks: list = []  # keep strong refs so created tasks aren't GC'd
         try:
             from utils.audit_verify import schedule_audit_verification
 
@@ -127,6 +129,25 @@ if _FASTAPI_AVAILABLE:
                     schedulers.append(s)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("session_purge_schedule_failed", error=str(exc))
+
+        # Warm the local embedder off the request path. The first BYOK upload
+        # would otherwise pay the ~770 MB sentence-transformers model load
+        # (20-40 s on CPU Basic) inline, blowing the Vercel Edge 30 s proxy
+        # budget and surfacing as a spurious "upload timed out" even for tiny
+        # files. Loading it right after boot makes the first real upload fast.
+        if settings.embedding_backend == "local":
+
+            async def _warm_embedder() -> None:
+                try:
+                    from retrieval.embeddings import _get_local_embedder
+
+                    await asyncio.to_thread(_get_local_embedder)
+                    logger.info("embedder_warmed_at_startup")
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("embedder_warm_failed", error=str(exc))
+
+            with contextlib.suppress(Exception):
+                bg_tasks.append(asyncio.create_task(_warm_embedder()))
 
         try:
             yield
