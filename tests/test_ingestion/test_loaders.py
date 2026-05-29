@@ -82,6 +82,17 @@ class TestLoadDocument:
         assert docs[0].text == "Hello world"
         assert docs[0].source_file == str(txt_path)
 
+    def test_load_markdown_file(self, tmp_path) -> None:
+        """Markdown (.md / .markdown) is loaded as text — it's in the BYOK
+        allowlist, so the loader must accept it (regression: it used to pass
+        the upload extension gate then fail at the loader)."""
+        for name in ("notes.md", "notes.markdown"):
+            md_path = tmp_path / name
+            md_path.write_text("# Title\n\nBody **text** here.", encoding="utf-8")
+            docs = load_document(str(md_path))
+            assert len(docs) == 1
+            assert "Body" in docs[0].text
+
     def test_raises_value_error_for_csv(self) -> None:
         """CSV files should not be supported."""
         with pytest.raises(ValueError, match="Unsupported file extension"):

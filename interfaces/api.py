@@ -937,6 +937,25 @@ if _FASTAPI_AVAILABLE:
                             ),
                         },
                     )
+                # Ingestion produced nothing usable (loader/parse failure, or a
+                # file with no extractable text). Returning 200 with
+                # status="failed" looked like success to the client and the file
+                # silently never appeared. Surface it as a 422 so the UI shows a
+                # real, immediate error instead of waiting on a phantom upload.
+                if result.status == "failed" or not result.point_ids:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "reason": "ingestion_failed",
+                            "errors": result.errors or ["No extractable text in the file."],
+                            "hint": (
+                                "Could not extract text from this file. Scanned PDFs "
+                                "without a text layer and empty files won't ingest — "
+                                "try a text-based .txt, .md, or .pdf."
+                            ),
+                        },
+                    )
+
                 # Tag every newly-upserted chunk with the file_id + ingested_at
                 # so the list and delete endpoints can group by file.
                 if result.point_ids:

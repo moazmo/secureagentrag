@@ -16,6 +16,8 @@ SUPPORTED_EXTENSIONS: set[str] = {
     ".docx",
     ".doc",
     ".txt",
+    ".md",
+    ".markdown",
     ".png",
     ".jpg",
     ".jpeg",
@@ -220,7 +222,9 @@ def load_document(file_path: str | Path) -> list[LoadedDocument]:
         return load_pdf(path)
     elif ext in {".docx", ".doc"}:
         return load_docx(path)
-    elif ext == ".txt":
+    elif ext in {".txt", ".md", ".markdown"}:
+        # Markdown is plain text for retrieval purposes — the `[N]` citation
+        # contract works on raw text, and chunking is markup-agnostic.
         return load_text(path)
     elif ext in _IMAGE_EXTENSIONS:
         return load_image(path)
