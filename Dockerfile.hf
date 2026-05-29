@@ -161,6 +161,11 @@ ENV SAR_RAG_FUSION_ENABLED=false
 # ~1 s on prompts under 4k tokens with comparable answer quality
 # on this small corpus.
 ENV SAR_GROQ_MODEL=llama-3.1-8b-instant
+# Cap synth completion tokens to ease Groq free-tier TPM (6,000 tokens/min).
+# A long answer + 10-chunk prompt could otherwise approach the per-minute
+# token ceiling in a single chat and 429 mid-stream. 1024 is ample for the
+# demo corpus; the streaming client also now retries a transient 429 blip.
+ENV SAR_SYNTH_MAX_TOKENS=1024
 # With the reranker disabled + grader bypassed, the synth context cap
 # (rerank_top_k) doubles as the doc budget into the synth prompt. Raise
 # from 5 -> 10 so all retrieved chunks reach the LLM; llama-3.1-8b has

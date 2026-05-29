@@ -561,6 +561,7 @@ async def synthesize_answer(state: GraphState) -> dict:
             system_prompt=_build_system_prompt(state),
             sensitivity_level=max_sensitivity,
             prefer_cloud=prefer_cloud,
+            max_tokens=settings.synth_max_tokens,
         ):
             collected.append(token)
             writer({"type": "token", "text": token})
@@ -583,6 +584,7 @@ async def synthesize_answer(state: GraphState) -> dict:
             sensitivity_level=max_sensitivity,
             prefer_cloud=prefer_cloud,
             json_mode=json_mode,
+            max_tokens=settings.synth_max_tokens,
         )
         response = response_text
         if not response.strip():

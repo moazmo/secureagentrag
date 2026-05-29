@@ -226,6 +226,12 @@ class Settings(BaseSettings):
     # zero-width / bidi-control obfuscation, or unusually long). Benign queries
     # skip the extra LLM call entirely. Set False to escalate every query
     # (legacy strict behaviour).
+    # Max completion tokens for the synthesizer. Caps tokens-per-minute
+    # pressure on rate-limited providers (Groq free tier = 6,000 TPM): a long
+    # answer plus a multi-chunk prompt can otherwise approach the per-minute
+    # token ceiling in a single chat. Only the synthesizer is capped; other
+    # LLM calls (router, grader, faithfulness) keep their own budgets.
+    synth_max_tokens: int = 2048
     guardrails_selective_escalation: bool = True
     # Queries longer than this many characters are treated as suspicious and
     # escalated (longer prompts carry more room to hide an injection).

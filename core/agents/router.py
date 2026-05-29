@@ -119,6 +119,7 @@ async def call_llm_with_decision(
     sensitivity_level: str = "low",
     prefer_cloud: bool = False,
     json_mode: bool = False,
+    max_tokens: int | None = None,
 ):
     """Like ``call_llm_async`` but returns (text, RoutingDecision, LLMResponse).
 
@@ -128,6 +129,9 @@ async def call_llm_with_decision(
     from inference.router import InferenceRouter
 
     router = InferenceRouter()
+    extra: dict = {}
+    if max_tokens is not None:
+        extra["max_tokens"] = max_tokens
     try:
         response, decision = await router.generate_with_routing(
             prompt=prompt,
@@ -135,6 +139,7 @@ async def call_llm_with_decision(
             sensitivity_level=sensitivity_level,
             prefer_cloud=prefer_cloud,
             json_mode=json_mode,
+            **extra,
         )
         logger.info(
             "call_llm_async_routed",
@@ -161,6 +166,7 @@ async def call_llm_stream(
     system_prompt: str = "",
     sensitivity_level: str = "low",
     prefer_cloud: bool = False,
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream LLM response asynchronously with inference routing.
 
@@ -169,6 +175,8 @@ async def call_llm_stream(
         system_prompt: Optional system prompt for context.
         sensitivity_level: Data sensitivity for routing (high/medium/low).
         prefer_cloud: Whether to prefer cloud providers for low-sensitivity.
+        max_tokens: Optional completion-token cap forwarded to the provider.
+            ``None`` leaves the provider's default (2048).
 
     Yields:
         Token strings as they are generated.
@@ -176,12 +184,16 @@ async def call_llm_stream(
     from inference.router import InferenceRouter
 
     router = InferenceRouter()
+    extra: dict = {}
+    if max_tokens is not None:
+        extra["max_tokens"] = max_tokens
     try:
         async for token in router.generate_stream_with_routing(
             prompt=prompt,
             system_prompt=system_prompt,
             sensitivity_level=sensitivity_level,
             prefer_cloud=prefer_cloud,
+            **extra,
         ):
             yield token
     except Exception as exc:
@@ -191,11 +203,16 @@ async def call_llm_stream(
         # the bug was in the corpus, the prompt, or the LLM provider.
         err_text = str(exc).lower()
         if "429" in err_text or "rate" in err_text or "quota" in err_text:
+            # This is the provider's *per-minute* bucket (Groq free tier:
+            # 30 req/min, 6,000 tokens/min), not the per-hour owner quota.
+            # It refills within ~a minute — so the copy says "try again",
+            # not "exhausted for the hour". We already retried with backoff
+            # in the cloud client before surfacing this.
             yield (
-                "Sorry — the demo's shared Groq quota is exhausted for "
-                "this hour. Paste your own Groq / OpenAI / Anthropic key "
-                "via the 🔑 button at the top of the page for an "
-                "unthrottled bucket."
+                "The demo's shared key just hit a momentary per-minute rate "
+                "limit — please try again in a few seconds. For an unthrottled "
+                "experience, paste your own Groq / OpenAI / Anthropic key via "
+                "the 🔑 button at the top of the page."
             )
         elif "timeout" in err_text or "connect" in err_text:
             yield (

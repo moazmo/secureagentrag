@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from abc import ABC, abstractmethod
@@ -47,6 +48,83 @@ _retry_on_connection = retry(
     wait=wait_exponential(multiplier=1.5, min=2, max=20),
     reraise=True,
 )
+
+# Streaming retry tunables. tenacity's @retry does NOT work on async-generator
+# functions (the decorated call returns the generator before the body runs, so
+# exceptions raised during iteration escape the retry wrapper). Streaming must
+# therefore retry by hand, *before the first token is yielded* — once tokens
+# have streamed we cannot safely replay a partial response.
+_STREAM_MAX_ATTEMPTS = 3
+_STREAM_BACKOFF_MIN = 2.0
+_STREAM_BACKOFF_MAX = 20.0
+
+
+def _retry_after_seconds(header_value: str | None) -> float | None:
+    """Parse a ``Retry-After`` header into seconds.
+
+    Handles the numeric-seconds form (Groq/OpenAI send e.g. ``"7"`` or
+    ``"7.5"``); returns ``None`` for absent or HTTP-date values (we fall back
+    to exponential backoff in that case).
+    """
+    if not header_value:
+        return None
+    try:
+        return max(0.0, float(header_value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _stream_backoff(attempt: int, retry_after: float | None) -> float:
+    """Wait before the next stream open: honour Retry-After, else exp backoff."""
+    if retry_after is not None:
+        return min(retry_after, _STREAM_BACKOFF_MAX)
+    return min(_STREAM_BACKOFF_MIN * (1.5 ** (attempt - 1)), _STREAM_BACKOFF_MAX)
+
+
+async def _stream_lines_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    *,
+    provider: str,
+) -> AsyncGenerator[str, None]:
+    """Open an SSE POST stream, retrying 429 / connection failures up front.
+
+    Retries happen only *before* the first line is yielded — a 429 surfaces at
+    the response-status check, so this recovers from the common per-minute
+    rate-limit blip without ever replaying a partially streamed answer.
+    ``Retry-After`` is honoured when present. After ``_STREAM_MAX_ATTEMPTS`` the
+    last error is re-raised for the caller to map to user-facing copy.
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                if resp.status_code == 429 and attempt < _STREAM_MAX_ATTEMPTS:
+                    wait = _stream_backoff(
+                        attempt, _retry_after_seconds(resp.headers.get("Retry-After"))
+                    )
+                    logger.warning(
+                        "stream_rate_limited_retrying",
+                        provider=provider,
+                        attempt=attempt,
+                        wait_s=round(wait, 2),
+                    )
+                    raise _RateLimitError(str(wait))
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    yield line
+                return
+        except _RateLimitError as exc:
+            await asyncio.sleep(float(str(exc)) if str(exc) else _STREAM_BACKOFF_MIN)
+            continue
+        except (httpx.ConnectError, httpx.TimeoutException):
+            if attempt >= _STREAM_MAX_ATTEMPTS:
+                raise
+            await asyncio.sleep(_stream_backoff(attempt, None))
+            continue
 
 
 class LLMProvider(StrEnum):
@@ -285,7 +363,6 @@ class OpenAICompatibleClient(BaseCloudClient):
             latency_ms=elapsed_ms,
         )
 
-    @_retry_on_connection
     async def generate_stream(
         self,
         prompt: str,
@@ -300,28 +377,30 @@ class OpenAICompatibleClient(BaseCloudClient):
             "max_tokens": max_tokens,
             "stream": True,
         }
-        async with self._client.stream(
-            "POST",
+        # _stream_lines_with_retry retries a 429 / connection blip before the
+        # first token (the common Groq per-minute bucket case) so a transient
+        # rate limit no longer kills the whole answer.
+        async for line in _stream_lines_with_retry(
+            self._client,
             f"{self.api_base}/chat/completions",
-            headers={**self._headers(), "Accept": "text/event-stream"},
-            json=payload,
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if not line.startswith("data: "):
-                    continue
-                data_str = line[6:]
-                if data_str == "[DONE]":
-                    break
-                try:
-                    data = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
-                choice = data.get("choices", [{}])[0]
-                token = choice.get("delta", {}).get("content", "")
-                if token:
-                    yield token
+            {**self._headers(), "Accept": "text/event-stream"},
+            payload,
+            provider=getattr(self, "provider_name", "openai_compatible"),
+        ):
+            line = line.strip()
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            try:
+                data = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            choice = data.get("choices", [{}])[0]
+            token = choice.get("delta", {}).get("content", "")
+            if token:
+                yield token
 
     @_retry_on_connection
     async def health_check(self) -> bool:
@@ -542,31 +621,30 @@ class AnthropicClient(BaseCloudClient):
         if system_prompt:
             payload["system"] = system_prompt
 
-        async with self._client.stream(
-            "POST",
+        async for line in _stream_lines_with_retry(
+            self._client,
             f"{self._api_base}/messages",
-            headers={**self._headers(), "Accept": "text/event-stream"},
-            json=payload,
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
+            {**self._headers(), "Accept": "text/event-stream"},
+            payload,
+            provider="anthropic",
+        ):
+            line = line.strip()
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                    event_type = data.get("type", "")
+                    if event_type == "content_block_delta":
+                        delta = data.get("delta", {})
+                        token = delta.get("text", "")
+                        if token:
+                            yield token
+                    elif event_type == "message_stop":
                         break
-                    try:
-                        data = json.loads(data_str)
-                        event_type = data.get("type", "")
-                        if event_type == "content_block_delta":
-                            delta = data.get("delta", {})
-                            token = delta.get("text", "")
-                            if token:
-                                yield token
-                        elif event_type == "message_stop":
-                            break
-                    except json.JSONDecodeError:
-                        continue
+                except json.JSONDecodeError:
+                    continue
 
     @_retry_on_connection
     async def health_check(self) -> bool:
