@@ -1359,3 +1359,84 @@ tracing they are privacy-safe even under BYOK.
 - ✅ Ruff clean; existing api + graph tests unaffected (2 unrelated WinError
   10055 socket-exhaustion failures reproduce only in the long combined run and
   pass in isolation).
+
+---
+
+## ADR-032: Security & Reliability Hardening (auth fail-closed, OCR off-loop, scheduled audit verify, frontend headers)
+
+**Date:** 2026-05-29
+**Status:** Accepted
+
+**Context:**
+A post-launch review (and a deep external audit) surfaced four latent issues
+spanning both repos:
+
+1. **Silent unsigned-token acceptance.** With no ``SAR_JWT_SECRET`` set,
+   ``verify_token`` fell back to a base64(json(UserContext)) bearer shape and
+   logged a warning — but still *accepted* it. That proves no identity; any
+   caller could impersonate any user. The HF Space sets no secret (it uses the
+   BYOK persona contract, not bearer auth), so the REST ``/query`` / ``/audit``
+   endpoints were effectively unauthenticated there.
+2. **Event-loop blocking in ingestion.** ``ingest_document`` is ``async`` but
+   called the synchronous ``_apply_ocr_fallback`` inline. PaddleOCR is
+   CPU-bound and the VLM fallback's sync wrappers spin their own loop, so a
+   scanned PDF stalled the whole event loop. (The audit blamed
+   ``ingestion/contextual.py``; that was a misdiagnosis — contextual.py is
+   already bounded-async via ``asyncio.gather`` + a semaphore.)
+3. **Tamper-evidence nobody checked.** The SHA-256 audit chain was verifiable
+   on demand but never automatically. Worse, ``schedule_session_purge`` was
+   defined yet never wired — the FastAPI app had no ``lifespan`` — so BYOK
+   session collections never auto-purged.
+4. **No HTTP security headers** on the Vercel frontend (no CSP, no
+   clickjacking / MIME-sniffing / referrer protections).
+
+**Decision:**
+
+- **Auth fails closed.** New ``allow_unsigned_tokens`` setting (default
+  ``False``). With no secret and the flag off, every bearer token is rejected.
+  The legacy unsigned shape is honoured only when
+  ``SAR_ALLOW_UNSIGNED_TOKENS=true`` (dev/test). ``mint_dev_token`` mirrors the
+  policy and raises rather than emit an unsigned token. The test suite opts in
+  via an autouse conftest fixture; a new test pins the fail-closed default.
+- **OCR off the loop.** ``ingest_document`` wraps the OCR pass in
+  ``asyncio.to_thread(self._apply_ocr_fallback, ...)`` — the correct, narrow
+  fix at the real blocking site.
+- **Scheduled audit verification.** New ``utils/audit_verify`` runs
+  ``AuditLogger.verify_chain()`` once at boot and every
+  ``SAR_AUDIT_VERIFY_INTERVAL_HOURS`` (default 6) from a FastAPI ``lifespan``,
+  surfacing a broken chain via structured error log + Prometheus metrics
+  (``audit_chain_verifications_total{result}``, ``audit_chain_valid`` gauge).
+  The same lifespan finally wires ``schedule_session_purge`` (gated on
+  ``byok_mode``). Both jobs are best-effort — a scheduler failure never blocks
+  startup — and degrade to a single startup sweep without APScheduler.
+- **Frontend security headers** via ``next.config.ts`` ``headers()``: a CSP
+  (same-origin + ``*.hf.space`` + Vercel analytics; no ``unsafe-eval``),
+  ``X-Frame-Options: DENY``, ``X-Content-Type-Options: nosniff``,
+  ``Referrer-Policy``, ``Permissions-Policy``, and HSTS on every route.
+
+**Consequences:**
+
+- (+) The REST surface can no longer be impersonated without a configured
+  signing key — fail closed by default, opt-in for dev only.
+- (+) Concurrent ingests and chat stay responsive during OCR; the API event
+  loop is no longer monopolised by a scanned PDF.
+- (+) Audit tampering is detected automatically and exported as a metric the
+  Grafana dashboard can alert on; BYOK session collections finally auto-purge.
+- (+) The frontend is hardened against clickjacking, MIME sniffing, and
+  referrer leakage; verified live on ``secureagentrag-web.vercel.app``.
+- (−) Smoke scripts that minted unsigned tokens must now set
+  ``SAR_ALLOW_UNSIGNED_TOKENS=true`` (or a real secret) against a live server.
+- (−) The CSP grants ``'unsafe-inline'`` for scripts/styles (no nonce pipeline
+  in this Next setup) — weaker than a nonce-based policy, acceptable for the
+  demo; ``'unsafe-eval'`` is not granted.
+
+**Acceptance criteria (all met):**
+
+- ✅ New fail-closed auth test + updated legacy tests green; full auth + api
+  suites pass.
+- ✅ OCR wrapped in ``to_thread``; pipeline tests green.
+- ✅ ``utils/audit_verify`` with 5 tests; lifespan runs clean under TestClient.
+- ✅ All six security headers verified live (local prod build + Vercel deploy);
+  ``/`` and ``/chat`` still 200.
+- ✅ Backend CI green; Vercel build + lint green.
+
