@@ -2,7 +2,7 @@
 
 This file is the canonical entry point for any AI agent (Claude / Hermes / Kimi / Cursor / Aider) picking up work on SecureAgentRAG. Read it before touching code.
 
-> 🚀 **Launch complete — `main` is the trunk.** The production BYOK demo (P6) shipped and merged: `deploy/prod-launch` → `main` on 2026-05-28, tagged **`v1.0.0-launch`**, CI green. The old freeze at `56c8c98` is lifted; new work goes on `main` directly or a feature branch. **All launch phases are done** — incl. the 101 s demo video (Remotion, on the `v1.0.0-launch` release + inline in both READMEs). `private/roadmap.md` holds the history; `private/review-2026-05-28.md` is the current deep review.
+> 🚀 **Launch complete + hardened — `main` is the trunk.** The production BYOK demo (P6) shipped and merged: `deploy/prod-launch` → `main` on 2026-05-28, tagged **`v1.0.0-launch`**, CI green. Since launch, five post-launch hardening waves landed on `main` (ADR-031..033 + a production rate-limit fix): **Wave 2** Prometheus/Grafana observability; **Wave 3** auth fail-closed + OCR off the event loop + scheduled audit-chain verify + frontend security headers; **Wave 4** batched NLI faithfulness + real-Qdrant CI job; **Wave 5** Node-24 CI + selective guardrail escalation; **rate-limit fix** streaming 429 retry/backoff + `SAR_SYNTH_MAX_TOKENS` cap + honest copy. New work goes on `main` directly or a feature branch. `private/roadmap.md` holds the history; `private/review-2026-05-28.md` is the launch-era deep review.
 
 ---
 
@@ -38,7 +38,8 @@ Owner: `moazmo` / `moazmo27@gmail.com`. License: MIT.
 | Auth | HS256 (default) / RS256 + JWKS dispatch | `utils/auth.py`, `utils/jwks_cache.py` |
 | Guardrails | regex → `llm` → `llamaguard` (S1-S14 taxonomy) | `core/agents/guardrails.py`, `core/agents/guardrails_llm.py`, `core/agents/guardrails_llamaguard.py` |
 | Faithfulness | Per-sentence NLI entailment gate | `core/agents/faithfulness.py` |
-| Observability | structlog + Arize Phoenix | `utils/logging.py`, `utils/observability.py` |
+| Observability | structlog + Arize Phoenix tracing + Prometheus `/metrics` → Grafana | `utils/logging.py`, `utils/observability.py`, `utils/metrics.py`, `deploy/grafana/` |
+| Audit auto-verify | Scheduled SHA-256 chain re-verification + metric (FastAPI lifespan) | `utils/audit_verify.py` |
 | Eval | Ragas + custom metrics | `evaluation/*` |
 | Audit | SHA-256 hash chain, JSONL, PII-redacted | `utils/audit.py`, `utils/pii.py` |
 | Package mgr | uv | `pyproject.toml`, `uv.lock` |
@@ -92,12 +93,13 @@ secureagentrag/
 ├── scripts/                # smoke, seed_corpus, interview_demo, quick_bench,
 │                           # cloud_bench, h2_gate, migrate_to_splade,
 │                           # train_reranker, bench_reranker, verify_audit_chain
-├── tests/                  # pytest, 623 passing (626 collected, 3 optional-dep skips)
+├── tests/                  # pytest, 656 unit + 2 live-Qdrant integration (test_qdrant_rbac)
 ├── helm/secureagentrag/    # Kubernetes manifests
 ├── deploy/                 # docker-compose auth profile + keycloak-realm.json
 ├── data/agent_evidence/    # 24-scenario gate evidence (results.md, screenshots)
 ├── sample_docs/            # PDF + txt corpus (incl. real NIST AI RMF)
-├── DECISIONS.md            # ADR-001..022
+├── DECISIONS.md            # ADR-001..033
+├── docker-compose.observability.yml  # Prometheus + Grafana overlay (self-hosted)
 ├── architecture.md         # Mermaid diagrams
 ├── RUNBOOK.md              # ops + troubleshooting
 ├── README.md               # public face
@@ -136,11 +138,13 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ---
 
-## 5. State of the codebase (as of `abe100e` on `main`)
+## 5. State of the codebase (as of `3ad56bb` on `main`)
 
-- **623 tests pass** (626 collected, 3 optional-dep skips), 0 failed. Lint + format clean. **CI green on `main`** (`uv sync --frozen --group dev --extra api` → ruff check + ruff format --check + pytest). Baseline lifted from 484 during the launch.
-- **~34.1k Python LOC** across 162 files.
-- **30 ADRs** in `DECISIONS.md` (24 historical + ADR-025/026/027/028 promoted from launch drafts + ADR-029 BYOK uploads + ADR-030 Groq cost optimisations).
+- **656 unit tests pass + 2 live-Qdrant integration tests.** 0 failed. Lint + format clean. **CI green on `main`** — now **two jobs**: a unit job (`uv sync --frozen --group dev --extra api` → ruff check + ruff format --check + `pytest -m "not integration"`) and an **integration job** that spins up a `qdrant/qdrant` service container and runs `pytest -m integration` (proves the RBAC filter against a real Qdrant). GitHub Actions on Node 24 (checkout v5 / setup-python v6 / setup-uv v6).
+- **~35.5k Python LOC** across 169 files.
+- **33 ADRs** in `DECISIONS.md` (001–024 historical + 025–030 the launch + **031** Prometheus/Grafana metrics + **032** security/reliability hardening + **033** cost/coverage hardening).
+- **Observability:** structlog logs + optional Phoenix tracing + **Prometheus `/metrics` (`utils/metrics.py`) → Grafana dashboard (`deploy/grafana/`, `docker-compose.observability.yml`)**. Metrics are aggregate-only (no prompt/key/user text in labels) so they are BYOK-safe; Phoenix tracing stays hard-disabled under BYOK. The FastAPI lifespan (`interfaces/api.py`) starts a scheduled **audit-chain re-verification** (`utils/audit_verify.py`, emits `audit_chain_valid`) and wires the BYOK session-purge job.
+- **Auth fails closed:** with no `SAR_JWT_SECRET`, every bearer token is rejected unless `SAR_ALLOW_UNSIGNED_TOKENS=true` (dev/test only). The legacy unsigned base64 shape is never accepted silently (ADR-032).
 - **Launch merged to `main`** 2026-05-28 (merge `e6f2507`), tagged **`v1.0.0-launch`**. 25 commits past the old frozen point `56c8c98`. The freeze is lifted — `main` is the trunk.
 - **Live $0/month production deploy:**
   - Frontend: `https://secureagentrag-web.vercel.app` — Next.js 16 + Tailwind v4 + SSE streaming on Vercel Hobby
@@ -156,6 +160,10 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 - **Threshold calibration** — `evaluation/calibration.json` loaded at import via `_apply_calibration`. Env override still wins.
 - **24-scenario UI gate (H.1 + H.2) is 24/24 PASS** on `main`. Live BYOK demo verified end-to-end with kubectl rollback chat returning full citations in 13 s.
 - Recent commits (chronological, newest first):
+  - `3ad56bb` / `582bd86` fix(byok): streaming 429 retry + backoff + Retry-After; `SAR_SYNTH_MAX_TOKENS` cap; honest per-minute copy (production rate-limit fix)
+  - `6191848` / `22a4765` test(ci): real-Qdrant RBAC integration job + batched NLI faithfulness (ADR-033)
+  - `82567c2` / `4da45af` / `306aae8` Wave 3: auth fail-closed + OCR `to_thread` + scheduled audit verify + frontend security headers (ADR-032)
+  - `49216cf` / `e097443` feat(observability): Prometheus `/metrics` + Grafana dashboard (ADR-031)
   - `e848ecf` fix(byok): cut Groq RPM pressure by 50% — pin 8b-instant, kill RAG-fusion, bypass evaluator LLM, router shortcut (ADR-030)
   - `7b6997a` fix(byok): drop sensitivity disclaimer + actionable LLM-fail copy (W-series)
   - `ac61654` fix(byok): upload + chat quality hardening for free-tier Groq (V-series)
@@ -189,6 +197,7 @@ Lives behind `SAR_BYOK_MODE=true`. The HF Space Dockerfile sets it; local dev do
 - **Per-IP throttle:** `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10` against owner key. Visitor BYOK bypasses. IP from `X-Forwarded-For` leftmost token (HF Spaces reverse proxy masks `request.client.host`).
 - **Persona presets:** `_DEMO_PERSONAS` in `interfaces/api.py` maps each persona to `(clearance, roles, style)`. Style is threaded into the synth system prompt via `GraphState.persona_style`.
 - **Cost-cut toggles (ADR-030):** `SAR_GROQ_MODEL=llama-3.1-8b-instant`, `SAR_RAG_FUSION_ENABLED=false`, `SAR_BYOK_SKIP_EVALUATOR=true`, `SAR_BYOK_SKIP_GRADER=true`, `SAR_FAITHFULNESS_GATE_ENABLED=false`, `SAR_RERANKER_TYPE=none`, `SAR_RELEVANCE_THRESHOLD=0.55`, `SAR_MAX_RETRIES=1`, `SAR_RERANK_TOP_K=10`. Router classifier short-circuits queries ≤80 chars to `query_type="simple"`. Net effect: ~2 Groq calls/chat vs ~5–6 before.
+- **Rate-limit hardening (post-launch fix):** `SAR_SYNTH_MAX_TOKENS=1024` on the Space caps synth completion tokens to ease the Groq 6k TPM ceiling; the streaming cloud client retries a 429 with backoff **before the first token** (honors `Retry-After`) so a transient per-minute limit no longer kills the answer. The "shared key per-minute limit" copy is honest (not "exhausted for the hour"). See `inference/cloud_clients.py::_stream_lines_with_retry` + `core/agents/router.py::call_llm_stream`.
 - **HIGH-on-cloud unlock:** `SAR_ALLOW_CLOUD_FOR_HIGH=true` in production because the HF Space has no Ollama. Frontend renders a `sensitivity:` badge so the visitor is informed. *Hero claim "HIGH never leaves local" is true in self-hosted mode only.*
 - **Session collections:** `documents_sess_<sanitized_session_id>`. Dual-collection retrieval (base ∪ session) under one RBAC filter; RRF-fused. 24 h TTL via `SAR_SESSION_COLLECTION_TTL_HOURS=24` — `retrieval/session_purge.py::purge_expired_sessions` runs every 6 h via `schedule_session_purge` in the FastAPI lifespan (APScheduler).
 - **Audit:** session-scoped only (`/byok/audit` filters `user_id == "demo-<sid>"`). SHA-256 chain intact; downloadable JSONL.
@@ -201,10 +210,17 @@ The BYOK launch is complete, merged to `main`, tagged `v1.0.0-launch`, CI green.
 
 - **Optional:** enable Vercel Web Analytics + Speed Insights in the dashboard (code already wired in `secureagentrag-web` layout — no-op until toggled).
 - **Optional:** upload fine-tuned reranker to `LeomordKaly/secureagentrag-reranker-v1` HF Hub model repo and flip `SAR_RERANKER_TYPE=fine_tuned` on the Space. **Not recommended** on the 10-doc corpus — ADR-022/030 bench shows the cross-encoder's top-5 cut drops the visitor's own chunk; helps only past ~200 docs/query.
-- **Optional:** selective guardrails escalation (regex hit → LlamaGuard on suspicious only). Would catch unicode-obfuscation without burning Groq budget on every chat.
-- **Optional:** wire SonarCloud quality gate (currently "not computed" — neutral, non-blocking) or bump the Node 20 GitHub Actions to v5/Node 24 before the June 2026 deprecation.
+- **Optional:** wire SonarCloud quality gate (currently "not computed" — neutral, non-blocking).
+- **Optional (definitive concurrency fix):** put a **paid Groq key** as the Space owner key (`SAR_GROQ_API_KEY`) — 10×+ limits remove the residual simultaneous-heavy-user rate limit. Pure env change. Until then BYOK is the unlimited path.
 
 **Recently shipped** (was in this section, now done):
+- ✅ **Prometheus/Grafana observability** — `utils/metrics.py` + `deploy/grafana/` + `docker-compose.observability.yml`; aggregate-only, BYOK-safe. ADR-031.
+- ✅ **Security/reliability hardening** — auth fail-closed (`SAR_ALLOW_UNSIGNED_TOKENS`), OCR off the event loop (`asyncio.to_thread` in `ingestion/pipeline.py`), scheduled audit-chain verify (`utils/audit_verify.py` on lifespan), frontend security headers (`next.config.ts` CSP/HSTS/etc.). ADR-032.
+- ✅ **Batched NLI faithfulness** — `SAR_FAITHFULNESS_BATCH_ENABLED` (default on, size 8); N calls → ceil(N/8) with per-claim fallback. ADR-033.
+- ✅ **Real-Qdrant RBAC integration test + CI job** — `tests/test_integration/test_qdrant_rbac.py`, dedicated CI job with a Qdrant service container. ADR-033.
+- ✅ **Selective guardrail escalation** — strict mode escalates to LlamaGuard only on *suspicious* queries (`SAR_GUARDRAILS_SELECTIVE_ESCALATION`, default on). ADR-033.
+- ✅ **GitHub Actions on Node 24** — checkout v5 / setup-python v6 / setup-uv v6. ADR-033.
+- ✅ **Streaming rate-limit fix** — `inference/cloud_clients.py` retries 429 before the first token (honors `Retry-After`); `SAR_SYNTH_MAX_TOKENS` caps TPM; honest per-minute copy in `core/agents/router.py`.
 - ✅ **Per-tenant SPLADE manager cache** — `QdrantManager.for_org(org_id)` now caches per-tenant managers; cross-tenant sparse isolation is pinned by 3 new regression tests. ADR-024 (2026-05-23).
 - ✅ **Chat view slim** — `app/views/chat.py` 621 → 161 LOC. Streaming / sync / sidebar / persist extracted into focused modules.
 - ✅ **NIST in-domain rerank gold** — `evaluation/nist_rerank_gold.jsonl` (20 hand-picked triplets from the NIST AI RMF corpus). Unlocks the NIST arm of `scripts/bench_reranker.py`. Current run: candidate beats baseline by **+0.54pp NDCG@10** (0.9162 → 0.9215). ADR-022 acceptance criteria fully met.

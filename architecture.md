@@ -516,3 +516,36 @@ renders 3 chips below the citations panel: 2 templated from distinct
 citation filenames (`Tell me more about <stem>`) plus 1 persona-
 flavoured generic prompt. Zero LLM calls — pure client-side string
 templating. Engagement boost without burning Groq budget.
+
+### 13.7 Post-launch hardening (ADR-031..033 + rate-limit fix)
+
+Five waves landed after `v1.0.0-launch`, all on `main`, CI green:
+
+- **Observability (ADR-031).** `utils/metrics.py` exposes Prometheus counters/
+  histograms at `GET /metrics` (`prometheus-fastapi-instrumentator` for HTTP
+  metrics + custom RAG metrics: pipeline latency by outcome, requests by
+  outcome, guardrail blocks by reason, inference routing by provider,
+  faithfulness drops, `audit_chain_valid`). `docker-compose.observability.yml`
+  + `deploy/grafana/` bring up Prometheus + a provisioned Grafana dashboard.
+  Aggregate-only labels → BYOK-safe (Phoenix tracing stays hard-disabled under
+  BYOK because spans capture content). Runs self-hosted; the HF Space ships
+  without the `[metrics]` extra so `/metrics` is a 501 no-op there.
+- **Security/reliability (ADR-032).** Auth fails closed (`utils/auth.py` rejects
+  unsigned tokens unless `SAR_ALLOW_UNSIGNED_TOKENS=true`). OCR fallback runs on
+  a worker thread (`asyncio.to_thread` in `ingestion/pipeline.py`) so a scanned
+  PDF no longer blocks the event loop. A FastAPI **lifespan** now starts a
+  scheduled audit-chain re-verification (`utils/audit_verify.py`) and wires the
+  BYOK session purge. The frontend sets CSP + HSTS + `X-Frame-Options` + nosniff
+  + Referrer-Policy + Permissions-Policy on every route (`next.config.ts`).
+- **Coverage/cost (ADR-033).** Faithfulness NLI checks are **batched**
+  (N → ceil(N/8) LLM calls, per-claim fallback). A dedicated CI **integration
+  job** stands up a real `qdrant/qdrant` container and asserts the RBAC filter
+  end-to-end (`tests/test_integration/test_qdrant_rbac.py`). Guardrail strict
+  mode escalates to LlamaGuard only on *suspicious* queries. GitHub Actions
+  bumped to Node 24.
+- **Streaming rate-limit fix.** `inference/cloud_clients.py::_stream_lines_with_retry`
+  retries a provider 429 with backoff **before the first token** (honours
+  `Retry-After`) — the streaming path previously never retried (a `tenacity`-on-
+  async-generator no-op), so a transient Groq per-minute limit killed the answer.
+  Paired with `SAR_SYNTH_MAX_TOKENS` (1024 on the Space) to ease the 6k TPM
+  ceiling, and honest per-minute copy in `core/agents/router.py`.

@@ -82,6 +82,7 @@ Sections below mirror the order of `config/settings.py`. Only non-secret default
 | `SAR_CONFIDENCE_THRESHOLD` | `0.6` | Below this, the evaluator flags `needs_human_review`. May be overridden by `evaluation/calibration.json`. |
 | `SAR_MAX_RETRIES` | `2` | Max corrective rewrite cycles. |
 | `SAR_REQUEST_TIMEOUT_S` | `60` | Hard wall-clock SLO budget for one pipeline run. `0` disables. |
+| `SAR_SYNTH_MAX_TOKENS` | `2048` | Max completion tokens for the synthesizer. Caps tokens-per-minute pressure on rate-limited providers (Groq free tier = 6,000 TPM); the HF Space sets `1024`. Only the synthesizer is capped. |
 
 ## Embedding batching
 
@@ -94,7 +95,8 @@ Sections below mirror the order of `config/settings.py`. Only non-secret default
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SAR_JWT_SECRET` | _(unset)_ | HS256 signing secret. **When unset, the FastAPI/MCP layers fall back to an unsigned base64 dev token and warn on every request — never ship to prod without this** (or RS256). |
+| `SAR_JWT_SECRET` | _(unset)_ | HS256 signing secret. **When unset the verifier FAILS CLOSED — every bearer token is rejected** unless `SAR_ALLOW_UNSIGNED_TOKENS=true`. Set this (or RS256) in any real deployment. |
+| `SAR_ALLOW_UNSIGNED_TOKENS` | `false` | Dev/test escape hatch: accept the legacy unsigned base64 token shape when no `SAR_JWT_SECRET` is set. **Never enable in production** — an unsigned token proves no identity (ADR-032). |
 | `SAR_JWT_ALGORITHM` | `HS256` | `HS256` (HMAC) or `RS256` (public-key / JWKS). |
 | `SAR_JWT_ISSUER` | `secureagentrag` | Checked against `iss` when present. |
 | `SAR_JWT_AUDIENCE` | `secureagentrag-api` | Checked against `aud` when present. |
@@ -109,7 +111,9 @@ Sections below mirror the order of `config/settings.py`. Only non-secret default
 | `SAR_FAITHFULNESS_GATE_ENABLED` | `false` | Per-sentence entailment check after synthesis. One LLM call per cited sentence. |
 | `SAR_FAITHFULNESS_GATE_MODE` | `flag` | `flag` (annotate `*[unsupported]*`) or `drop` (remove the sentence). |
 | `SAR_FAITHFULNESS_THRESHOLD` | `0.7` | Min entailment ratio for a sentence to count as supported. May be set by calibration. |
-| `SAR_FAITHFULNESS_MAX_CONCURRENT` | `4` | Parallel NLI checks. |
+| `SAR_FAITHFULNESS_MAX_CONCURRENT` | `4` | Parallel NLI checks / batches. |
+| `SAR_FAITHFULNESS_BATCH_ENABLED` | `true` | Batch all cited claims into one numbered LLM call (N → ceil(N/size)); unparsed claims fall back to individual checks. ADR-033. |
+| `SAR_FAITHFULNESS_BATCH_SIZE` | `8` | Claims per batched entailment call. |
 
 ## Guardrails
 
@@ -119,6 +123,8 @@ Sections below mirror the order of `config/settings.py`. Only non-secret default
 | `SAR_GUARDRAILS_STRICT` | `false` | After the regex gate, escalate to an LLM classifier. |
 | `SAR_GUARDRAILS_BACKEND` | `llm` | `llm` (legacy SAFE/UNSAFE) or `llamaguard` (Meta S1–S14 taxonomy). |
 | `SAR_LLAMAGUARD_MODEL` | `llama-guard3:8b` | Ollama tag for the LlamaGuard backend. |
+| `SAR_GUARDRAILS_SELECTIVE_ESCALATION` | `true` | In strict mode, only escalate *suspicious* regex-passed queries to the classifier (injection keyword / zero-width-bidi obfuscation / over-length). `false` = escalate every query (legacy). ADR-033. |
+| `SAR_GUARDRAILS_SUSPICIOUS_LENGTH` | `1500` | Queries longer than this are treated as suspicious and escalated. |
 
 ## RBAC, multi-tenancy & PII
 
@@ -160,6 +166,15 @@ Sections below mirror the order of `config/settings.py`. Only non-secret default
 | `SAR_REDIS_URL` | `redis://localhost:6379/0` | Redis for distributed rate limiting / caching. |
 | `SAR_USE_REDIS_RATE_LIMITER` | `false` | Use the Redis-backed rate limiter instead of the in-memory one. |
 
+## Observability (metrics + audit verification)
+
+Prometheus metrics are exposed at `GET /metrics` when the `[metrics]` extra is installed (`prometheus-client` + `prometheus-fastapi-instrumentator`); without it the endpoint returns 501 and the recorders are no-ops. Metrics are aggregate-only (no prompt/key/user text in labels), so they are safe even under BYOK. `docker compose -f docker-compose.yml -f docker-compose.observability.yml up` brings up Prometheus + Grafana with the dashboard in `deploy/grafana/`. See ADR-031.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SAR_AUDIT_VERIFY_ENABLED` | `true` | Scheduled re-verification of the SHA-256 audit hash chain on the FastAPI lifespan; emits `audit_chain_valid` (1/0) + `audit_chain_verifications_total`. Local-only read; safe everywhere. ADR-032. |
+| `SAR_AUDIT_VERIFY_INTERVAL_HOURS` | `6` | How often the audit-chain verification job runs (also once at boot). |
+
 ## BYOK demo mode
 
 > These only matter when `SAR_BYOK_MODE=true`. They change the meaning of the pipeline — read [ADR-025](../DECISIONS.md) and [ADR-030](../DECISIONS.md), and [`BYOK_PRIVACY_TRADEOFFS.md`](./BYOK_PRIVACY_TRADEOFFS.md), before flipping any of them.
@@ -178,6 +193,7 @@ Sections below mirror the order of `config/settings.py`. Only non-secret default
 | `SAR_BYOK_UPLOAD_ALLOWED_EXTENSIONS` | `[".txt",".md",".pdf"]` | same | Upload allowlist. |
 | `SAR_BYOK_SKIP_GRADER` | `true` | `true` | Bypass the per-doc LLM grader (cost). Trust embedding + RRF ordering. |
 | `SAR_BYOK_SKIP_EVALUATOR` | `true` | `true` | Bypass the evaluator's LLM calls; use heuristic confidence. |
+| `SAR_SYNTH_MAX_TOKENS` | `2048` | `1024` | Cap synth completion tokens to ease Groq 6k TPM pressure (paired with the streaming 429 retry in `inference/cloud_clients.py`). |
 
 ## Pricing (cost dashboard)
 
