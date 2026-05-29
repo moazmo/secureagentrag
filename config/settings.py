@@ -166,6 +166,14 @@ class Settings(BaseSettings):
     jwks_url: str | None = None
     jwks_cache_ttl_seconds: int = 300
 
+    # ── Scheduled audit-chain verification ───────────────────────────────────────
+    # When enabled, the FastAPI lifespan starts a background job that
+    # periodically re-walks the SHA-256 audit hash chain and logs/raises a
+    # metric if tampering is detected. Reads local JSONL only — no external
+    # deps — so it is safe to leave on everywhere.
+    audit_verify_enabled: bool = True
+    audit_verify_interval_hours: int = 6
+
     # ── Citation Faithfulness Gate (NLI) ─────────────────────────────────────────
     # After synthesis, run a per-sentence NLI check: for each sentence that
     # carries an inline `[N]` citation, ask a yes/no entailment question

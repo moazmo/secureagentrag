@@ -22,6 +22,7 @@ verification (left as a hook in ``_resolve_user``).
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 from datetime import date
 from typing import Annotated
@@ -95,10 +96,50 @@ if _FASTAPI_AVAILABLE:
 
         return _dep
 
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        """Start background jobs on boot, stop them cleanly on shutdown.
+
+        - Periodic audit hash-chain verification (always; local-only).
+        - BYOK session-collection purge (only when ``byok_mode`` is on).
+        Both degrade gracefully when APScheduler is absent and never block
+        startup on failure.
+        """
+        schedulers: list = []
+        try:
+            from utils.audit_verify import schedule_audit_verification
+
+            s = schedule_audit_verification()
+            if s is not None:
+                schedulers.append(s)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("audit_verify_schedule_failed", error=str(exc))
+
+        if settings.byok_mode:
+            try:
+                from retrieval.qdrant_client import QdrantManager
+                from retrieval.session_purge import schedule_session_purge
+
+                s = schedule_session_purge(QdrantManager().client)
+                if s is not None:
+                    schedulers.append(s)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("session_purge_schedule_failed", error=str(exc))
+
+        try:
+            yield
+        finally:
+            for s in schedulers:
+                with contextlib.suppress(Exception):
+                    s.shutdown(wait=False)
+
     app = FastAPI(
         title="SecureAgentRAG API",
         version="0.1.0",
         description="Privacy-first multi-agent RAG with RBAC, guardrails, and audit chain.",
+        lifespan=_lifespan,
     )
 
     # Initialize Phoenix tracing if configured.

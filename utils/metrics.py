@@ -32,6 +32,7 @@ try:
     from prometheus_client import (
         CONTENT_TYPE_LATEST,
         Counter,
+        Gauge,
         Histogram,
         generate_latest,
     )
@@ -40,7 +41,7 @@ try:
 except ImportError:  # pragma: no cover - exercised only without the extra
     METRICS_ENABLED = False
     CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
-    Counter = Histogram = None  # type: ignore[assignment]
+    Counter = Gauge = Histogram = None  # type: ignore[assignment]
     generate_latest = None  # type: ignore[assignment]
 
 
@@ -77,12 +78,23 @@ if METRICS_ENABLED:
         "faithfulness_dropped_total",
         "Total sentences dropped/flagged by the NLI faithfulness gate.",
     )
+    AUDIT_VERIFICATIONS = Counter(
+        "audit_chain_verifications_total",
+        "Scheduled audit hash-chain verification runs, by result.",
+        labelnames=("result",),
+    )
+    AUDIT_CHAIN_VALID = Gauge(
+        "audit_chain_valid",
+        "1 if the last audit-chain verification passed, 0 if tamper/error detected.",
+    )
 else:  # pragma: no cover
     PIPELINE_LATENCY = None
     PIPELINE_REQUESTS = None
     GUARDRAILS_BLOCKED = None
     INFERENCE_ROUTED = None
     FAITHFULNESS_DROPPED = None
+    AUDIT_VERIFICATIONS = None
+    AUDIT_CHAIN_VALID = None
 
 
 # ── Recording helpers ──────────────────────────────────────────────────────
@@ -162,6 +174,21 @@ def _record_block(gate: str, reason: str | None) -> None:
     key = (reason or "unknown").strip().lower().replace(" ", "_")[:40]
     label = key if key in _KNOWN_GATE_REASONS else "other"
     GUARDRAILS_BLOCKED.labels(gate=gate, reason=label).inc()
+
+
+def record_audit_verification(result: str, valid: bool) -> None:
+    """Record one scheduled audit-chain verification outcome.
+
+    ``result`` is one of ``valid`` / ``broken`` / ``error``. No-op without the
+    extra; never raises.
+    """
+    if not METRICS_ENABLED:
+        return
+    try:
+        AUDIT_VERIFICATIONS.labels(result=result).inc()
+        AUDIT_CHAIN_VALID.set(1 if valid else 0)
+    except Exception as exc:  # pragma: no cover - defensive
+        _log.debug("metrics_audit_record_failed", error=str(exc))
 
 
 def render_latest() -> tuple[bytes, str]:
