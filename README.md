@@ -229,6 +229,8 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up
 
 Grafana auto-provisions the Prometheus datasource and the dashboard from [`deploy/grafana/`](deploy/grafana/); Prometheus scrape config is [`deploy/prometheus.yml`](deploy/prometheus.yml).
 
+![SecureAgentRAG Grafana dashboard — pipeline latency percentiles, request outcomes, provider routing mix, guardrails blocks, faithfulness drops, and HTTP metrics](docs/img/grafana-dashboard.png)
+
 > **Privacy by design.** Metrics are aggregate counters only — no prompt, completion, key, or user text ever lands in a label, so they are safe even under BYOK. The public Hugging Face Space (CPU Basic) ships **without** the `[metrics]` extra and runs no collector; `/metrics` there is a 501 no-op. Phoenix tracing is *hard-disabled* under BYOK regardless of config, since spans would capture request content.
 
 ---
