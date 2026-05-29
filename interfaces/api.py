@@ -1117,9 +1117,10 @@ else:  # pragma: no cover
 def mint_dev_token(user: dict) -> str:
     """Convenience for local testing — build a bearer token for a UserContext dict.
 
-    When ``SAR_JWT_SECRET`` is configured this mints a real signed JWT; with
-    no secret it falls back to the legacy unsigned base64 shape so existing
-    test fixtures keep working.
+    When ``SAR_JWT_SECRET`` is configured this mints a real signed JWT. With
+    no secret it emits the legacy unsigned base64 shape *only* when
+    ``SAR_ALLOW_UNSIGNED_TOKENS`` is on (matching the verifier's fail-closed
+    policy); otherwise it raises so callers are forced to configure auth.
     """
     if settings.jwt_secret:
         try:
@@ -1130,7 +1131,12 @@ def mint_dev_token(user: dict) -> str:
                 clearance_level=int(user.get("clearance_level", 1)),
             )
         except AuthError:
-            # Fall through to legacy shape on issuer error.
+            # Fall through to legacy shape on issuer error (only if allowed).
             pass
+    if not settings.allow_unsigned_tokens:
+        raise AuthError(
+            "missing",
+            "cannot mint a token: set SAR_JWT_SECRET, or SAR_ALLOW_UNSIGNED_TOKENS=true for dev",
+        )
     payload = json.dumps(user).encode("utf-8")
     return base64.b64encode(payload).decode("ascii")

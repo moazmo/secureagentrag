@@ -140,16 +140,22 @@ class Settings(BaseSettings):
 
     # ── Authentication ───────────────────────────────────────────────────────────
     # When ``jwt_secret`` is set the FastAPI / MCP layers verify HS256-signed
-    # JWTs and derive UserContext from validated claims. When unset, callers
-    # fall back to the dev-mode base64(json(UserContext)) token shape so
-    # existing tests and smoke scripts keep working — but a runtime warning is
-    # emitted on every request. Production deployments MUST set this.
+    # JWTs and derive UserContext from validated claims. When unset, the
+    # verifier FAILS CLOSED — it rejects every token — unless
+    # ``allow_unsigned_tokens`` is explicitly turned on (dev/test only). The
+    # legacy unsigned base64(json(UserContext)) shape proves no identity, so it
+    # is never accepted silently. Production deployments MUST set this.
     #
     # ``jwt_issuer`` / ``jwt_audience`` are checked against ``iss`` / ``aud``
     # claims when present. Leave empty to disable that check (default).
     # ``jwt_ttl_seconds`` is the lifetime of tokens minted via the local
     # ``/token`` dev endpoint; real IdPs (Keycloak/Auth0) set their own.
     jwt_secret: str | None = None
+    # Opt-in escape hatch for the legacy unsigned base64 token shape. Default
+    # False = fail closed: with no ``jwt_secret`` set and this off, every
+    # bearer token is rejected. Dev/test harnesses flip it on deliberately;
+    # production never should.
+    allow_unsigned_tokens: bool = False
     jwt_issuer: str = "secureagentrag"
     jwt_audience: str = "secureagentrag-api"
     jwt_ttl_seconds: int = 3600

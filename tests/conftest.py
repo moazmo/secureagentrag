@@ -22,6 +22,18 @@ def _disable_rag_fusion_in_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_live_settings, "rag_fusion_enabled", False)
 
 
+@pytest.fixture(autouse=True)
+def _allow_unsigned_tokens_in_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt the test suite into the legacy unsigned base64 token shape.
+
+    Production fails closed (``allow_unsigned_tokens`` defaults to False), but
+    the existing fixtures mint unsigned tokens via ``mint_dev_token`` with no
+    ``jwt_secret`` configured. Enabling the flag here keeps those fixtures
+    working; tests that exercise the fail-closed path patch it back to False.
+    """
+    monkeypatch.setattr(_live_settings, "allow_unsigned_tokens", True)
+
+
 @pytest.fixture()
 def test_settings() -> Settings:
     """Create a Settings instance with test-specific overrides.

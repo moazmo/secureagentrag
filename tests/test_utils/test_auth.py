@@ -135,7 +135,7 @@ def test_issue_without_secret_raises_missing():
     assert exc.value.reason == "missing"
 
 
-def test_legacy_unsigned_token_accepted_when_secret_unset():
+def test_legacy_unsigned_token_accepted_only_when_opted_in():
     import base64
     import json
 
@@ -147,14 +147,39 @@ def test_legacy_unsigned_token_accepted_when_secret_unset():
     }
     token = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
 
-    with patch.object(settings, "jwt_secret", None):
+    with (
+        patch.object(settings, "jwt_secret", None),
+        patch.object(settings, "allow_unsigned_tokens", True),
+    ):
         ctx, claims = verify_token(token)
     assert ctx.user_id == "alice"
     assert claims["jti"] == "unsigned"
 
 
-def test_malformed_legacy_token_rejected_when_secret_unset():
-    with patch.object(settings, "jwt_secret", None), pytest.raises(AuthError) as exc:
+def test_unsigned_token_rejected_by_default_fail_closed():
+    """With no secret and unsigned tokens disabled (prod default), reject."""
+    import base64
+    import json
+
+    token = base64.b64encode(
+        json.dumps({"user_id": "alice", "org_id": "acme", "roles": ["user"]}).encode()
+    ).decode("ascii")
+
+    with (
+        patch.object(settings, "jwt_secret", None),
+        patch.object(settings, "allow_unsigned_tokens", False),
+        pytest.raises(AuthError) as exc,
+    ):
+        verify_token(token)
+    assert exc.value.reason == "missing"
+
+
+def test_malformed_legacy_token_rejected_when_opted_in():
+    with (
+        patch.object(settings, "jwt_secret", None),
+        patch.object(settings, "allow_unsigned_tokens", True),
+        pytest.raises(AuthError) as exc,
+    ):
         verify_token("not-base64!@#$")
     assert exc.value.reason in {"malformed", "bad_claims"}
 

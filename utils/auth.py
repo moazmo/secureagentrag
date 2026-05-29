@@ -19,11 +19,13 @@ When ``settings.jwt_algorithm`` is ``"RS256"`` tokens are verified against a
 remote JWKS endpoint (Keycloak / Auth0 / etc.). The local ``/token`` endpoint
 returns 404 because we do not hold the IdP's private key. See ``utils/jwks_cache``.
 
-Backwards compatibility
------------------------
-When ``settings.jwt_secret`` is unset the verifier falls back to the legacy
-base64 path and logs a warning. This keeps existing tests/smoke scripts
-running. Production deployments must set ``SAR_JWT_SECRET`` or ``SAR_JWKS_URL``.
+Fail-closed default
+-------------------
+When ``settings.jwt_secret`` is unset the verifier rejects every token. The
+legacy unsigned base64 shape is accepted *only* when
+``settings.allow_unsigned_tokens`` is explicitly turned on (dev/test). An
+unsigned token proves no identity, so it is never honoured silently in
+production. Deployments must set ``SAR_JWT_SECRET`` or ``SAR_JWKS_URL``.
 """
 
 from __future__ import annotations
@@ -259,4 +261,12 @@ def verify_token(token: str) -> tuple[UserContext, dict[str, Any]]:
     # When jwt_secret is set OR we're in RS256 mode, use JWT verification.
     if settings.jwt_secret or settings.jwt_algorithm.upper() == "RS256":
         return _verify_jwt(token)
-    return _verify_legacy_base64(token)
+    # No signing key configured. Fail closed unless the legacy unsigned shape
+    # is explicitly opted into (dev/test only).
+    if settings.allow_unsigned_tokens:
+        return _verify_legacy_base64(token)
+    raise AuthError(
+        "missing",
+        "no JWT secret configured and unsigned tokens are disabled "
+        "(set SAR_JWT_SECRET, or SAR_ALLOW_UNSIGNED_TOKENS=true for dev only)",
+    )
