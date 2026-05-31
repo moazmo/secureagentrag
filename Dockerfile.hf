@@ -204,6 +204,15 @@ ENV SAR_ALLOW_CLOUD_FOR_HIGH=true
 # usable but never floods the page on a long-running Space.
 ENV SAR_BYOK_AUDIT_MAX_ENTRIES=50
 
+# Force UTF-8 everywhere. HF Spaces' base image can default to a C/POSIX
+# (ASCII) locale, which mangles non-ASCII request text — Arabic queries arrived
+# as "????" and embedded to garbage, so retrieval never matched the Arabic
+# corpus. PYTHONUTF8=1 + a UTF-8 locale make Python handle Arabic/RTL correctly.
+ENV PYTHONUTF8=1
+ENV PYTHONIOENCODING=utf-8
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
 # Logging
 ENV SAR_LOG_LEVEL=INFO
 
