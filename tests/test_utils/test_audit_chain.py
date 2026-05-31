@@ -69,3 +69,22 @@ def test_chain_bootstraps_across_logger_restarts() -> None:
         result = al2.verify_chain()
         assert result["valid"]
         assert result["checked"] == 2
+
+
+def test_compute_hash_uses_hmac_when_key_set() -> None:
+    """H13: with SAR_AUDIT_HMAC_KEY set the chain is keyed (tamper-resistant)."""
+    from unittest.mock import patch
+
+    from config.settings import settings as _settings
+    from utils.audit import AuditEntry
+
+    entry = AuditEntry(action="query", user_id="u1")
+    with patch.object(_settings, "audit_hmac_key", None):
+        plain = entry.compute_hash()
+    with patch.object(_settings, "audit_hmac_key", "topsecret"):
+        keyed = entry.compute_hash()
+        keyed_again = entry.compute_hash()
+    assert plain != keyed
+    assert keyed == keyed_again
+    with patch.object(_settings, "audit_hmac_key", "different-key"):
+        assert entry.compute_hash() != keyed

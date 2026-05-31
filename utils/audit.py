@@ -13,6 +13,7 @@ re-ordering of past entries breaks the chain and is detected by
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import threading
 from datetime import UTC, date, datetime
@@ -60,10 +61,19 @@ class AuditEntry(BaseModel):
     entry_hash: str = ""
 
     def compute_hash(self) -> str:
-        """Compute the SHA-256 over canonical JSON of this entry except ``entry_hash``."""
+        """Hash the canonical JSON of this entry (excluding ``entry_hash``).
+
+        SHA-256 by default (tamper-evident). When ``settings.audit_hmac_key`` is
+        set the digest is HMAC-SHA256 keyed by that secret (tamper-resistant) —
+        ``verify_chain`` recomputes the same way, so flipping the key on a fresh
+        chain upgrades the integrity guarantee with no other code change.
+        """
         payload = self.model_dump(mode="json", exclude={"entry_hash"})
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        key = settings.audit_hmac_key
+        if key:
+            return hmac.new(key.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+        return hashlib.sha256(canonical).hexdigest()
 
 
 class AuditLogger:

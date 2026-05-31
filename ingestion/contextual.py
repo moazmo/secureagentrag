@@ -41,6 +41,7 @@ async def _generate_one(
     semaphore: asyncio.Semaphore,
     prefer_cloud: bool,
     max_doc_chars: int,
+    sensitivity_level: str = "low",
 ) -> str:
     """Generate a single chunk's context summary.
 
@@ -63,7 +64,9 @@ async def _generate_one(
             ctx = await call_llm_async(
                 prompt,
                 system_prompt="You generate short retrieval context summaries.",
-                sensitivity_level="low",
+                # Use the document's real sensitivity so HIGH content is summarised
+                # on local inference and never sent to a cloud provider at ingest.
+                sensitivity_level=sensitivity_level,
                 prefer_cloud=prefer_cloud,
             )
             return ctx.strip()
@@ -79,6 +82,7 @@ async def generate_chunk_contexts(
     prefer_cloud: bool = False,
     max_concurrent: int = 8,
     max_doc_chars: int = 50_000,
+    sensitivity_level: str = "low",
 ) -> list[str]:
     """Generate contexts for every chunk concurrently.
 
@@ -96,7 +100,10 @@ async def generate_chunk_contexts(
     if not chunks:
         return []
     sem = asyncio.Semaphore(max_concurrent)
-    tasks = [_generate_one(document_text, c, sem, prefer_cloud, max_doc_chars) for c in chunks]
+    tasks = [
+        _generate_one(document_text, c, sem, prefer_cloud, max_doc_chars, sensitivity_level)
+        for c in chunks
+    ]
     contexts = await asyncio.gather(*tasks, return_exceptions=False)
     logger.info(
         "contextual_retrieval_generated",

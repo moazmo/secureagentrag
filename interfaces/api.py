@@ -809,6 +809,10 @@ if _FASTAPI_AVAILABLE:
                 )
                 for p in points:
                     payload = p.payload or {}
+                    # Skip the purge sentinel point — it carries no source_file
+                    # and must never appear as a phantom upload row.
+                    if payload.get("__sentinel__"):
+                        continue
                     src = payload.get("source_file") or ""
                     # Reduce absolute paths down to a basename + sha so the
                     # visitor sees the filename they uploaded, not the

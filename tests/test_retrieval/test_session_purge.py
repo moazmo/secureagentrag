@@ -206,3 +206,41 @@ def test_schedule_single_shot_when_apscheduler_missing() -> None:
 
     assert out is None
     cli.delete_collection.assert_called_once_with(f"{base}_sess_old")
+
+
+# ── Creation-timestamp sentinel (H3/H4 fix) ─────────────────────────────────
+
+
+def test_session_sentinel_id_is_deterministic_and_per_collection() -> None:
+    from retrieval.session_purge import session_sentinel_id
+
+    a = session_sentinel_id("documents_sess_x")
+    assert a == session_sentinel_id("documents_sess_x")
+    assert a != session_sentinel_id("documents_sess_y")
+
+
+def test_write_session_sentinel_upserts_created_at() -> None:
+    from retrieval.session_purge import write_session_sentinel
+
+    cli = MagicMock()
+    write_session_sentinel(cli, "documents_sess_x", 4)
+    cli.upsert.assert_called_once()
+    pts = cli.upsert.call_args.kwargs["points"]
+    assert pts[0].payload["__sentinel__"] is True
+    assert "created_at" in pts[0].payload
+
+
+def test_purge_reads_sentinel_point_and_deletes_expired() -> None:
+    """Production path: created_at comes from the sentinel point, not config."""
+    base = settings.qdrant_collection
+    now = datetime(2026, 5, 26, 13, 0, tzinfo=UTC)
+    old_iso = (now - timedelta(hours=48)).isoformat()
+    name = f"{base}_sess_sentinel"
+    cli = MagicMock()
+    cli.get_collections.return_value = SimpleNamespace(collections=[SimpleNamespace(name=name)])
+    cli.retrieve.return_value = [
+        SimpleNamespace(payload={"__sentinel__": True, "created_at": old_iso})
+    ]
+    summary = purge_expired_sessions(cli, ttl_hours=24, now=now)
+    cli.delete_collection.assert_called_once_with(name)
+    assert summary["deleted"] == 1

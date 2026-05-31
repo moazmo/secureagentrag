@@ -173,6 +173,13 @@ class Settings(BaseSettings):
     # deps — so it is safe to leave on everywhere.
     audit_verify_enabled: bool = True
     audit_verify_interval_hours: int = 6
+    # Optional HMAC key for the audit hash chain. When unset (default) entries
+    # are SHA-256 hashed — tamper-*evident* (any edit breaks the chain, but an
+    # attacker with file access can recompute the whole chain). When set, each
+    # entry hash is an HMAC-SHA256 keyed by this secret, making the chain
+    # tamper-*resistant* (an attacker cannot forge a valid chain without the
+    # key). Keep the key out of the audit host's filesystem (env/secret store).
+    audit_hmac_key: str | None = None
 
     # ── Citation Faithfulness Gate (NLI) ─────────────────────────────────────────
     # After synthesis, run a per-sentence NLI check: for each sentence that

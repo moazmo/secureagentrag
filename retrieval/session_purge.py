@@ -23,6 +23,7 @@ See ``launch-plan/03-backend-byok.md`` § Session purge cron.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +34,84 @@ if TYPE_CHECKING:
     from qdrant_client import QdrantClient
 
 logger = get_logger(__name__)
+
+
+# Deterministic namespace so the sentinel point id is stable across processes.
+_SENTINEL_NS = uuid.UUID("5a1d0000-0000-4000-8000-000000000001")
+
+
+def session_sentinel_id(collection_name: str) -> str:
+    """Stable UUID for a session collection's creation-timestamp sentinel point.
+
+    A fixed namespace UUID5 of the collection name, so the writer (at
+    collection-creation time) and the purge sweep agree on the id without any
+    shared state.
+    """
+    return str(uuid.uuid5(_SENTINEL_NS, collection_name))
+
+
+def write_session_sentinel(client: QdrantClient, collection_name: str, dim: int) -> None:
+    """Stamp a session collection with a creation timestamp the purge can read.
+
+    Qdrant ``CollectionInfo.config.params`` has no writable metadata slot, so the
+    original purge (which read ``config.params.metadata.created_at``) could never
+    find a timestamp and skipped every collection forever — they accumulated
+    until the 1 GB free tier filled. Instead we upsert one tiny sentinel point
+    carrying ``created_at``. It can never surface in retrieval: it has no
+    ``org_id`` / ``roles`` / ``sensitivity_level_int`` payload, so the RBAC
+    must-filter excludes it on every query.
+
+    Best-effort: a failure here only means the collection won't be auto-purged
+    (it still bounds itself by visitor inactivity), never a hard error.
+    """
+    from qdrant_client.http.models import PointStruct
+
+    sid = session_sentinel_id(collection_name)
+    try:
+        client.upsert(
+            collection_name=collection_name,
+            points=[
+                PointStruct(
+                    id=sid,
+                    vector=[0.0] * int(dim),
+                    payload={
+                        "__sentinel__": True,
+                        "created_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            ],
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("session_sentinel_write_failed", collection=collection_name, error=str(exc))
+
+
+def _read_created_at(client: QdrantClient, name: str) -> datetime | None:
+    """Resolve a session collection's creation time.
+
+    Production path: read the sentinel point's ``created_at`` payload. Legacy
+    fallback: the old ``config.params.metadata.created_at`` slot (kept so
+    pre-sentinel deployments + existing unit mocks still resolve).
+    """
+    # 1. Sentinel point (the real, durable path).
+    try:
+        points = client.retrieve(
+            collection_name=name,
+            ids=[session_sentinel_id(name)],
+            with_payload=True,
+        )
+        for p in points:
+            dt = _parse_created_at(getattr(p, "payload", None))
+            if dt is not None:
+                return dt
+    except Exception:
+        pass
+    # 2. Legacy collection-config metadata.
+    try:
+        info = client.get_collection(name)
+        meta = getattr(info.config.params, "metadata", None) or {}
+        return _parse_created_at(meta)
+    except Exception:
+        return None
 
 
 SESSION_COLLECTION_PREFIX = "_sess_"
@@ -108,9 +187,7 @@ def purge_expired_sessions(
             continue
         inspected += 1
         try:
-            info = client.get_collection(name)
-            meta = getattr(info.config.params, "metadata", None) or {}
-            created = _parse_created_at(meta)
+            created = _read_created_at(client, name)
             if created is None:
                 # Undated -> skip; we don't delete what we can't time-stamp.
                 skipped += 1

@@ -241,6 +241,9 @@ class IngestionPipeline:
                     full_doc,
                     chunk_texts,
                     prefer_cloud=False,
+                    # HIGH docs keep their context-summary LLM call on local
+                    # inference — never route sensitive content to cloud at ingest.
+                    sensitivity_level=request.sensitivity_level.value,
                 )
                 embed_inputs = merge_chunks(chunk_texts, contexts)
                 logger.info(

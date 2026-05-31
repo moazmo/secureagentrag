@@ -161,3 +161,15 @@ class TestMergeChunks:
         result = merge_chunks(chunks, contexts)
 
         assert result == chunks
+
+
+async def test_generate_chunk_contexts_threads_sensitivity() -> None:
+    """H1: the document's sensitivity is forwarded so HIGH content stays local."""
+    from unittest.mock import AsyncMock, patch
+
+    from ingestion.contextual import generate_chunk_contexts
+
+    with patch("ingestion.contextual.call_llm_async", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = "ctx"
+        await generate_chunk_contexts("full doc", ["chunk one"], sensitivity_level="high")
+    assert mock_llm.await_args.kwargs["sensitivity_level"] == "high"

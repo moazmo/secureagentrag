@@ -1730,3 +1730,48 @@ was stored in `GraphState` but **never read by any node**. So:
 **Deferred (unchanged from ADR-035 reasons):** H1 ingestion sensitivity, H3/H4
 session-purge no-op, H6 ColBERT, H7 sparse-only RBAC race, H12 CSP nonce, H13
 audit MAC, CI mypy/bandit, Helm probes.
+
+---
+
+## ADR-037: Third-review deferred-findings remediation — session purge, ingest sensitivity, audit HMAC (2026-05-31)
+
+**Status:** Accepted.
+
+**Context.** Three findings from `private/review-2026-05-31-full.md` were deferred
+in ADR-036; this wave closes the ones with real value.
+
+**Decisions.**
+
+- **H3/H4 — session collections never purged (real prod bug).** `purge_expired_sessions`
+  read `CollectionInfo.config.params.metadata.created_at`, but Qdrant has no
+  writable collection-metadata slot, so production collections never carried a
+  timestamp → every one was skipped → they accumulated until the 1 GB free tier
+  filled. Fix: `retrieval/session_purge.write_session_sentinel` upserts one
+  **sentinel point** (deterministic UUID5 id, payload `{__sentinel__, created_at}`)
+  at session-collection creation (`QdrantManager.for_session`); the purge reads
+  `created_at` from it (`_read_created_at`, with the legacy config-metadata path
+  kept as fallback). The sentinel can never surface in retrieval — it has no
+  `org_id`/`roles`/`sensitivity_level_int`, so the RBAC must-filter excludes it —
+  and `/byok/uploads` skips it so it is never a phantom upload row.
+- **H1 — ingest-time LLM calls on HIGH content.** `ingestion/contextual.py`
+  generated chunk-context summaries with a hardcoded `sensitivity_level="low"`,
+  so a self-hosted deploy with `SAR_CONTEXTUAL_RETRIEVAL_ENABLED=true` could route
+  a HIGH document's content to a cloud provider at ingest. Fix: thread the
+  document's real `request.sensitivity_level` through `generate_chunk_contexts`
+  so HIGH stays on local inference. (RAG-fusion still routes at LOW by design —
+  it sees only the query string, never doc content.)
+- **H13 — audit tamper-resistance (opt-in).** The SHA-256 chain is tamper-*evident*
+  but an attacker with file access can recompute it. New `SAR_AUDIT_HMAC_KEY`:
+  when set, `AuditEntry.compute_hash` uses HMAC-SHA256 keyed by that secret, so
+  the chain is tamper-*resistant* (no valid chain without the key). Default unset
+  → unchanged SHA-256 behaviour. `verify_chain` recomputes identically, so
+  flipping the key on a fresh chain upgrades the guarantee with no other change.
+
+**Still deferred (documented non-goals / low value):** H6 ColBERT quarantine
+(reranker off by default), H7 sparse-only retrieve RBAC (ids already
+RBAC-filtered; race-only), H12 CSP nonce (Next 16 + SSE risk; the React markdown
+renderer has no `dangerouslySetInnerHTML` sink, so no inline-script XSS vector
+today).
+
+**Acceptance:** +5 tests (sentinel id/write/purge, audit HMAC, contextual
+sensitivity). **701 unit pass**, ruff + format clean.

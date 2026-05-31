@@ -191,6 +191,13 @@ class QdrantManager:
                     field_name=field,
                     field_schema=schema,
                 )
+        # Stamp the collection with a creation timestamp so the 24h purge cron
+        # can actually find and drop it later (Qdrant has no writable collection
+        # metadata slot — see retrieval/session_purge.write_session_sentinel).
+        with contextlib.suppress(Exception):
+            from retrieval.session_purge import write_session_sentinel
+
+            write_session_sentinel(mgr._client, sess_collection, settings.embedding_dim)
         self._tenant_cache[sess_collection] = mgr
         logger.info(
             "byok_session_collection_cached",
