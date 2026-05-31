@@ -101,6 +101,7 @@ Sections below mirror the order of `config/settings.py`. Only non-secret default
 | `SAR_JWT_ISSUER` | `secureagentrag` | Checked against `iss` when present. |
 | `SAR_JWT_AUDIENCE` | `secureagentrag-api` | Checked against `aud` when present. |
 | `SAR_JWT_TTL_SECONDS` | `3600` | Lifetime of tokens minted by the dev `/token` endpoint. |
+| `SAR_DISABLE_DEV_TOKEN` | `false` | Hard-disable the local `/token` dev endpoint (returns 404). It already self-disables under RS256 and when `SAR_JWT_SECRET` is unset; set this `true` in any real deploy where the IdP issues tokens externally (ADR-040 F5). |
 | `SAR_JWKS_URL` | _(unset)_ | IdP JWKS endpoint, used when algorithm is `RS256`. |
 | `SAR_JWKS_CACHE_TTL_SECONDS` | `300` | TTL for cached JWKS public keys. |
 

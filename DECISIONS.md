@@ -1831,3 +1831,56 @@ ordinary Egyptians, at $0.
 
 **Acceptance:** +2 tests (semantic-off passes benign Arabic; still blocks regex
 jailbreak); 704 unit pass, ruff + format clean.
+
+---
+
+## ADR-040: Post-hardening review fixes + engagement/credibility feature batch (2026-06-01)
+
+**Status:** Accepted. **Type:** review remediation + product.
+
+A second full review of the post-ADR-036–039 tree (`private/review-2026-05-31-post-hardening.md`)
+found no Critical/High/Medium — only Low/cosmetic/info nits. This ADR clears all
+of them and ships the next $0 feature slate from
+`private/features-2026-05-31-next.md`.
+
+**Review fixes (F1–F7):**
+- **F1** `utils/query_cache.py` — Redis cache invalidation was scanning
+  `rag:query:*` and deleting **every** tenant's entries. The Redis key already
+  carries the per-user prefix (`rag:query:<prefix><body_hash>`), so the scan is
+  now scoped to `rag:query:<prefix>*` — one user's invalidation no longer flushes
+  another tenant's cache.
+- **F2** `interfaces/api.py /byok/corpus` — reported a hardcoded
+  `"collection": "documents"`; now returns the real collection name (correct under
+  multi-tenant mode where it is `documents_demo`).
+- **F3** swapped the deprecated `HTTP_413_REQUEST_ENTITY_TOO_LARGE` for
+  `HTTP_413_CONTENT_TOO_LARGE` (cleared the only two pytest warnings).
+- **F4** un-split the `synth_max_tokens` settings comment block.
+- **F5** added `SAR_DISABLE_DEV_TOKEN` (the flag the `/token` docstring already
+  promised) — gates the dev token route to a 404 in real deploys.
+- **F6/F7** doc note that the audit chain is single-writer (in-process lock); the
+  `/byok/corpus` scroll cap is now a loop-to-exhaustion (64-page runaway guard)
+  instead of a fixed 4 pages, so the growing Arabic corpus never truncates.
+
+**Features (Tier A/B/C):**
+- **A1 clickable citations** — `[N]` markers in an answer scroll to + flash the
+  matching source in the citations panel (`renderMarkdown` gained an optional
+  `onCite`).
+- **A2 corpus "what to ask" hints** — one example question per demo doc
+  (`CORPUS_HINTS`), clickable from the knowledge-base panel.
+- **A3 honesty table** — `/status` now spells out hosted-demo vs self-hosted per
+  feature (HIGH-on-cloud, faithfulness off, etc.).
+- **B1 corpus expansion** — four more Arabic Egypt docs (tenant rights, consumer
+  protection, freelance tax, social insurance) → 8 Arabic / 18 total demo docs.
+- **B2 upload-led front door** — landing's primary CTA is now "upload a doc, get
+  a cited answer"; `/chat?upload=1` opens the upload panel on arrival.
+- **B3 clause-by-clause mode** — a per-upload button sends a structured,
+  language-matched prompt that walks a contract clause by clause, grounded +
+  cited.
+- **C1/C2** new `GET /byok/stats` (durable Ragas baseline + audit-derived live
+  counters) drives a "live proof" strip on the landing page and an eval section on
+  `/status`.
+- **C3** `public/llms.txt` + "duplicate the Space / deploy to Vercel" buttons.
+
+**Acceptance:** +2 backend tests (`/byok/stats` shape; `SAR_DISABLE_DEV_TOKEN`
+→ 404); **706 unit pass**, ruff + format clean; frontend `npm run build` + `lint`
+green.

@@ -485,11 +485,12 @@ the server-side dispatch.
 | Endpoint | Returns | Backed by |
 |---|---|---|
 | `GET /byok/personas` | The three demo RBAC presets (`engineer`, `compliance`, `executive`) with `clearance_level`, `roles`, `style`, plus the `org_id` + `default` persona. | `_DEMO_PERSONAS` in `interfaces/api.py` — same dict that powers `_persona_to_user_ctx`. |
-| `GET /byok/corpus` | One row per source file in the base `documents` collection: `source_file` (basename), `chunks`, `sensitivity_level`, `roles` (union across chunks). Never includes chunk text — defense-in-depth regression test guards this. | Scrolls the root tenant Qdrant collection (up to 4 pages of 256), groups by `source_file`, role-unions chunks. Fails open on Qdrant outage. |
+| `GET /byok/corpus` | One row per source file in the base collection: `source_file` (basename), `chunks`, `sensitivity_level`, `roles` (union across chunks), plus the real `collection` name. Never includes chunk text — defense-in-depth regression test guards this. | Scrolls the root tenant Qdrant collection (paged 256, loops to exhaustion with a 64-page runaway guard so the growing Arabic corpus never truncates), groups by `source_file`, role-unions chunks. Fails open on Qdrant outage. |
+| `GET /byok/stats` | `queries_answered` + `docs_grounded` (audit-derived live counters, reset when the Space sleeps) and `eval` (the committed Ragas baseline from `evaluation/baseline.json`). No PII. | Reads the audit log + `baseline.json`. Drives the landing "live proof" strip + the `/status` eval section (ADR-040). |
 
 Frontend pages consume them via thin Vercel Edge proxies at
-`/api/corpus` and `/api/personas`. Pages are server-rendered at request
-time with `dynamic = "force-dynamic"` so cold backends never poison a
+`/api/corpus`, `/api/personas`, and `/api/stats`. Pages are server-rendered at
+request time with `dynamic = "force-dynamic"` so cold backends never poison a
 cached HTML response.
 
 ### 13.6 Frontend product surface (Y-series, 2026-05-27)
@@ -500,7 +501,7 @@ The Vercel deploy now serves five routes plus seven Edge proxies:
 |---|---|---|
 | `/` | static | Landing page — hero, four-feature card grid, six-step walkthrough, corpus/personas/status link grid, by-the-numbers stats. CTA → `/chat`. |
 | `/chat` | static + client | The BYOK chat UI itself. Was the home page until 2026-05-27 — moved out so first-time visitors get context before the chat surface loads. |
-| `/corpus` | SSR | Live table of the 14 demo docs from `/byok/corpus`. |
+| `/corpus` | SSR | Live table of the 18 demo docs (incl. 8 Arabic) from `/byok/corpus`. |
 | `/personas` | SSR | Live RBAC inspector from `/byok/personas`. |
 | `/status` | client | Live health probes for Vercel Edge + HF Space `/healthz` + `/readyz` + Edge proxy, polled every 30 s. |
 | `/api/chat` · `/api/chat/stream` · `/api/audit` · `/api/uploads` · `/api/uploads/[fileId]` · `/api/corpus` · `/api/personas` | Edge | Thin proxies → backend `/byok/*` endpoints. |

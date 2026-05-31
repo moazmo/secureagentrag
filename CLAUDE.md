@@ -93,12 +93,12 @@ secureagentrag/
 ├── scripts/                # smoke, seed_corpus, interview_demo, quick_bench,
 │                           # cloud_bench, h2_gate, migrate_to_splade,
 │                           # train_reranker, bench_reranker, verify_audit_chain
-├── tests/                  # pytest, 704 unit + 2 live-Qdrant integration (test_qdrant_rbac)
+├── tests/                  # pytest, 706 unit + 2 live-Qdrant integration (test_qdrant_rbac)
 ├── helm/secureagentrag/    # Kubernetes manifests
 ├── deploy/                 # docker-compose auth profile + keycloak-realm.json
 ├── data/agent_evidence/    # 24-scenario gate evidence (results.md, screenshots)
 ├── sample_docs/            # PDF + txt corpus (incl. real NIST AI RMF)
-├── DECISIONS.md            # ADR-001..039
+├── DECISIONS.md            # ADR-001..040
 ├── docker-compose.observability.yml  # Prometheus + Grafana overlay (self-hosted)
 ├── architecture.md         # Mermaid diagrams
 ├── RUNBOOK.md              # ops + troubleshooting
@@ -140,16 +140,16 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ## 5. State of the codebase (as of `3ad56bb` on `main`)
 
-- **704 unit tests pass + 2 live-Qdrant integration tests.** 0 failed. Lint + format clean. **CI green on `main`** — now **two jobs**: a unit job (`uv sync --frozen --group dev --extra api` → ruff check + ruff format --check + `pytest -m "not integration"`) and an **integration job** that spins up a `qdrant/qdrant` service container and runs `pytest -m integration` (proves the RBAC filter against a real Qdrant). GitHub Actions on Node 24 (checkout v5 / setup-python v6 / setup-uv v6).
+- **706 unit tests pass + 2 live-Qdrant integration tests.** 0 failed. Lint + format clean. **CI green on `main`** — now **two jobs**: a unit job (`uv sync --frozen --group dev --extra api` → ruff check + ruff format --check + `pytest -m "not integration"`) and an **integration job** that spins up a `qdrant/qdrant` service container and runs `pytest -m integration` (proves the RBAC filter against a real Qdrant). GitHub Actions on Node 24 (checkout v5 / setup-python v6 / setup-uv v6).
 - **~35.5k Python LOC** across 169 files.
-- **39 ADRs** in `DECISIONS.md` (001–024 historical + 025–030 the launch + **031** Prometheus/Grafana metrics + **032** security/reliability hardening + **033** cost/coverage hardening + **034** code-review remediation + **035** second-review security remediation + **036** BYOK wired for real + throttle-bypass fix + **037** session-purge sentinel + ingest sensitivity + opt-in audit HMAC + **038** demo engagement (guided tour + answer feedback on the audit chain) + **039** Arabic "افهم عقدك" flagship corpus + Arabic security-gate false-positive fix).
+- **40 ADRs** in `DECISIONS.md` (001–024 historical + 025–030 the launch + **031** Prometheus/Grafana metrics + **032** security/reliability hardening + **033** cost/coverage hardening + **034** code-review remediation + **035** second-review security remediation + **036** BYOK wired for real + throttle-bypass fix + **037** session-purge sentinel + ingest sensitivity + opt-in audit HMAC + **038** demo engagement (guided tour + answer feedback on the audit chain) + **039** Arabic "افهم عقدك" flagship corpus + Arabic security-gate false-positive fix + **040** post-hardening review fixes (F1–F7: scoped Redis cache invalidation, real corpus collection name, `HTTP_413_CONTENT_TOO_LARGE`, `SAR_DISABLE_DEV_TOKEN`, loop-to-exhaustion corpus scroll) + engagement/credibility batch (clickable citations, corpus hints, `/status` honesty table, +4 Arabic docs → 8 Arabic/18 total, upload-led landing, clause-by-clause mode, `GET /byok/stats`, `llms.txt`)).
 - **Observability:** structlog logs + optional Phoenix tracing + **Prometheus `/metrics` (`utils/metrics.py`) → Grafana dashboard (`deploy/grafana/`, `docker-compose.observability.yml`)**. Metrics are aggregate-only (no prompt/key/user text in labels) so they are BYOK-safe; Phoenix tracing stays hard-disabled under BYOK. The FastAPI lifespan (`interfaces/api.py`) starts a scheduled **audit-chain re-verification** (`utils/audit_verify.py`, emits `audit_chain_valid`) and wires the BYOK session-purge job.
 - **Auth fails closed:** with no `SAR_JWT_SECRET`, every bearer token is rejected unless `SAR_ALLOW_UNSIGNED_TOKENS=true` (dev/test only). The legacy unsigned base64 shape is never accepted silently (ADR-032).
 - **Launch merged to `main`** 2026-05-28 (merge `e6f2507`), tagged **`v1.0.0-launch`**. 25 commits past the old frozen point `56c8c98`. The freeze is lifted — `main` is the trunk.
 - **Live $0/month production deploy:**
   - Frontend: `https://secureagentrag-web.vercel.app` — Next.js 16 + Tailwind v4 + SSE streaming on Vercel Hobby
   - Backend: `https://LeomordKaly-secureagentrag-api.hf.space` — FastAPI BYOK on HF Spaces Docker CPU Basic, 16 GB RAM, 48 h sleep defeated by GitHub Actions cron
-  - Vector store: Qdrant Cloud free tier (1 GB, AWS us-east-1) — 10 demo RBAC docs (138 chunks, 276 points incl. sparse) + per-session collections
+  - Vector store: Qdrant Cloud free tier (1 GB, AWS us-east-1) — 18 demo docs (10 English RBAC + 8 Arabic Egypt, 327 points incl. sparse) + per-session collections
   - LLM: Groq free tier (`llama-3.1-8b-instant`, 14,400 RPD, 30 RPM, per-IP owner throttle + visitor BYOK unlock)
 - **9 graph nodes:** router → guardrails → security → retriever → grader → rewriter → synthesizer → faithfulness → evaluator. Untouched structurally. In BYOK mode several nodes bypass their LLM call for cost (see ADR-030).
 - Streamlit, FastAPI, MCP all share `core.schemas.QueryResponse`. Streamlit is now the **local dev face**; Next.js is the **public production face**.
@@ -193,7 +193,7 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 Lives behind `SAR_BYOK_MODE=true`. The HF Space Dockerfile sets it; local dev does not.
 
 - **Request shape:** `X-Demo-Persona` (engineer / compliance / executive — preset RBAC), `X-Session-ID` (UUID, drives session collection), `X-User-LLM-Key` (optional — when present **and** paired with a valid `X-User-Provider`, the visitor key actually powers inference for that request via the per-request client built in `inference/router.py::_client_for`, bound through the `ByokRuntime` ContextVar set in `interfaces/api.py`; ADR-036), `X-User-Provider` (groq / openai / anthropic), `X-User-Ollama-URL` (optional, SSRF-validated). Extracted in `interfaces/byok.py`.
-- **Endpoints (under `/byok/`):** `chat` (sync JSON), `chat/stream` (SSE: open|phase|token|blocked|final|error), `audit` (last-N session-scoped rows for export), `uploads` GET/POST/DELETE (5 MB · 5 files · 60 chunks/file · txt/md/pdf — see ADR-029), `personas` (RBAC dispatch table, no auth), `corpus` (base demo corpus metadata, no auth — never returns chunk text).
+- **Endpoints (under `/byok/`):** `chat` (sync JSON), `chat/stream` (SSE: open|phase|token|blocked|final|error), `audit` (last-N session-scoped rows for export), `feedback` (👍/👎 → audit chain, ADR-038), `uploads` GET/POST/DELETE (5 MB · 5 files · 60 chunks/file · txt/md/pdf — see ADR-029), `personas` (RBAC dispatch table, no auth), `corpus` (base demo corpus metadata, no auth — never returns chunk text), `stats` (durable Ragas baseline + audit-derived live counters for the landing proof strip, no auth — ADR-040).
 - **Per-IP throttle:** `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10` against owner key. A visitor with **usable** BYOK creds (`ByokCreds.byok_active()` — key + valid provider, or Ollama URL) bypasses it *and* their own key pays for the call; a bare/junk key no longer skips the throttle (ADR-036). IP from `X-Forwarded-For` resolved at `SAR_BYOK_XFF_TRUSTED_HOPS=1` on the Space (spoof-resistant, one hop from the right).
 - **Persona presets:** `_DEMO_PERSONAS` in `interfaces/api.py` maps each persona to `(clearance, roles, style)`. Style is threaded into the synth system prompt via `GraphState.persona_style`.
 - **Cost-cut toggles (ADR-030):** `SAR_GROQ_MODEL=llama-3.1-8b-instant`, `SAR_RAG_FUSION_ENABLED=false`, `SAR_BYOK_SKIP_EVALUATOR=true`, `SAR_BYOK_SKIP_GRADER=true`, `SAR_FAITHFULNESS_GATE_ENABLED=false`, `SAR_RERANKER_TYPE=none`, `SAR_RELEVANCE_THRESHOLD=0.55`, `SAR_MAX_RETRIES=1`, `SAR_RERANK_TOP_K=10`. Router classifier short-circuits queries ≤80 chars to `query_type="simple"`. Net effect: ~2 Groq calls/chat vs ~5–6 before.

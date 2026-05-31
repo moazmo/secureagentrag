@@ -400,6 +400,14 @@ fresh genesis row. **This is intentional** for the BYOK demo (no
 durable audit across restarts). Sessions within one process boot have
 a valid chain.
 
+**Single-writer constraint:** `utils/audit.py` serialises writes with an
+**in-process** `threading.Lock`, so the chain assumes one writer. The HF Space
+runs a single uvicorn worker, which satisfies this. If you scale to multiple
+workers/processes, route audit writes through one writer (or a Postgres-backed
+chain) — two workers racing `prev_hash` would produce interleaved, unverifiable
+rows (ADR-040 F6). Optional HMAC (`SAR_AUDIT_HMAC_KEY`, ADR-037) makes the chain
+tamper-*resistant* but does not change the single-writer requirement.
+
 ### 11.7 Frontend shows "blocked: guardrails" on a benign query
 
 **Symptom:** Regex gate over-matched (e.g. query contains "drop

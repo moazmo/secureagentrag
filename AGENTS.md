@@ -21,7 +21,7 @@ This file tells AI agents (Hermes / Kimi / Claude Code / Cursor / Aider) how to 
 ### Before
 1. `git status` — must be clean. Don't start work on a dirty tree.
 2. `git pull origin main` — make sure you're on the latest.
-3. `uv run pytest -q -m "not integration"` — must be **704+ passed, 0 failed** (current baseline: 704 unit passed; never regress). On a clean checkout that lacks the `api` extra, FastAPI-gated tests skip — CI installs `--extra api` so they actually run. The 2 live-Qdrant integration tests run in a separate CI job (`-m integration` against a Qdrant service container); run them locally with `SAR_QDRANT_URL=http://localhost:6333`. If the baseline is red, stop and fix it first.
+3. `uv run pytest -q -m "not integration"` — must be **706+ passed, 0 failed** (current baseline: 706 unit passed; never regress). On a clean checkout that lacks the `api` extra, FastAPI-gated tests skip — CI installs `--extra api` so they actually run. The 2 live-Qdrant integration tests run in a separate CI job (`-m integration` against a Qdrant service container); run them locally with `SAR_QDRANT_URL=http://localhost:6333`. If the baseline is red, stop and fix it first.
 4. `uv run ruff check . && uv run ruff format --check .` — both clean.
 5. Read the relevant module top-to-bottom before touching it. Read its test file.
 6. Have a working `qdrant` (`docker compose up -d qdrant`) and `ollama serve` running. If you need cloud, ensure `SAR_GROQ_API_KEY` is in `.env`.

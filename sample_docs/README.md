@@ -28,6 +28,9 @@ Add sample documents that demonstrate:
 | `sample_mixed.txt` | Bilingual document for language-detection chunking |
 | `sample_internal_report.pdf` | Multi-line PDF for the PyMuPDF text-extraction path |
 | `sample_invoice.png` | Synthesized invoice image for the PaddleOCR fallback path |
+| `demo_rbac/*.txt` | 9 English RBAC demo docs (handbook, runbook, finance, security policy, vendor MSA, …) ingested into the live `documents` collection with per-doc sensitivity + roles. |
+| `arabic_eg/*.txt` | 8 illustrative Arabic Egypt civic docs (rental contract, labor law, VAT, HR policy, tenant rights, consumer protection, freelance tax, social insurance) — the "افهم عقدك" flagship corpus. LOW + broad roles (HR policy MEDIUM). |
+| `real/NIST_AI_RMF.pdf` | The real NIST AI RMF for in-domain retrieval + rerank benchmarking. |
 
 ## Notes
 
