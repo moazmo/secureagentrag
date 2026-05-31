@@ -85,7 +85,7 @@ uv run python -m scripts.interview_demo
 | **Hybrid Search + Reranking** | Dense (BGE-M3) + Qdrant native sparse vectors (`bm25` default, `splade` opt-in) fused via RRF, then reranker (`none` / `cross_encoder` / `colbert` / `fine_tuned`). Self-query and HyDE retrieval modes available. |
 | **Prompt-Injection Guardrails (3 backends)** | Regex always runs first. `SAR_GUARDRAILS_BACKEND` flips escalation between `llm` (legacy SAFE/UNSAFE on qwen3:8b) and `llamaguard` (Meta `llama-guard3:8b`, S1-S14 taxonomy → audit-friendly reason). Fail-open on Ollama transport errors. |
 | **True Token Streaming** | Synthesis tokens stream end-to-end. Works for Ollama, Groq, OpenAI, Anthropic. |
-| **Arabic + Multilingual** | BGE-M3 multilingual embeddings + PaddleOCR / Qwen-VL OCR for English + Arabic. |
+| **Arabic + Multilingual (افهم عقدك)** | BGE-M3 multilingual embeddings + an Arabic-aware chunker + an Arabic-terminator faithfulness splitter, so Arabic questions retrieve, cite, and answer end-to-end. The live demo ships an illustrative Egyptian corpus (rental contract / labor law / VAT / HR) — ask in Arabic and the answer is cited from it. PaddleOCR / Qwen-VL OCR for scanned English + Arabic. |
 | **Observability** | Structured `structlog`, Phoenix / OpenTelemetry tracing, Prometheus `/metrics` + Grafana dashboard, per-stage latency in the audit trail. |
 | **Eval Pipeline + CI Gating** | Ragas faithfulness / relevancy / context-precision; nightly job opens an issue on >5 pp regression. |
 | **Prompt-Injection Guardrails** | Dedicated graph node blocks jailbreak / system-prompt-override attempts before retrieval. Output scanned for system-prompt leakage. |
