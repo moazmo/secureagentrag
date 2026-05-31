@@ -85,22 +85,37 @@ def client_ip_from_request(request: Request) -> str:
     """Resolve the visitor IP for throttling, honouring ``X-Forwarded-For``.
 
     HF Spaces, Vercel, and most cloud reverse proxies set ``X-Forwarded-For``
-    with the chain ``client, proxy1, proxy2``. The leftmost entry is the
-    public client IP — what we want to throttle on. Falls back to the
-    socket peer (``request.client.host``) when XFF is absent, then to
-    ``"anon"`` so the throttle never crashes on a missing source.
+    with the chain ``client, proxy1, proxy2`` (each trusted proxy *appends* the
+    peer it saw). Falls back to the socket peer (``request.client.host``) when
+    XFF is absent, then to ``"anon"`` so the throttle never crashes on a missing
+    source.
+
+    Trust model: XFF is a client-appendable header, so the leftmost token is
+    attacker-controlled and can be spoofed to bypass the per-IP owner-key
+    throttle. When ``settings.byok_xff_trusted_hops`` (``SAR_BYOK_XFF_TRUSTED_HOPS``)
+    is set to the number of trusted proxies in front of the app, we take the
+    entry that many positions from the right — the address the *innermost
+    trusted* proxy observed, which a client cannot forge. With the default 0 we
+    keep the legacy leftmost behaviour (best-effort; the provider's own per-key
+    quota is the real ceiling). Only enable ``SAR_BYOK_MODE`` behind a trusted
+    proxy.
 
     ``X-Real-IP`` is honoured second as a courtesy for proxies that set it
-    instead of XFF. Never trust headers in environments where the request
-    is not already terminated by a trusted reverse proxy — set
-    ``SAR_BYOK_MODE`` only behind one.
+    instead of XFF.
     """
     xff = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
     if xff:
-        # Leftmost token is the original client; strip any whitespace.
-        first = xff.split(",")[0].strip()
-        if first:
-            return first
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            from config.settings import settings
+
+            hops = max(0, int(settings.byok_xff_trusted_hops))
+            # With N trusted appending proxies, the spoof-resistant client IP is
+            # parts[-(N+1)]. Fall back to leftmost when the chain is shorter than
+            # the configured trust depth (misconfiguration / direct hit).
+            if hops > 0 and len(parts) >= hops + 1:
+                return parts[-(hops + 1)]
+            return parts[0]
     real_ip = request.headers.get("x-real-ip") or request.headers.get("X-Real-IP")
     if real_ip and real_ip.strip():
         return real_ip.strip()

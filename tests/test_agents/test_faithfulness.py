@@ -47,6 +47,20 @@ class TestUnits:
         out = _split_sentences("<think>noise</think>Real claim [1].")
         assert out == ["Real claim [1]."]
 
+    def test_split_sentences_arabic(self):
+        # Arabic has no capitalisation; the old `(?=[A-Z\\[])` lookahead left the
+        # whole Arabic answer as one "sentence", silently disabling the NLI gate.
+        # A Latin full stop after each Arabic clause must now segment correctly.
+        out = _split_sentences("القطط ثدييات [1]. الكلاب تنبح [2].")
+        assert len(out) == 2
+        assert "[1]" in out[0]
+        assert "[2]" in out[1]
+
+    def test_split_sentences_arabic_full_stop_and_question(self):
+        # Arabic full stop ۔ (U+06D4) and Arabic question mark ؟ (U+061F).
+        out = _split_sentences("هذا صحيح [1]۔ هل هذا أيضا صحيح [2]؟ نعم [3].")
+        assert len(out) == 3
+
     def test_cited_indices_handles_both_formats(self):
         assert _cited_indices("Mixed [1] and [[3]] sources [2].") == [3, 1, 2] or sorted(
             _cited_indices("Mixed [1] and [[3]] sources [2].")

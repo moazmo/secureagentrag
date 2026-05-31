@@ -1506,3 +1506,81 @@ and CI hygiene:
 - ✅ Guardrails: 23 tests (8 new) green; benign queries verified to skip
   escalation, suspicious ones to escalate.
 - ✅ Ruff clean; CI unit + integration jobs green on Node 24.
+
+---
+
+## ADR-034: Code-review remediation (Arabic faithfulness, retry de-nesting, XFF trust)
+
+**Date:** 2026-05-30
+**Status:** Accepted
+
+**Context:**
+An independent full-repo code review graded the system strong (A−) with no
+release-blockers, and surfaced a small set of concrete findings. This ADR
+records the ones fixed in code.
+
+1. **Faithfulness gate was English-only (Medium).** The sentence splitter
+   `(?<=[.!?])\s+(?=[A-Z\[])` required an ASCII capital after the terminator.
+   Arabic has no capitalisation, so an Arabic answer collapsed to a single
+   "sentence" and the NLI entailment gate — a marketed anti-hallucination
+   feature — was effectively inert on a marketed language.
+2. **Nested retry on the non-streaming cloud path (Low-Med).** Both
+   `generate()` and `chat()` carried `@_retry_on_connection`; `generate`
+   delegates to `chat`, so a sustained 429 nested two tenacity loops (up to
+   3×3 attempts, two independent backoffs) on the rate-limited path.
+3. **Spoofable per-IP throttle (Low-Med).** `client_ip_from_request` trusted the
+   leftmost `X-Forwarded-For` token, which is client-appendable — a visitor
+   could rotate it to mint fresh throttle buckets and burn the owner-key quota.
+4. **State-schema drift risk (Low).** `create_initial_state` hand-builds the
+   state dict that must mirror the `GraphState` TypedDict, with no guard.
+5. **RRF fusion (Low).** Documented that rank-only fusion (discarding raw
+   per-list scores) is deliberate, and made tie-ordering fully deterministic.
+
+**Decision:**
+
+- **Arabic-aware splitter.** `_SENTENCE_SPLIT_RE` now splits on Latin **and**
+  Arabic terminators (`؟` U+061F, `۔` U+06D4) plus ellipsis, with a
+  whitespace-only lookahead (no capital requirement). Works for both scripts.
+- **De-nested retry.** Retry lives on exactly one method per path:
+  `OpenAICompatibleClient.chat` (generate delegates, undecorated) and
+  `AnthropicClient._send_messages` (both generate and chat delegate to it).
+- **Trusted-hops XFF.** New `SAR_BYOK_XFF_TRUSTED_HOPS` (default 0 = legacy
+  leftmost, best-effort). When set to the number of trusted appending proxies,
+  the resolver picks the spoof-resistant `parts[-(hops+1)]` position. The
+  provider's own per-key quota remains the real ceiling.
+- **Parity test.** A test asserts
+  `set(create_initial_state(...)) == set(GraphState.__annotations__)`.
+- **RRF.** Docstring explains the rank-only design; sort is now
+  `key=(-score, doc_id)` for stable ties.
+- **Lint.** RUF001/002/003 ("ambiguous" Unicode) ignored project-wide — Arabic
+  is first-class, so they fire on every legitimate Arabic literal.
+
+**Consequences:**
+
+- (+) Faithfulness gate now functions on Arabic answers, closing the gap on a
+  marketed feature.
+- (+) The rate-limited path no longer amplifies latency via nested retries.
+- (+) The owner-key throttle is spoof-resistant when configured behind a known
+  proxy depth; the honest default + doc make the trust model explicit.
+- (−) Dropping the capital-letter lookahead can over-split English
+  abbreviations ("U.S. Government"). Acceptable: gate granularity is already
+  approximate and the failure mode is conservative (more, smaller claims to
+  verify — never fewer).
+
+**Deliberately NOT done (recorded for honesty):**
+
+- **Settings god-object refactor** (~120 flat fields → nested models): high
+  churn against env-var mapping for low value; the surface is well-documented.
+- **Optional-feature pruning** (HyDE / self-query / multimodal / VLM-OCR /
+  ColBERT / contextual retrieval): real, default-off capabilities that are part
+  of the breadth story — pruning removes value, not just code.
+- **`health_check` returning True on 401**: working as intended — it is a
+  reachability probe, not an auth probe.
+
+**Acceptance criteria (all met):**
+
+- ✅ 662 unit tests pass (6 new: 2 Arabic split, 5 XFF resolution, 1 state
+  parity), 0 failures.
+- ✅ Ruff check + format clean.
+- ✅ No behaviour change for existing English answers, single-proxy deploys, or
+  the default throttle.

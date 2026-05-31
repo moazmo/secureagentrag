@@ -53,8 +53,14 @@ logger = get_logger(__name__)
 # Match `[N]` and the legacy `[[N]]`. Mirrors synthesizer._extract_citations.
 _CITE_RE = re.compile(r"\[\[(\d+)\]\]|\[(\d+)\](?!\s*\()")
 # Sentence splitter that preserves the trailing punctuation so we can rebuild
-# the generation without reflowing whitespace.
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\[])")
+# the generation without reflowing whitespace. Splits on Latin terminators
+# (.!?) AND Arabic ones (؟ question mark U+061F, ۔ full stop U+06D4) plus the
+# ellipsis. The old pattern also required the next char to be an ASCII capital
+# (`[A-Z\[]`), which silently disabled segmentation for Arabic answers (Arabic
+# has no capitalisation) — leaving the whole Arabic generation as one "sentence"
+# and effectively bypassing the NLI gate on a marketed feature. The lookahead is
+# now just "followed by whitespace", which works for both scripts.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?؟۔…])\s+")
 
 
 def _split_sentences(text: str) -> list[str]:

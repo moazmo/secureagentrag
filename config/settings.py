@@ -269,6 +269,17 @@ class Settings(BaseSettings):
     # The cap is intentionally tight so the Groq free-tier 30 RPM / 14400 RPD
     # is never exhausted by a single visitor.
     byok_owner_key_quota_per_hour: int = 3
+    # Number of *trusted* reverse-proxy hops in front of the app. The per-IP
+    # throttle resolves the client IP from ``X-Forwarded-For``; XFF is a
+    # client-appendable list, so the leftmost token is attacker-controlled and
+    # can be spoofed to mint a fresh throttle bucket per request. When the app
+    # sits behind N trusted proxies (each *appends* the peer it saw), the real
+    # client is the entry N positions from the right. Set this to that hop count
+    # (e.g. 1 on a single trusted proxy / HF Spaces) so the resolver picks the
+    # spoof-resistant position instead of the leftmost token. 0 keeps the legacy
+    # leftmost behaviour (best-effort only; the provider's own per-key quota is
+    # the real ceiling). See interfaces/byok.py::client_ip_from_request.
+    byok_xff_trusted_hops: int = 0
     # Per-session Qdrant collections (documents_sess_<session_id>) are auto
     # purged after this many hours by retrieval/session_purge.py.
     session_collection_ttl_hours: int = 24

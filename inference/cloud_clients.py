@@ -309,7 +309,10 @@ class OpenAICompatibleClient(BaseCloudClient):
         out.append({"role": "user", "content": prompt})
         return out
 
-    @_retry_on_connection
+    # NOTE: intentionally NOT decorated with @_retry_on_connection. It delegates
+    # to ``chat`` which already carries the retry; double-decorating nests two
+    # tenacity loops (up to 3×3 = 9 attempts with two independent backoffs) on a
+    # sustained 429 — exactly the rate-limited path we're trying to protect.
     async def generate(
         self,
         prompt: str,
@@ -472,7 +475,8 @@ class AnthropicClient(BaseCloudClient):
             "Content-Type": "application/json",
         }
 
-    @_retry_on_connection
+    # Retry lives on ``_send_messages`` (the shared HTTP call), so neither
+    # ``generate`` nor ``chat`` is decorated — avoids nesting two tenacity loops.
     async def generate(
         self,
         prompt: str,
@@ -501,7 +505,6 @@ class AnthropicClient(BaseCloudClient):
             max_tokens=max_tokens,
         )
 
-    @_retry_on_connection
     async def chat(
         self,
         messages: list[dict],
@@ -538,6 +541,7 @@ class AnthropicClient(BaseCloudClient):
             max_tokens=max_tokens,
         )
 
+    @_retry_on_connection
     async def _send_messages(
         self,
         messages: list[dict],

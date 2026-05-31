@@ -48,6 +48,14 @@ def reciprocal_rank_fusion(
     Combines results from different retrieval methods into a single ranked list.
     Formula: RRF_score(d) = sum(1 / (k + rank_i(d))) for each ranking list.
 
+    By design RRF fuses on **rank only** — the per-list similarity scores are
+    intentionally discarded so that a high-recall sparse list and a high-recall
+    dense list contribute on equal, comparable footing (raw BM25 magnitudes and
+    cosine similarities are not on the same scale, so mixing them directly would
+    let one method dominate by units rather than relevance). Ties in the fused
+    score are broken deterministically by ``doc_id`` so the ordering is stable
+    across runs regardless of dict iteration order.
+
     Args:
         rankings: List of ranked lists, each containing (doc_id, score) tuples.
         k: RRF constant (default 60) to dampen high-rank contributions.
@@ -63,8 +71,9 @@ def reciprocal_rank_fusion(
                 fused_scores[doc_id] = 0.0
             fused_scores[doc_id] += 1.0 / (k + rank)
 
-    # Sort by fused score descending
-    fused_results = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+    # Sort by fused score descending, tie-break by doc_id ascending for a
+    # fully deterministic order.
+    fused_results = sorted(fused_scores.items(), key=lambda kv: (-kv[1], kv[0]))
     return fused_results
 
 

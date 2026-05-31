@@ -28,7 +28,7 @@ _ARABIC_SENTENCE_END = re.compile(r"[.!?\u06D4]\s+")
 _ARABIC_PREFIXES = re.compile(r"^[\u0627\u0644\u0648\u0628\u0644\u0643\u0641]")
 
 # Arabic attached suffixes (possessive pronouns)
-# ي (my), ك (your), ه (his), ها (her), هم (their), نا (our)  # noqa: RUF003
+# ي (my), ك (your), ه (his), ها (her), هم (their), نا (our)
 _ARABIC_SUFFIXES = re.compile(r"[\u064a\u0643\u0647\u0647\u0627\u0645\u0646\u0627]$")
 
 # Detect if text contains significant Arabic content
