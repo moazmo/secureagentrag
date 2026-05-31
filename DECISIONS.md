@@ -1800,3 +1800,34 @@ hero stories and capture quality signal, both at $0.
 
 **Acceptance:** +1 backend test (feedback row lands on a valid chain); **702 unit
 pass**, ruff + format clean; frontend `npm run build` + `lint` green.
+
+---
+
+## ADR-039: Arabic-first flagship corpus + fix Arabic security-gate false-positive (2026-05-31)
+
+**Status:** Accepted. **Type:** product + bug fix.
+
+The "افهم عقدك" (understand-your-contract) use case from
+`private/features-2026-05-31.md` Tier 3 — privacy-first, cited, Arabic RAG for
+ordinary Egyptians, at $0.
+
+- **Arabic Egypt corpus.** Four illustrative Arabic documents under
+  `sample_docs/arabic_eg/` (residential rental contract, labor-law basics, VAT
+  registration, internal HR policy), added to `scripts/ingest_demo_corpus.py` and
+  ingested into the live `documents` collection on Qdrant Cloud. Three are LOW +
+  broad roles so every persona retrieves them; the HR policy is MEDIUM with a
+  narrower role set to demonstrate RBAC works identically in Arabic. BGE-M3 embeds
+  Arabic, the chunker is Arabic-aware, and the faithfulness splitter handles
+  Arabic terminators — so answers are cited end-to-end.
+- **Bug found while verifying live: the security node's LLM semantic injection
+  check false-positives on Arabic.** The 8B safe/unsafe classifier returned
+  "unsafe" for legitimate Arabic questions → `security_passed=false` → retrieval
+  never ran (`documents_seen_total=0`). English passed. Fix: new
+  `SAR_SECURITY_SEMANTIC_CHECK_ENABLED` (default true) gates that LLM call; off in
+  the demo (`Dockerfile.hf`). The guardrails node (regex/LlamaGuard) **and** the
+  security node's deterministic regex jailbreak patterns still run, so injection
+  defence is intact while multilingual queries work — and it saves one Groq call
+  per chat, matching the demo's cost-cut philosophy.
+
+**Acceptance:** +2 tests (semantic-off passes benign Arabic; still blocks regex
+jailbreak); 704 unit pass, ruff + format clean.

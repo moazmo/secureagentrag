@@ -214,6 +214,11 @@ class Settings(BaseSettings):
     # Run a regex + heuristic check on the user query before retrieval. Blocks
     # obvious jailbreak / system-prompt-override attempts. Logged via the audit
     # logger as ``security_block`` events.
+    # The security node runs a fast regex jailbreak check plus an optional LLM
+    # semantic second-opinion (safe/unsafe). The LLM call false-positives on
+    # non-English queries and duplicates the guardrails node, so it is disabled
+    # in the public BYOK demo. Defaults on for self-hosted strict deployments.
+    security_semantic_check_enabled: bool = True
     guardrails_enabled: bool = True
     # Strict mode: after the fast regex gate, escalate ambiguous or all queries
     # to a local LLM-based classifier for a second opinion. Adds one LLM call

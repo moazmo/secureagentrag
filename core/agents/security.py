@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 
+from config.settings import settings
 from core.agents.router import call_llm_async
 from core.state import GraphState  # noqa: TC001
 from ingestion.metadata import SensitivityLevel, sensitivity_to_int
@@ -95,7 +96,7 @@ async def _check_query_safety_llm(query: str, user_context: dict) -> tuple[bool,
     Returns:
         Tuple of (is_safe, message).
     """
-    # Fast-path: check jailbreak patterns
+    # Fast-path: check jailbreak patterns (always on — cheap + deterministic).
     for pattern in _JAILBREAK_PATTERNS:
         if pattern.search(query):
             return (
@@ -103,6 +104,17 @@ async def _check_query_safety_llm(query: str, user_context: dict) -> tuple[bool,
                 "Query contains potential prompt injection or jailbreak patterns. "
                 "This type of query is not allowed.",
             )
+
+    # The LLM semantic second-opinion is optional. It is a small 8B-class model
+    # asked for a one-word safe/unsafe verdict, and it FALSE-POSITIVES on
+    # non-English (e.g. Arabic) queries — flagging legitimate questions as
+    # "unsafe" and blocking retrieval entirely. The guardrails node (regex +
+    # optional LlamaGuard) already runs ahead of this node and the regex
+    # jailbreak patterns above still run, so disabling the semantic call keeps
+    # injection defence while unblocking multilingual queries. Off in the BYOK
+    # demo (SAR_SECURITY_SEMANTIC_CHECK_ENABLED=false); on by default elsewhere.
+    if not settings.security_semantic_check_enabled:
+        return True, "Security check passed."
 
     # LLM-based semantic analysis for subtle attacks
     prompt = (

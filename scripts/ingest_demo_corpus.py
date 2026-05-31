@@ -146,6 +146,36 @@ CORPUS: list[CorpusItem] = [
         roles=["compliance", "legal", "executive"],
         label="vendor MSA (sensitive)",
     ),
+    # ── Arabic Egypt corpus (2026-05-31) — the "افهم عقدك" flagship use case.
+    # BGE-M3 is multilingual, the chunker is Arabic-aware, and the faithfulness
+    # splitter handles Arabic terminators — so Arabic questions retrieve + cite
+    # these docs end-to-end. The three public ones are LOW + broad roles so the
+    # default engineer persona answers them; the internal handbook is MEDIUM with
+    # a narrower role set to show RBAC works identically in Arabic.
+    CorpusItem(
+        file=SAMPLE_ROOT / "arabic_eg" / "eg_rental_contract.txt",
+        sensitivity=SensitivityLevel.LOW,
+        roles=["engineering", "compliance", "legal", "executive", "viewer"],
+        label="AR: rental contract (عقد إيجار)",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "arabic_eg" / "eg_labor_law.txt",
+        sensitivity=SensitivityLevel.LOW,
+        roles=["engineering", "compliance", "legal", "executive", "viewer"],
+        label="AR: labor law basics (قانون العمل)",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "arabic_eg" / "eg_vat_tax.txt",
+        sensitivity=SensitivityLevel.LOW,
+        roles=["engineering", "compliance", "legal", "executive", "viewer"],
+        label="AR: VAT registration (التسجيل الضريبي)",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "arabic_eg" / "eg_employee_handbook.txt",
+        sensitivity=SensitivityLevel.MEDIUM,
+        roles=["engineering", "compliance", "legal", "executive"],
+        label="AR: internal HR policy (لائحة داخلية)",
+    ),
 ]
 
 

@@ -189,6 +189,12 @@ ENV SAR_FAITHFULNESS_GATE_ENABLED=false
 ENV SAR_FAITHFULNESS_GATE_MODE=flag
 ENV SAR_FAITHFULNESS_THRESHOLD=0.7
 
+# The security node's LLM semantic injection check false-positives on
+# non-English (Arabic) queries and blocks retrieval. Disable it for the demo:
+# the guardrails node (regex) + the security node's regex jailbreak patterns
+# still run, so injection defence stays while multilingual questions work.
+ENV SAR_SECURITY_SEMANTIC_CHECK_ENABLED=false
+
 # Cloud LLM is the only inference path on the HF Space (no Ollama). Unlock
 # HIGH-sensitivity content for cloud synthesis -- the frontend warns the
 # visitor with a "sensitive: routed to cloud" badge.
