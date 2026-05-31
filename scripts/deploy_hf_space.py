@@ -132,6 +132,9 @@ SPACE_ALLOW_PATTERNS = [
     "ingestion/**",
     "utils/**",
     "evaluation/calibration.json",
+    # The committed Ragas baseline powers the public /byok/stats eval block
+    # (landing "live proof" strip + /status eval section). Tiny, non-secret.
+    "evaluation/baseline.json",
     "evaluation/__init__.py",
     "pyproject.toml",
     "uv.lock",
@@ -161,7 +164,6 @@ SPACE_IGNORE_PATTERNS = [
     "scripts/deploy_hf_space.py",  # the deploy script itself doesn't ship
     "evaluation/nightly.py",
     "evaluation/golden_set.jsonl",
-    "evaluation/baseline.json",
     "evaluation/benchmarks/**",
     "evaluation/nist_rerank_gold.jsonl",
 ]
