@@ -25,14 +25,17 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# SECURITY: the self-query extractor must NEVER surface access-control fields
+# (org_id / roles / sensitivity_level). Those come exclusively from the
+# authenticated UserContext and are applied by the RBAC filter. Letting the LLM
+# emit them from untrusted query text would allow a crafted question to shift
+# the tenant/clearance scope. Only content-descriptive fields (filename, date)
+# are safe to infer here.
 _SELF_QUERY_PROMPT = (
     "You are a metadata filter extractor. Given a user question, identify any "
     "constraints that could be expressed as document metadata filters.\n\n"
     "Available filter fields:\n"
     "- source_file: exact filename if mentioned (e.g., 'report.pdf')\n"
-    "- org_id: organization name if mentioned\n"
-    "- sensitivity_level: 'low', 'medium', or 'high' if implied by context\n"
-    "- roles: list of role names if the user refers to a specific team/role\n"
     "- date_after: ISO date if the query asks for documents after a date\n"
     "- date_before: ISO date if the query asks for documents before a date\n\n"
     "Rules:\n"
@@ -123,22 +126,18 @@ def build_qdrant_filter_conditions(filters: dict[str, Any]) -> list[dict[str, An
     """
     from qdrant_client import models
 
+    # Access-control fields are never honoured from self-query output, even if a
+    # jailbroken model emits them — they belong to the authenticated UserContext
+    # and the RBAC filter. Defence in depth on top of the prompt restriction.
+    forbidden = {"org_id", "roles", "sensitivity_level", "sensitivity_level_int", "clearance"}
+
     conditions: list[dict[str, Any]] = []
     for key, value in filters.items():
+        if key in forbidden:
+            logger.warning("self_query_dropped_forbidden_field", field=key)
+            continue
         if key == "source_file":
             conditions.append({"key": "source_file", "match": models.MatchValue(value=value)})
-        elif key == "org_id":
-            conditions.append({"key": "org_id", "match": models.MatchValue(value=value)})
-        elif key == "sensitivity_level":
-            # Map string label to integer for the payload field
-            level_map = {"low": 1, "medium": 2, "high": 3}
-            level_int = level_map.get(str(value).lower())
-            if level_int is not None:
-                conditions.append(
-                    {"key": "sensitivity_level_int", "match": models.MatchValue(value=level_int)}
-                )
-        elif key == "roles" and isinstance(value, list):
-            conditions.append({"key": "roles", "match": models.MatchAny(any=value)})
         elif key == "date_after":
             from datetime import datetime
 

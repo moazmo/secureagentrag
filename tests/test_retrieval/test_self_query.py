@@ -115,25 +115,19 @@ class TestBuildQdrantFilterConditions:
         assert len(conditions) == 1
         assert conditions[0]["key"] == "source_file"
 
-    def test_org_id_condition(self):
-        """org_id maps to a MatchValue condition."""
-        conditions = build_qdrant_filter_conditions({"org_id": "acme"})
-        assert conditions[0]["key"] == "org_id"
+    def test_org_id_is_dropped(self):
+        """SECURITY: org_id must NEVER come from self-query — it is an
+        access-control field owned by the authenticated UserContext."""
+        assert build_qdrant_filter_conditions({"org_id": "acme"}) == []
 
-    def test_sensitivity_level_mapped_to_int(self):
-        """sensitivity_level 'medium' maps to integer 2."""
-        conditions = build_qdrant_filter_conditions({"sensitivity_level": "medium"})
-        assert conditions[0]["key"] == "sensitivity_level_int"
+    def test_sensitivity_level_is_dropped(self):
+        """SECURITY: sensitivity_level must NEVER come from self-query."""
+        assert build_qdrant_filter_conditions({"sensitivity_level": "medium"}) == []
+        assert build_qdrant_filter_conditions({"sensitivity_level_int": 3}) == []
 
-    def test_unknown_sensitivity_skipped(self):
-        """An unrecognised sensitivity label is silently ignored."""
-        conditions = build_qdrant_filter_conditions({"sensitivity_level": "extreme"})
-        assert conditions == []
-
-    def test_roles_condition(self):
-        """roles list maps to MatchAny condition."""
-        conditions = build_qdrant_filter_conditions({"roles": ["admin", "viewer"]})
-        assert conditions[0]["key"] == "roles"
+    def test_roles_is_dropped(self):
+        """SECURITY: roles must NEVER come from self-query."""
+        assert build_qdrant_filter_conditions({"roles": ["admin", "viewer"]}) == []
 
     def test_date_range_conditions(self):
         """date_after and date_before both produce Range conditions."""
@@ -147,13 +141,13 @@ class TestBuildQdrantFilterConditions:
         assert any(r.gte is not None for r in ranges)
         assert any(r.lte is not None for r in ranges)
 
-    def test_multiple_conditions(self):
-        """A filter dict with multiple keys produces multiple conditions."""
+    def test_multiple_conditions_keeps_only_safe_fields(self):
+        """Content fields survive; access-control fields are stripped."""
         conditions = build_qdrant_filter_conditions(
             {"source_file": "x.pdf", "org_id": "acme", "sensitivity_level": "low"}
         )
         keys = {c["key"] for c in conditions}
-        assert keys == {"source_file", "org_id", "sensitivity_level_int"}
+        assert keys == {"source_file"}
 
     def test_empty_dict(self):
         """An empty filter dict yields an empty condition list."""

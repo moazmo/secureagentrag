@@ -163,15 +163,14 @@ async def generate(
     Returns:
         LLMResponse with generated text and metadata.
     """
+    # NOTE: get_llm returns a *cached, shared* client. Do NOT close it here —
+    # closing the cached httpx/SDK client breaks the next caller that reuses the
+    # same cache entry ("client has been closed"). Only clear_llm_cache() closes.
     client = get_llm(provider=provider, model=model)
-    try:
-        start = time.perf_counter()
-        response = await client.generate(prompt=prompt, system_prompt=system_prompt, **kwargs)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        response.latency_ms = elapsed_ms
-        return response
-    finally:
-        await client.close()
+    start = time.perf_counter()
+    response = await client.generate(prompt=prompt, system_prompt=system_prompt, **kwargs)
+    response.latency_ms = (time.perf_counter() - start) * 1000
+    return response
 
 
 async def chat(
@@ -191,12 +190,9 @@ async def chat(
     Returns:
         LLMResponse with generated text and metadata.
     """
+    # Cached, shared client — do NOT close (see generate() above).
     client = get_llm(provider=provider, model=model)
-    try:
-        start = time.perf_counter()
-        response = await client.chat(messages=messages or [], **kwargs)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        response.latency_ms = elapsed_ms
-        return response
-    finally:
-        await client.close()
+    start = time.perf_counter()
+    response = await client.chat(messages=messages or [], **kwargs)
+    response.latency_ms = (time.perf_counter() - start) * 1000
+    return response

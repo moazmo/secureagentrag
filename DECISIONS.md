@@ -1584,3 +1584,80 @@ records the ones fixed in code.
 - ✅ Ruff check + format clean.
 - ✅ No behaviour change for existing English answers, single-proxy deploys, or
   the default throttle.
+
+---
+
+## ADR-035: Second-review security remediation (waves 1–2 + frontend)
+
+**Date:** 2026-05-30
+**Status:** Accepted
+
+**Context:**
+An independent second review (private/review-2026-05-30-ide-agent.md) raised
+2 "Critical" + 13 "High" findings. On verification against source, the severity
+was inflated — several were off-by-default, auth-gated, AND-merged, or dead
+plumbing — but a real subset was confirmed and fixed here. Backend changes are
+non-breaking; defaults preserve existing behaviour.
+
+**Verified + fixed (backend, waves 1–2):**
+
+- **C1 override→HIGH (downgraded from Critical):** `override_provider` was found
+  to be **dead plumbing** — wired api→state but never read by `call_llm_*` or the
+  synthesizer, which call `route()` without it. So HIGH could not actually be
+  exfiltrated. Added a defensive guard in `route()` anyway: an override can never
+  move HIGH off local on a self-hosted deploy (`allow_cloud_for_high` off).
+- **C2 self-query RBAC (downgraded; off by default):** `org_id`/`roles`/
+  `sensitivity` removed from the self-query prompt AND dropped in the filter
+  builder. RBAC fields come only from the authenticated UserContext. (Merged as
+  `must` it would have narrowed, not bypassed; still removed as defence in depth.)
+- **H2 BYOK Ollama SSRF (real):** `make_byok_ollama_client` validates the URL —
+  http(s) only; loopback / RFC-1918 / link-local / reserved / internal-hostname
+  targets refused.
+- **H5 cached-client close (real):** `llm_factory.generate()/chat()` no longer
+  close the shared cached client.
+- **H8 tenant-name collision (real):** `_sanitize` hash-disambiguates lossy ids
+  so `acme-corp` and `acme_corp` never share a collection.
+- **Gate asymmetry:** `guardrails_gate` now fails closed.
+- **Schema bounds:** `clearance_level` bounded 1..3; `file_path` rejects `..`/null;
+  `forced_local` reports a real value.
+- **Info leak:** the sensitive-pattern refusal no longer echoes the matched regex.
+- **JWT claims:** `issue_token` drops reserved claims from `extra_claims`.
+
+**Verified + fixed (frontend, secureagentrag-web):**
+
+- **H10 link-scheme XSS (real):** the Markdown renderer scheme-allowlists
+  LLM-provided link URLs (http/https/mailto/site-relative); `data:`/`vbscript:`
+  render as text.
+- **H11 session entropy (real):** the visitor session id is a full UUIDv4
+  (~122 bits) instead of a 64-bit slice.
+- **H9 API URL "leak" (downgraded to non-issue):** `NEXT_PUBLIC_API_URL` inlines
+  the HF Space hostname, but that host is *intentionally public* (CORS + BYOK
+  protect it; no secret in the URL), so this is not a real exposure.
+
+**Deliberately deferred (with reasons):**
+
+- **H1 ingestion sensitivity** (contextual / fusion / HyDE default `"low"`):
+  the three features are **off by default**; real only for self-hosted users who
+  enable them. Thread sensitivity in a follow-up.
+- **H3/H4 session-purge no-op** (reads a non-existent `config.params.metadata`):
+  real but **Med, resource-only** (bounded by 24 h TTL intent + light demo
+  traffic). The fix needs a create-time sentinel-point write — deferred to avoid
+  destabilising ingestion under time pressure.
+- **H6 ColBERT** dead/RBAC: reranker is **off by default**; quarantine later.
+- **H7 sparse-only retrieve RBAC:** IDs already came from an RBAC-filtered search
+  (race-only); Low.
+- **H12 CSP `unsafe-inline`:** needs a nonce middleware; larger change.
+- **H13 audit MAC:** tamper-*evidence* (hash chain) is the documented goal;
+  tamper-*resistance* (keyed MAC) is a deliberate non-goal for a $0 demo.
+- **Reranker/JWKS off the event loop, CI mypy/bandit, Helm probes, base
+  Dockerfile non-root:** quality/ops hygiene, not in the live BYOK path
+  (`Dockerfile.hf` is already non-root).
+
+**Acceptance criteria (all met):**
+
+- ✅ 690 unit tests pass (backend), 0 failures; +28 net (SSRF, override guard,
+  self-query strip, collision-safety, schema bounds, fail-closed gate, claim
+  allowlist).
+- ✅ Backend ruff check + format clean; frontend `npm run build` + `lint` green.
+- ✅ Non-breaking: existing English answers, single-proxy deploys, default
+  throttle, and clean tenant/session ids are unchanged.

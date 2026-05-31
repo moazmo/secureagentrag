@@ -139,8 +139,9 @@ class TestGenerateConvenience:
     """Tests for the generate() convenience function."""
 
     @pytest.mark.asyncio
-    async def test_generate_creates_and_closes_client(self) -> None:
-        """generate() should create client, call generate, and close."""
+    async def test_generate_does_not_close_cached_client(self) -> None:
+        """generate() must NOT close the client — get_llm returns a cached,
+        shared instance, and closing it would break the next caller."""
         mock_response = LLMResponse(text="Hello!", model="test-model", provider="ollama")
         mock_client = AsyncMock()
         mock_client.generate = AsyncMock(return_value=mock_response)
@@ -151,7 +152,7 @@ class TestGenerateConvenience:
 
         assert result.text == "Hello!"
         assert result.latency_ms > 0
-        mock_client.close.assert_called_once()
+        mock_client.close.assert_not_called()
 
 
 class TestClientCaching:

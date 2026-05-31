@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from config.settings import settings
 
 
 def _sanitize(s: str) -> str:
-    """Coerce ``s`` to a Qdrant-safe identifier (alnum + underscore only)."""
-    return "".join(c if c.isalnum() else "_" for c in s)
+    """Coerce ``s`` to a Qdrant-safe identifier (alnum + underscore only).
+
+    Collapsing every non-alphanumeric to ``_`` is lossy: ``acme-corp`` and
+    ``acme_corp`` would both map to ``acme_corp`` and share a collection. When
+    the mapping IS lossy we append a short hash of the **original** string so
+    distinct inputs never collide onto the same tenant/session collection. Pure
+    alphanumeric inputs are returned unchanged (stable, readable names). The
+    result is bounded to a Qdrant-safe length.
+    """
+    safe = "".join(c if c.isalnum() else "_" for c in s)
+    if safe != s:
+        digest = hashlib.sha256(s.encode("utf-8")).hexdigest()[:8]
+        safe = f"{safe[:200]}_{digest}"
+    return safe[:255]
 
 
 def get_collection_name(

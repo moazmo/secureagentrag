@@ -246,5 +246,10 @@ async def guardrails_check(state: GraphState) -> dict:
 
 
 def guardrails_gate(state: GraphState) -> str:
-    """Conditional-edge function. ``"proceed"`` or ``"blocked"``."""
-    return "proceed" if state.get("guardrails_passed", True) else "blocked"
+    """Conditional-edge function. ``"proceed"`` or ``"blocked"``.
+
+    Fails **closed**: if ``guardrails_passed`` is missing (e.g. the guardrails
+    node was skipped by a wiring mistake) the query is blocked rather than
+    silently let through. Mirrors ``security_gate``.
+    """
+    return "proceed" if state.get("guardrails_passed", False) else "blocked"
