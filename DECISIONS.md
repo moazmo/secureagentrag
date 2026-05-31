@@ -1661,3 +1661,72 @@ non-breaking; defaults preserve existing behaviour.
 - ✅ Backend ruff check + format clean; frontend `npm run build` + `lint` green.
 - ✅ Non-breaking: existing English answers, single-proxy deploys, default
   throttle, and clean tenant/session ids are unchanged.
+
+---
+
+## ADR-036: Third-review remediation — wire BYOK for real + close the throttle bypass (2026-05-31)
+
+**Status:** Accepted.
+
+**Context.** A full-repo review (`private/review-2026-05-31-full.md`) found that the
+project's headline feature was inert in production. `grep` across the whole repo
+(minus tests) returned **zero** call-sites for `make_byok_cloud_client`,
+`make_byok_ollama_client`, `user_key`, or `has_user_key`, and `override_provider`
+was stored in `GraphState` but **never read by any node**. So:
+
+1. **Correctness/honesty:** the visitor's `X-User-LLM-Key` / `X-User-Provider`
+   were parsed into `ByokCreds` and then ignored — every BYOK chat actually ran
+   on the **owner's** Groq key. "Bring Your Own Key" brought nothing.
+2. **Cost/abuse:** the throttle gate was `if not creds.has_user_key()`. Sending
+   *any* non-empty `X-User-LLM-Key` skipped the per-IP owner-key throttle **while
+   still spending the owner key** — an unmetered free-quota bypass.
+
+**Decision.**
+
+- **Per-request BYOK runtime via ContextVar** (`inference/byok_context.py`,
+  `ByokRuntime`). The chat endpoints bind the visitor's provider/key/URL for the
+  request; `contextvars` propagates it into `run_rag_pipeline[_stream]` and every
+  LangGraph node/LLM call without threading creds through every signature. The
+  token is reset in `finally` so it never leaks across requests on a reused
+  worker.
+- **`InferenceRouter._client_for(provider, model)`** builds a *fresh per-request*
+  client from the (already-written, already-tested) `make_byok_*` factories when
+  an active BYOK runtime matches the chosen provider; otherwise returns the
+  owner's cached client. Ephemeral clients are closed after use; cached owner
+  clients never are. `route()` honours the BYOK provider like an override — but
+  the **HIGH-sensitivity local guard still wins** on a self-hosted deploy
+  (`SAR_ALLOW_CLOUD_FOR_HIGH=false`), so a visitor cloud key cannot move HIGH off
+  local. This also revives the previously-dead `override_provider` path.
+- **`ByokCreds.byok_active()`** — stricter than `has_user_key()`: a key-based
+  provider needs a key **and** a valid provider; Ollama needs a URL. Both chat
+  endpoints now gate the throttle on `byok_active()`, so a bare/junk key can no
+  longer skip the throttle while spending the owner key.
+
+**Also in this wave (review M/L findings):**
+
+- **M1 — XFF trust:** `Dockerfile.hf` now sets `SAR_BYOK_XFF_TRUSTED_HOPS=1` so
+  the owner-key throttle resolves the spoof-resistant client IP (one hop from the
+  right) on HF Spaces instead of the attacker-appendable leftmost token.
+- **M2 — dead code:** removed the unreachable second `try/return` tail in the
+  `/token` dev endpoint.
+- **L1 — `query_cache`:** cache keys are now namespaced `<user_prefix><body_hash>`
+  so `invalidate_user_cache` actually matches a user's entries (the old
+  `startswith(sha256(user_id))` scan silently matched nothing).
+- **L2 — session id:** the server-side fallback id now uses a full UUID4 (122-bit)
+  random component for parity with the client.
+
+**Consequences.**
+
+- A visitor who pastes their own Groq/OpenAI/Anthropic key now gets an
+  **unthrottled** answer powered by **their** key — the demo scales past the
+  shared-key 30-RPM ceiling, which is the precondition for real concurrent users.
+- The owner key + per-IP throttle remain the path only for visitors who bring no
+  usable key.
+- **+9 unit tests** (`tests/test_inference/test_byok_runtime.py`) pin the
+  contract (visitor key used; owner client on mismatch/absence; HIGH stays local
+  when enforced; throttle no longer bypassable by a key-without-provider). Suite:
+  **694 unit pass + 2 live-Qdrant integration**, ruff + format clean.
+
+**Deferred (unchanged from ADR-035 reasons):** H1 ingestion sensitivity, H3/H4
+session-purge no-op, H6 ColBERT, H7 sparse-only RBAC race, H12 CSP nonce, H13
+audit MAC, CI mypy/bandit, Helm probes.

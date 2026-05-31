@@ -13,7 +13,7 @@ This file is the canonical entry point for any AI agent (Claude / Hermes / Kimi 
 The hero story is four things most RAG demos skip:
 
 1. **RBAC at the vector-DB layer** — Qdrant payload filters block unauthorized docs regardless of similarity. Multi-tenant collections layer on top via `QdrantManager.for_org()`.
-2. **Sensitivity-based inference routing** — HIGH-classified data physically never leaves local Ollama. Cloud is opt-in for LOW/MEDIUM only.
+2. **Sensitivity-based inference routing** — HIGH-classified data physically never leaves local Ollama. Cloud is opt-in for LOW/MEDIUM only. *(Self-hosted guarantee. The hosted $0 demo has no Ollama and sets `SAR_ALLOW_CLOUD_FOR_HIGH=true`, so it routes HIGH to cloud and labels it with a `sensitivity:` badge — see §5.1.)*
 3. **Corrective RAG + NLI faithfulness gate** — Cited sentences are re-checked for entailment against the source chunk. Unsupported claims are flagged or dropped.
 4. **Tamper-evident audit chain + SLO deadline** — SHA-256 hash chain across JSONL entries; `SAR_REQUEST_TIMEOUT_S` bounds the whole pipeline.
 
@@ -93,12 +93,12 @@ secureagentrag/
 ├── scripts/                # smoke, seed_corpus, interview_demo, quick_bench,
 │                           # cloud_bench, h2_gate, migrate_to_splade,
 │                           # train_reranker, bench_reranker, verify_audit_chain
-├── tests/                  # pytest, 690 unit + 2 live-Qdrant integration (test_qdrant_rbac)
+├── tests/                  # pytest, 694 unit + 2 live-Qdrant integration (test_qdrant_rbac)
 ├── helm/secureagentrag/    # Kubernetes manifests
 ├── deploy/                 # docker-compose auth profile + keycloak-realm.json
 ├── data/agent_evidence/    # 24-scenario gate evidence (results.md, screenshots)
 ├── sample_docs/            # PDF + txt corpus (incl. real NIST AI RMF)
-├── DECISIONS.md            # ADR-001..033
+├── DECISIONS.md            # ADR-001..036
 ├── docker-compose.observability.yml  # Prometheus + Grafana overlay (self-hosted)
 ├── architecture.md         # Mermaid diagrams
 ├── RUNBOOK.md              # ops + troubleshooting
@@ -140,7 +140,7 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ## 5. State of the codebase (as of `3ad56bb` on `main`)
 
-- **690 unit tests pass + 2 live-Qdrant integration tests.** 0 failed. Lint + format clean. **CI green on `main`** — now **two jobs**: a unit job (`uv sync --frozen --group dev --extra api` → ruff check + ruff format --check + `pytest -m "not integration"`) and an **integration job** that spins up a `qdrant/qdrant` service container and runs `pytest -m integration` (proves the RBAC filter against a real Qdrant). GitHub Actions on Node 24 (checkout v5 / setup-python v6 / setup-uv v6).
+- **694 unit tests pass + 2 live-Qdrant integration tests.** 0 failed. Lint + format clean. **CI green on `main`** — now **two jobs**: a unit job (`uv sync --frozen --group dev --extra api` → ruff check + ruff format --check + `pytest -m "not integration"`) and an **integration job** that spins up a `qdrant/qdrant` service container and runs `pytest -m integration` (proves the RBAC filter against a real Qdrant). GitHub Actions on Node 24 (checkout v5 / setup-python v6 / setup-uv v6).
 - **~35.5k Python LOC** across 169 files.
 - **34 ADRs** in `DECISIONS.md` (001–024 historical + 025–030 the launch + **031** Prometheus/Grafana metrics + **032** security/reliability hardening + **033** cost/coverage hardening + **034** code-review remediation: Arabic faithfulness split, retry de-nesting, XFF trusted-hops + **035** second-review security remediation: override HIGH-guard, self-query RBAC strip, BYOK SSRF, tenant-collision, schema bounds, frontend link-XSS + session entropy).
 - **Observability:** structlog logs + optional Phoenix tracing + **Prometheus `/metrics` (`utils/metrics.py`) → Grafana dashboard (`deploy/grafana/`, `docker-compose.observability.yml`)**. Metrics are aggregate-only (no prompt/key/user text in labels) so they are BYOK-safe; Phoenix tracing stays hard-disabled under BYOK. The FastAPI lifespan (`interfaces/api.py`) starts a scheduled **audit-chain re-verification** (`utils/audit_verify.py`, emits `audit_chain_valid`) and wires the BYOK session-purge job.
@@ -192,9 +192,9 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 Lives behind `SAR_BYOK_MODE=true`. The HF Space Dockerfile sets it; local dev does not.
 
-- **Request shape:** `X-Demo-Persona` (engineer / compliance / executive — preset RBAC), `X-Session-ID` (UUID, drives session collection), `X-User-LLM-Key` (optional — visitor BYOK unlock), `X-User-Provider` (groq / openai / anthropic), `X-User-Ollama-URL` (optional). Extracted in `interfaces/byok.py`.
+- **Request shape:** `X-Demo-Persona` (engineer / compliance / executive — preset RBAC), `X-Session-ID` (UUID, drives session collection), `X-User-LLM-Key` (optional — when present **and** paired with a valid `X-User-Provider`, the visitor key actually powers inference for that request via the per-request client built in `inference/router.py::_client_for`, bound through the `ByokRuntime` ContextVar set in `interfaces/api.py`; ADR-036), `X-User-Provider` (groq / openai / anthropic), `X-User-Ollama-URL` (optional, SSRF-validated). Extracted in `interfaces/byok.py`.
 - **Endpoints (under `/byok/`):** `chat` (sync JSON), `chat/stream` (SSE: open|phase|token|blocked|final|error), `audit` (last-N session-scoped rows for export), `uploads` GET/POST/DELETE (5 MB · 5 files · 60 chunks/file · txt/md/pdf — see ADR-029), `personas` (RBAC dispatch table, no auth), `corpus` (base demo corpus metadata, no auth — never returns chunk text).
-- **Per-IP throttle:** `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10` against owner key. Visitor BYOK bypasses. IP from `X-Forwarded-For` leftmost token (HF Spaces reverse proxy masks `request.client.host`).
+- **Per-IP throttle:** `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10` against owner key. A visitor with **usable** BYOK creds (`ByokCreds.byok_active()` — key + valid provider, or Ollama URL) bypasses it *and* their own key pays for the call; a bare/junk key no longer skips the throttle (ADR-036). IP from `X-Forwarded-For` resolved at `SAR_BYOK_XFF_TRUSTED_HOPS=1` on the Space (spoof-resistant, one hop from the right).
 - **Persona presets:** `_DEMO_PERSONAS` in `interfaces/api.py` maps each persona to `(clearance, roles, style)`. Style is threaded into the synth system prompt via `GraphState.persona_style`.
 - **Cost-cut toggles (ADR-030):** `SAR_GROQ_MODEL=llama-3.1-8b-instant`, `SAR_RAG_FUSION_ENABLED=false`, `SAR_BYOK_SKIP_EVALUATOR=true`, `SAR_BYOK_SKIP_GRADER=true`, `SAR_FAITHFULNESS_GATE_ENABLED=false`, `SAR_RERANKER_TYPE=none`, `SAR_RELEVANCE_THRESHOLD=0.55`, `SAR_MAX_RETRIES=1`, `SAR_RERANK_TOP_K=10`. Router classifier short-circuits queries ≤80 chars to `query_type="simple"`. Net effect: ~2 Groq calls/chat vs ~5–6 before.
 - **Rate-limit hardening (post-launch fix):** `SAR_SYNTH_MAX_TOKENS=1024` on the Space caps synth completion tokens to ease the Groq 6k TPM ceiling; the streaming cloud client retries a 429 with backoff **before the first token** (honors `Retry-After`) so a transient per-minute limit no longer kills the answer. The "shared key per-minute limit" copy is honest (not "exhausted for the hour"). See `inference/cloud_clients.py::_stream_lines_with_retry` + `core/agents/router.py::call_llm_stream`.

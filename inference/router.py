@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 from config.settings import settings
+from inference.byok_context import get_byok_runtime
 from inference.llm_factory import LLMResponse, get_llm
 from ingestion.metadata import SensitivityLevel
 from utils.logging import get_logger
@@ -84,15 +86,25 @@ class InferenceRouter:
         if isinstance(sensitivity_level, str):
             sensitivity_level = SensitivityLevel(sensitivity_level.lower())
 
-        # 1. Admin override — honoured for LOW/MEDIUM, but NEVER allowed to move
-        # HIGH-sensitivity work off local inference on a self-hosted deploy.
-        # Without this guard the override short-circuits the HIGH→local branch
-        # below (order-of-checks footgun). The override is still respected when
-        # the deploy explicitly opts into cloud-for-HIGH (the GPU-less public
-        # demo, SAR_ALLOW_CLOUD_FOR_HIGH=true) or when it targets local Ollama.
-        # NOTE: override_provider is currently not wired into the pipeline path
-        # (call_llm_* / synthesizer call route() without it); this guard is
-        # defence-in-depth so the privacy guarantee holds even if it ever is.
+        # BYOK: when a visitor brought their own usable key/provider for THIS
+        # request (carried via the ContextVar set in run_rag_pipeline[_stream]),
+        # treat their provider like an explicit override so their key actually
+        # powers the answer. The same HIGH-sensitivity guard below still applies,
+        # so a visitor cloud key cannot move HIGH off local on a self-hosted
+        # deploy (SAR_ALLOW_CLOUD_FOR_HIGH=false). The matching per-request
+        # client is built in ``_client_for`` from the same ContextVar.
+        if override_provider is None:
+            _rt = get_byok_runtime()
+            if _rt is not None and _rt.is_active():
+                override_provider = (_rt.provider or "").lower()
+
+        # 1. Admin / BYOK override — honoured for LOW/MEDIUM, but NEVER allowed
+        # to move HIGH-sensitivity work off local inference on a self-hosted
+        # deploy. Without this guard the override short-circuits the HIGH→local
+        # branch below (order-of-checks footgun). The override is still respected
+        # when the deploy explicitly opts into cloud-for-HIGH (the GPU-less
+        # public demo, SAR_ALLOW_CLOUD_FOR_HIGH=true) or when it targets local
+        # Ollama.
         if override_provider:
             high_must_stay_local = (
                 sensitivity_level == SensitivityLevel.HIGH
@@ -222,8 +234,8 @@ class InferenceRouter:
         import time
 
         start = time.perf_counter()
+        client, ephemeral = self._client_for(decision.provider, decision.model)
         try:
-            client = get_llm(provider=decision.provider, model=decision.model)
             response = await client.generate(prompt=prompt, system_prompt=system_prompt, **kwargs)
             elapsed_ms = (time.perf_counter() - start) * 1000
             response.latency_ms = elapsed_ms
@@ -262,6 +274,13 @@ class InferenceRouter:
             )
             response.latency_ms = (time.perf_counter() - start) * 1000
             return response, fallback_decision
+        finally:
+            # Per-request BYOK clients are fresh and unshared — close them so the
+            # visitor's httpx connection pool is released. Owner clients are
+            # cached and must never be closed here.
+            if ephemeral:
+                with contextlib.suppress(Exception):
+                    await client.close()
 
     @staticmethod
     def _normalised_sensitivity(level: SensitivityLevel | str) -> SensitivityLevel:
@@ -300,7 +319,7 @@ class InferenceRouter:
             forced_local=decision.forced_local,
         )
 
-        client = get_llm(provider=decision.provider, model=decision.model)
+        client, ephemeral = self._client_for(decision.provider, decision.model)
         try:
             import time
 
@@ -310,8 +329,11 @@ class InferenceRouter:
             response.latency_ms = elapsed_ms
             return response, decision
         finally:
-            # Clients are cached — do NOT close per-request
-            pass
+            # Owner clients are cached — never closed here. Per-request BYOK
+            # clients are fresh and must be closed to release their pool.
+            if ephemeral:
+                with contextlib.suppress(Exception):
+                    await client.close()
 
     async def generate_stream_with_routing(
         self,
@@ -346,7 +368,7 @@ class InferenceRouter:
             forced_local=decision.forced_local,
         )
 
-        client = get_llm(provider=decision.provider, model=decision.model)
+        client, ephemeral = self._client_for(decision.provider, decision.model)
         try:
             if hasattr(client, "generate_stream"):
                 async for token in client.generate_stream(
@@ -360,8 +382,11 @@ class InferenceRouter:
                 )
                 yield response.text
         finally:
-            # Clients are cached — do NOT close per-request
-            pass
+            # Owner clients are cached — never closed. Per-request BYOK clients
+            # are fresh; close after the stream is exhausted.
+            if ephemeral:
+                with contextlib.suppress(Exception):
+                    await client.close()
 
     def get_available_providers(self) -> list[str]:
         """Return a list of currently configured and available providers.
@@ -418,3 +443,35 @@ class InferenceRouter:
             "anthropic": settings.anthropic_model,
         }
         return model_defaults.get(provider, settings.llm_model)
+
+    @staticmethod
+    def _client_for(provider: str, model: str):
+        """Resolve the LLM client for ``provider``, honouring per-request BYOK.
+
+        When the current request carries active BYOK creds (ContextVar) for the
+        *same* provider the routing decision selected, build a **fresh
+        per-request client** bound to the visitor's key/URL — so the visitor's
+        own key pays for and powers the call. The fresh client is ephemeral and
+        the caller MUST close it after use.
+
+        Otherwise return the owner's cached client (shared, never closed
+        per-request).
+
+        Returns:
+            ``(client, ephemeral)`` — ``ephemeral`` True means the caller owns
+            the client and must ``await client.close()`` when done.
+        """
+        rt = get_byok_runtime()
+        if rt is not None and rt.is_active() and (rt.provider or "").lower() == provider.lower():
+            prov = provider.lower()
+            if prov == "ollama":
+                from inference.ollama_client import make_byok_ollama_client
+
+                return make_byok_ollama_client(base_url=rt.ollama_url or "", model=model), True
+            from inference.cloud_clients import make_byok_cloud_client
+
+            return (
+                make_byok_cloud_client(provider=prov, user_key=rt.user_key or "", model=model),
+                True,
+            )
+        return get_llm(provider=provider, model=model), False

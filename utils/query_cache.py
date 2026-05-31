@@ -77,8 +77,18 @@ def _get_redis_client():
     return None
 
 
+def _user_prefix(user_id: str) -> str:
+    """Stable per-user key prefix so ``invalidate_user_cache`` can scan by user."""
+    return hashlib.sha256(user_id.encode()).hexdigest()[:12]
+
+
 def _build_cache_key(user_id: str, query: str, context_hash: str = "") -> str:
     """Build a deterministic cache key from user + query.
+
+    The key is ``<user_prefix><body_hash>`` so a single user's entries share a
+    common prefix — that is what makes ``invalidate_user_cache`` work (a hash of
+    one string is never a prefix of a hash of a different string, so the old
+    ``startswith(sha256(user_id))`` scan silently matched nothing).
 
     Args:
         user_id: The user's identifier.
@@ -88,8 +98,9 @@ def _build_cache_key(user_id: str, query: str, context_hash: str = "") -> str:
     Returns:
         A hash string suitable for use as a cache key.
     """
-    key_data = f"{user_id}:{query.lower().strip()}:{context_hash}"
-    return hashlib.sha256(key_data.encode()).hexdigest()[:32]
+    body = f"{query.lower().strip()}:{context_hash}"
+    body_hash = hashlib.sha256(body.encode()).hexdigest()[:20]
+    return f"{_user_prefix(user_id)}{body_hash}"
 
 
 def get_cached_result(
@@ -230,8 +241,9 @@ def invalidate_user_cache(user_id: str) -> int:
     """
     count = 0
 
-    # In-memory
-    prefix = hashlib.sha256(f"{user_id}:".encode()).hexdigest()[:16]
+    # In-memory — keys are namespaced ``<user_prefix><body_hash>`` so a single
+    # user's entries share this prefix (see _build_cache_key).
+    prefix = _user_prefix(user_id)
     keys_to_remove = [k for k in _memory_cache if k.startswith(prefix)]
     for k in keys_to_remove:
         del _memory_cache[k]

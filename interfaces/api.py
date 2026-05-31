@@ -296,8 +296,28 @@ if _FASTAPI_AVAILABLE:
     # uses per-request BYOK credentials instead. Isolation is enforced via
     # session-scoped Qdrant collections, not JWT identity.
     if settings.byok_mode:
+        from inference.byok_context import (
+            ByokRuntime,
+            reset_byok_runtime,
+            set_byok_runtime,
+        )
         from interfaces.byok import ByokCreds, client_ip_from_request, extract_byok
         from utils.rate_limiter import get_owner_key_throttle
+
+        def _byok_runtime_for(creds: ByokCreds) -> ByokRuntime | None:
+            """Build the per-request BYOK runtime from creds, or None.
+
+            Only returns a runtime when the visitor brought usable creds — so
+            the visitor's own key powers the call. Otherwise None and the
+            pipeline routes through the owner's cached clients (throttled).
+            """
+            if not creds.byok_active():
+                return None
+            return ByokRuntime(
+                provider=creds.safe_provider(),
+                user_key=creds.user_key,
+                ollama_url=creds.ollama_url,
+            )
 
         # All demo personas share ``org_id="demo"`` so they query the same
         # ingested corpus. RBAC differentiation is enforced via clearance
@@ -495,7 +515,11 @@ if _FASTAPI_AVAILABLE:
             filter still runs end-to-end — same code path as authenticated
             queries, just with demo identities.
             """
-            if not creds.has_user_key():
+            # Only a visitor with *usable* BYOK creds bypasses the throttle —
+            # and that same key now actually powers the call (see the BYOK
+            # runtime below). A bare/junk key with no usable provider no longer
+            # skips the throttle while spending the owner key.
+            if not creds.byok_active():
                 throttle = get_owner_key_throttle()
                 client_ip = client_ip_from_request(request)
                 ok, meta = throttle.allow(client_ip)
@@ -516,16 +540,24 @@ if _FASTAPI_AVAILABLE:
             import time as _t
 
             _t0 = _t.perf_counter()
-            state = await run_rag_pipeline(
-                query=body.query,
-                user_context=user_ctx,
-                thread_id=f"byok-{creds.session_id}",
-                prefer_cloud=body.prefer_cloud,
-                # Visitor's chosen provider when present; falls back to env.
-                override_provider=creds.safe_provider(),
-                persona_style=_persona_style(creds),
-                byok_session_id=creds.session_id,
-            )
+            # Bind the visitor's key/provider for THIS request so the inference
+            # router builds a per-request client from it. The ContextVar
+            # propagates into run_rag_pipeline and every LangGraph node/LLM call;
+            # reset in finally so it never leaks to the next request.
+            _byok_tok = set_byok_runtime(_byok_runtime_for(creds))
+            try:
+                state = await run_rag_pipeline(
+                    query=body.query,
+                    user_context=user_ctx,
+                    thread_id=f"byok-{creds.session_id}",
+                    prefer_cloud=body.prefer_cloud,
+                    # Visitor's chosen provider when present; falls back to env.
+                    override_provider=creds.safe_provider(),
+                    persona_style=_persona_style(creds),
+                    byok_session_id=creds.session_id,
+                )
+            finally:
+                reset_byok_runtime(_byok_tok)
             elapsed_ms = (_t.perf_counter() - _t0) * 1000
             response = QueryResponse.from_state(state)
             # Persist a single audit-log row so /byok/audit can surface the
@@ -591,7 +623,7 @@ if _FASTAPI_AVAILABLE:
 
             CORS is already mounted on the app when ``byok_mode`` is on.
             """
-            if not creds.has_user_key():
+            if not creds.byok_active():
                 throttle = get_owner_key_throttle()
                 client_ip = client_ip_from_request(request)
                 ok, meta = throttle.allow(client_ip)
@@ -614,6 +646,9 @@ if _FASTAPI_AVAILABLE:
                 import time as _t
 
                 _t0 = _t.perf_counter()
+                # Bind the visitor's key/provider for the lifetime of this
+                # stream so the synthesizer's streaming LLM call uses it.
+                _byok_tok = set_byok_runtime(_byok_runtime_for(creds))
                 # Replay the session_id up front so the client can stitch
                 # token deltas to a known turn without waiting for `final`.
                 yield (
@@ -674,6 +709,10 @@ if _FASTAPI_AVAILABLE:
                 except Exception as exc:  # pragma: no cover -- defensive
                     logger.exception("byok_stream_failed", error=str(exc))
                     yield (f"event: error\ndata: {json.dumps({'message': 'stream_failed'})}\n\n")
+                finally:
+                    # Always clear the per-request BYOK runtime so it never
+                    # leaks into the next request handled by this worker.
+                    reset_byok_runtime(_byok_tok)
                 # Persist audit row at the end of the stream so /byok/audit
                 # surfaces the session's history even when the visitor
                 # disconnects before the final frame.
@@ -1172,22 +1211,6 @@ if _FASTAPI_AVAILABLE:
         return _TokenResponse(
             access_token=token,
             token_type="bearer",
-            expires_in=body.ttl_seconds or settings.jwt_ttl_seconds,
-        )
-        try:
-            token = issue_token(
-                user_id=body.user_id,
-                org_id=body.org_id,
-                roles=body.roles,
-                clearance_level=body.clearance_level,
-                ttl_seconds=body.ttl_seconds,
-            )
-        except AuthError as exc:
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR, f"token_issue_{exc.reason}: {exc}"
-            ) from exc
-        return _TokenResponse(
-            access_token=token,
             expires_in=body.ttl_seconds or settings.jwt_ttl_seconds,
         )
 

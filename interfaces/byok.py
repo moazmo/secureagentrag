@@ -80,6 +80,23 @@ class ByokCreds(BaseModel):
             return self.provider.lower()
         return None
 
+    def byok_active(self) -> bool:
+        """True when the visitor's creds can actually power a per-request LLM call.
+
+        Stricter than :meth:`has_user_key`: a key-based provider (groq / openai /
+        anthropic) needs a non-empty key AND a valid provider; an Ollama BYOK
+        needs a reachable URL. This is the gate the chat endpoints use both to
+        (a) bypass the owner-key throttle and (b) bind the per-request client —
+        so a bare ``X-User-LLM-Key`` with no usable provider can no longer skip
+        the throttle while still spending the owner key.
+        """
+        prov = self.safe_provider()
+        if prov in ("groq", "openai", "anthropic"):
+            return self.has_user_key()
+        if prov == "ollama":
+            return bool(self.ollama_url and self.ollama_url.strip())
+        return False
+
 
 def client_ip_from_request(request: Request) -> str:
     """Resolve the visitor IP for throttling, honouring ``X-Forwarded-For``.
@@ -135,8 +152,10 @@ def _derive_session_id(client_host: str | None) -> str:
     """
     host = (client_host or "anon").strip() or "anon"
     digest = hashlib.sha256(host.encode("utf-8")).hexdigest()[:8]
-    random = uuid.uuid4().hex[:8]
-    return f"{digest}-{random}"
+    # Full UUID4 (122 bits) for the random component — the session id guards one
+    # visitor's session-scoped uploads / audit from another, so it must be hard
+    # to guess. The host digest only adds reconnect stickiness within a worker.
+    return f"{digest}-{uuid.uuid4().hex}"
 
 
 def build_creds(

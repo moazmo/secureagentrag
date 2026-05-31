@@ -94,6 +94,12 @@ ENV SAR_BYOK_MODE=true
 # would still be defended; visitors who exceed the cap are nudged to
 # paste their own BYOK key via the UI 429 banner.
 ENV SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR=10
+# HF Spaces fronts the container with exactly one trusted reverse proxy that
+# *appends* the peer it saw to X-Forwarded-For. Tell the throttle to read the
+# IP one hop from the right (spoof-resistant) instead of the attacker-appendable
+# leftmost token, so a visitor can't mint a fresh owner-key bucket per request
+# by forging XFF. See interfaces/byok.py::client_ip_from_request.
+ENV SAR_BYOK_XFF_TRUSTED_HOPS=1
 ENV SAR_SESSION_COLLECTION_TTL_HOURS=24
 ENV SAR_CORS_ALLOW_ORIGINS='["https://secureagentrag-web.vercel.app","https://secureagentrag.vercel.app"]'
 

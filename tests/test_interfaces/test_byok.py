@@ -99,8 +99,8 @@ def test_build_creds_generates_session_id_when_missing() -> None:
         demo_persona=None,
         client_host="1.2.3.4",
     )
-    # format: 8-char-host-hash + "-" + 8-char-random-uuid
-    assert len(creds.session_id) == 17
+    # format: 8-char-host-hash + "-" + 32-char-random-uuid4 (122-bit suffix)
+    assert len(creds.session_id) == 41
     assert creds.session_id[8] == "-"
     assert creds.has_user_key() is False
 
@@ -115,7 +115,7 @@ def test_build_creds_generates_session_id_when_blank() -> None:
         demo_persona=None,
         client_host="1.2.3.4",
     )
-    assert len(creds.session_id) == 17
+    assert len(creds.session_id) == 41
 
 
 def test_build_creds_handles_anonymous_client() -> None:
@@ -128,7 +128,7 @@ def test_build_creds_handles_anonymous_client() -> None:
         demo_persona=None,
         client_host=None,
     )
-    assert len(creds.session_id) == 17
+    assert len(creds.session_id) == 41
 
 
 def test_derive_session_id_sticky_for_same_host() -> None:
@@ -249,7 +249,7 @@ def test_extract_byok_handles_no_client() -> None:
         x_session_id=None,
         x_demo_persona=None,
     )
-    assert len(creds.session_id) == 17
+    assert len(creds.session_id) == 41
 
 
 def test_extract_byok_forwards_all_headers() -> None:
