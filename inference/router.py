@@ -84,15 +84,35 @@ class InferenceRouter:
         if isinstance(sensitivity_level, str):
             sensitivity_level = SensitivityLevel(sensitivity_level.lower())
 
-        # 1. Admin override
+        # 1. Admin override — honoured for LOW/MEDIUM, but NEVER allowed to move
+        # HIGH-sensitivity work off local inference on a self-hosted deploy.
+        # Without this guard the override short-circuits the HIGH→local branch
+        # below (order-of-checks footgun). The override is still respected when
+        # the deploy explicitly opts into cloud-for-HIGH (the GPU-less public
+        # demo, SAR_ALLOW_CLOUD_FOR_HIGH=true) or when it targets local Ollama.
+        # NOTE: override_provider is currently not wired into the pipeline path
+        # (call_llm_* / synthesizer call route() without it); this guard is
+        # defence-in-depth so the privacy guarantee holds even if it ever is.
         if override_provider:
-            model = self._get_model_for_provider(override_provider)
-            return RoutingDecision(
-                provider=override_provider,
-                model=model,
-                reason=f"Admin override to provider: {override_provider}",
-                forced_local=False,
+            high_must_stay_local = (
+                sensitivity_level == SensitivityLevel.HIGH
+                and self.force_local_for_sensitive
+                and not settings.allow_cloud_for_high
+                and override_provider != "ollama"
             )
+            if high_must_stay_local:
+                logger.warning(
+                    "override_provider_ignored_for_high_sensitivity",
+                    override_provider=override_provider,
+                )
+            else:
+                model = self._get_model_for_provider(override_provider)
+                return RoutingDecision(
+                    provider=override_provider,
+                    model=model,
+                    reason=f"Admin override to provider: {override_provider}",
+                    forced_local=(override_provider == "ollama"),
+                )
 
         # 2. HIGH sensitivity -> always local UNLESS the deploy explicitly opts
         # out via SAR_ALLOW_CLOUD_FOR_HIGH (set in HF Space production image

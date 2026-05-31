@@ -31,6 +31,49 @@ _retry_on_connection = retry(
 )
 
 
+def _assert_safe_ollama_url(base_url: str) -> None:
+    """Reject visitor-supplied Ollama URLs that point at internal targets (SSRF).
+
+    The BYOK Ollama URL is attacker-controlled, so without validation the backend
+    could be coerced into fetching ``http://169.254.169.254/...`` (cloud metadata),
+    ``http://localhost:6333`` (the app's own Qdrant), or other internal services.
+
+    We require an ``http(s)`` scheme and block hosts that are loopback, RFC-1918
+    private, link-local, or otherwise reserved — both as IP literals and as the
+    common internal hostnames. (DNS names that resolve to private space are a
+    residual we accept for this $0 public demo; the network egress from the HF
+    Space is the backstop.)
+    """
+    import ipaddress
+    from urllib.parse import urlparse
+
+    parsed = urlparse(base_url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Ollama URL must use http(s), got scheme {parsed.scheme!r}")
+    host = (parsed.hostname or "").strip()
+    if not host:
+        raise ValueError("Ollama URL has no host")
+    lowered = host.lower()
+    if lowered == "localhost" or lowered.endswith((".localhost", ".internal", ".local")):
+        raise ValueError(f"Ollama URL host {host!r} is an internal name and is refused")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None and (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        raise ValueError(
+            f"Ollama URL resolves to a blocked address ({ip}); "
+            "private / loopback / link-local targets are refused"
+        )
+
+
 def make_byok_ollama_client(
     *,
     base_url: str,
@@ -58,7 +101,9 @@ def make_byok_ollama_client(
     """
     if not base_url or not base_url.strip():
         raise ValueError("make_byok_ollama_client called without a base_url")
-    return OllamaClient(base_url=base_url.strip(), model=model, timeout=timeout)
+    cleaned = base_url.strip()
+    _assert_safe_ollama_url(cleaned)
+    return OllamaClient(base_url=cleaned, model=model, timeout=timeout)
 
 
 class OllamaClient:
