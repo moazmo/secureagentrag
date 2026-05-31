@@ -249,14 +249,15 @@ def invalidate_user_cache(user_id: str) -> int:
         del _memory_cache[k]
         count += 1
 
-    # Redis — scan for user-specific keys
+    # Redis — keys are stored under ``rag:query:<user_prefix><body_hash>`` so a
+    # single user's entries share the ``rag:query:<prefix>`` namespace. Scan by
+    # that scoped pattern so invalidating one user never flushes another tenant's
+    # cache (the old ``rag:query:*`` scan nuked everyone).
     redis_client = _get_redis_client()
     if redis_client:
         try:
-            pattern = "rag:query:*"
+            pattern = f"rag:query:{prefix}*"
             for key in redis_client.scan_iter(match=pattern, count=100):
-                # Best-effort: we can't easily decode the key back to user_id
-                # So we just clear all query cache entries
                 redis_client.delete(key)
                 count += 1
         except Exception as exc:

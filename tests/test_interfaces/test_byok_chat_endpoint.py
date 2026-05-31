@@ -192,6 +192,23 @@ def test_byok_chat_unknown_persona_falls_back_to_anon_clearance_1(byok_app) -> N
     assert seen_ctx["user_context"].roles == ["viewer"]
 
 
+def test_byok_stats_returns_eval_and_counts(byok_app) -> None:
+    """/byok/stats exposes the durable Ragas baseline + live activity counts."""
+    client, _ = byok_app
+    r = client.get("/byok/stats")
+    assert r.status_code == 200
+    body = r.json()
+    # Live-activity counters are always present and non-negative.
+    assert isinstance(body["queries_answered"], int)
+    assert body["queries_answered"] >= 0
+    assert isinstance(body["docs_grounded"], int)
+    assert body["docs_grounded"] >= 0
+    # The eval block mirrors evaluation/baseline.json (shipped in the repo),
+    # so the demo can prove groundedness instead of asserting it.
+    assert "eval" in body
+    assert "faithfulness" in body["eval"]
+
+
 def test_cors_middleware_allowlist_enforced(byok_app) -> None:
     """Origin in allowlist gets CORS headers; foreign origin does NOT."""
     client, _ = byok_app

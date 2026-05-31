@@ -427,6 +427,9 @@ if _FASTAPI_AVAILABLE:
             from core.agents.retriever import _get_hybrid_searcher
 
             files: dict[str, dict] = {}
+            # Bound before the try so the response can always report the real
+            # store even if the scroll fails early.
+            collection = settings.qdrant_collection
             try:
                 searcher = _get_hybrid_searcher()
                 # The root manager (``for_org`` of the demo org) points at
@@ -437,11 +440,12 @@ if _FASTAPI_AVAILABLE:
                 collection = qdrant.collection_name
                 next_offset = None
                 pages = 0
-                # Scroll up to 4 pages of 256 -- the demo corpus is ~140
-                # chunks today so one page covers it. Guard against a
-                # runaway scroll if someone later expands the corpus past
-                # ~1k chunks.
-                while pages < 4:
+                # Scroll the whole collection in pages of 256. The Arabic
+                # flagship corpus keeps growing, so a fixed page cap would
+                # silently truncate the corpus page. Loop until the cursor is
+                # exhausted; the 64-page ceiling (16k chunks) is a runaway
+                # guard only.
+                while pages < 64:
                     points, next_offset = client.scroll(
                         collection_name=collection,
                         limit=256,
@@ -478,10 +482,77 @@ if _FASTAPI_AVAILABLE:
                 logger.warning("byok_corpus_list_failed", error=str(exc))
             sorted_items = sorted(files.values(), key=lambda f: f["source_file"].lower())
             return {
-                "collection": "documents",
+                # Report the real collection name (``documents`` in the default
+                # demo, ``documents_demo`` under multi-tenant mode) instead of a
+                # hardcoded literal so the corpus page never misreports the store.
+                "collection": collection,
                 "count": len(sorted_items),
                 "total_chunks": sum(f["chunks"] for f in sorted_items),
                 "items": sorted_items,
+            }
+
+        @app.get("/byok/stats", tags=["byok"])
+        async def byok_stats() -> dict:
+            """Public, no-auth aggregate stats for the landing page.
+
+            Two kinds of number, surfaced honestly:
+
+            - **eval** — the rolling Ragas baseline shipped in
+              ``evaluation/baseline.json`` (durable, committed in the repo).
+              This is "proof, not claims": the demo's measured groundedness.
+            - **live activity** — queries answered + documents grounded read
+              from the audit log present on *this* instance. The HF Space
+              writes audit JSONL to ephemeral ``/tmp``, so these reset when the
+              Space sleeps/restarts; the frontend labels them "since the demo
+              last woke" rather than implying an all-time total.
+
+            No PII, no chunk text, no keys — safe to expose anonymously.
+            """
+            eval_block: dict = {}
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+
+                base = _Path(__file__).resolve().parent.parent / "evaluation" / "baseline.json"
+                if base.exists():
+                    data = _json.loads(base.read_text(encoding="utf-8"))
+                    eval_block = {
+                        "faithfulness": data.get("faithfulness"),
+                        "context_precision": data.get("context_precision"),
+                        "answer_relevancy": data.get("answer_relevancy"),
+                        "calibrated_at": data.get("_calibrated_at"),
+                    }
+            except Exception as exc:
+                logger.warning("byok_stats_eval_read_failed", error=str(exc))
+
+            queries_answered = 0
+            docs_grounded = 0
+            try:
+                from datetime import timedelta
+
+                end = date.today()
+                start = end - timedelta(days=30)
+                entries = audit_logger.get_entries(
+                    start_date=start.isoformat(),
+                    end_date=end.isoformat(),
+                    action="query",
+                )
+                for e in entries:
+                    md = e.metadata or {}
+                    # Uploads also write action="query" rows; exclude them so
+                    # the counter reflects answered questions only.
+                    if md.get("action_hint") == "upload":
+                        continue
+                    if e.status == "success":
+                        queries_answered += 1
+                    docs_grounded += int(md.get("documents_used", 0) or 0)
+            except Exception as exc:
+                logger.warning("byok_stats_audit_read_failed", error=str(exc))
+
+            return {
+                "queries_answered": queries_answered,
+                "docs_grounded": docs_grounded,
+                "eval": eval_block,
             }
 
         from pydantic import BaseModel as _ByokBaseModel
@@ -926,7 +997,7 @@ if _FASTAPI_AVAILABLE:
                 buf.extend(chunk)
                 if len(buf) > max_bytes:
                     raise HTTPException(
-                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        status.HTTP_413_CONTENT_TOO_LARGE,
                         detail={
                             "reason": "file_too_large",
                             "limit_bytes": max_bytes,
@@ -1007,7 +1078,7 @@ if _FASTAPI_AVAILABLE:
                             chunks=result.num_chunks,
                         )
                     raise HTTPException(
-                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        status.HTTP_413_CONTENT_TOO_LARGE,
                         detail={
                             "reason": "too_many_chunks",
                             "chunk_count": result.num_chunks,
@@ -1229,6 +1300,11 @@ if _FASTAPI_AVAILABLE:
         and the Streamlit demo can mint a real token rather than the
         unsigned base64 fallback.
         """
+        if settings.disable_dev_token:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Dev token endpoint disabled (SAR_DISABLE_DEV_TOKEN=true)",
+            )
         if settings.jwt_algorithm.upper() == "RS256":
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND,

@@ -121,7 +121,10 @@ def test_corpus_endpoint_groups_points_by_source_file(byok_app, monkeypatch):
     resp = client.get("/byok/corpus")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["collection"] == "documents"
+    # The endpoint now reports the real collection name the searcher resolved
+    # (the mock's QdrantManager.for_org yields ``documents_demo``) rather than a
+    # hardcoded literal — ADR-040 F2.
+    assert body["collection"] == "documents_demo"
     assert body["count"] == 2
     assert body["total_chunks"] == 3
     by_name = {f["source_file"]: f for f in body["items"]}

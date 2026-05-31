@@ -176,6 +176,34 @@ CORPUS: list[CorpusItem] = [
         roles=["engineering", "compliance", "legal", "executive"],
         label="AR: internal HR policy (لائحة داخلية)",
     ),
+    # ── Arabic Egypt corpus expansion (2026-05-31, post-hardening) — deepen
+    # the "افهم عقدك" flagship with four more everyday-civic domains so an
+    # Egyptian visitor has a real reason to return. All LOW + broad roles so
+    # the default engineer persona answers them in Arabic.
+    CorpusItem(
+        file=SAMPLE_ROOT / "arabic_eg" / "eg_tenant_rights.txt",
+        sensitivity=SensitivityLevel.LOW,
+        roles=["engineering", "compliance", "legal", "executive", "viewer"],
+        label="AR: tenant rights (حقوق المستأجر)",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "arabic_eg" / "eg_consumer_protection.txt",
+        sensitivity=SensitivityLevel.LOW,
+        roles=["engineering", "compliance", "legal", "executive", "viewer"],
+        label="AR: consumer protection (حماية المستهلك)",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "arabic_eg" / "eg_freelance_tax.txt",
+        sensitivity=SensitivityLevel.LOW,
+        roles=["engineering", "compliance", "legal", "executive", "viewer"],
+        label="AR: freelance tax (ضرائب العمل الحر)",
+    ),
+    CorpusItem(
+        file=SAMPLE_ROOT / "arabic_eg" / "eg_social_insurance.txt",
+        sensitivity=SensitivityLevel.LOW,
+        roles=["engineering", "compliance", "legal", "executive", "viewer"],
+        label="AR: social insurance (التأمينات الاجتماعية)",
+    ),
 ]
 
 

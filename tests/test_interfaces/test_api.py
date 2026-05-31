@@ -369,6 +369,20 @@ class TestJWTAuth:
             )
         assert response.status_code == 503
 
+    def test_token_endpoint_404_when_disabled(self, client):
+        """SAR_DISABLE_DEV_TOKEN=true removes the dev token route (404)."""
+        from config.settings import settings
+
+        with (
+            patch.object(settings, "disable_dev_token", True),
+            patch.object(settings, "jwt_secret", "TEST-SECRET-XYZ"),
+        ):
+            response = client.post(
+                "/token",
+                json={"user_id": "alice", "org_id": "acme", "roles": ["viewer"]},
+            )
+        assert response.status_code == 404
+
     def test_legacy_base64_still_works_when_secret_unset(self, client):
         """Backwards-compat path keeps existing smoke scripts running.
 
