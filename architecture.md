@@ -500,7 +500,7 @@ The Vercel deploy now serves five routes plus seven Edge proxies:
 |---|---|---|
 | `/` | static | Landing page — hero, four-feature card grid, six-step walkthrough, corpus/personas/status link grid, by-the-numbers stats. CTA → `/chat`. |
 | `/chat` | static + client | The BYOK chat UI itself. Was the home page until 2026-05-27 — moved out so first-time visitors get context before the chat surface loads. |
-| `/corpus` | SSR | Live table of the 10 demo docs from `/byok/corpus`. |
+| `/corpus` | SSR | Live table of the 14 demo docs from `/byok/corpus`. |
 | `/personas` | SSR | Live RBAC inspector from `/byok/personas`. |
 | `/status` | client | Live health probes for Vercel Edge + HF Space `/healthz` + `/readyz` + Edge proxy, polled every 30 s. |
 | `/api/chat` · `/api/chat/stream` · `/api/audit` · `/api/uploads` · `/api/uploads/[fileId]` · `/api/corpus` · `/api/personas` | Edge | Thin proxies → backend `/byok/*` endpoints. |

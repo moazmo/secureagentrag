@@ -120,6 +120,7 @@ Sections below mirror the order of `config/settings.py`. Only non-secret default
 | Variable | Default | Purpose |
 |---|---|---|
 | `SAR_GUARDRAILS_ENABLED` | `true` | Regex prompt-injection gate before retrieval. |
+| `SAR_SECURITY_SEMANTIC_CHECK_ENABLED` | `true` | The security node's optional LLM safe/unsafe second-opinion. Off in the BYOK demo — it false-positives on non-English (Arabic) queries and duplicates the guardrails node; the regex jailbreak patterns + guardrails node still run. ADR-039. |
 | `SAR_GUARDRAILS_STRICT` | `false` | After the regex gate, escalate to an LLM classifier. |
 | `SAR_GUARDRAILS_BACKEND` | `llm` | `llm` (legacy SAFE/UNSAFE) or `llamaguard` (Meta S1–S14 taxonomy). |
 | `SAR_LLAMAGUARD_MODEL` | `llama-guard3:8b` | Ollama tag for the LlamaGuard backend. |
@@ -174,6 +175,7 @@ Prometheus metrics are exposed at `GET /metrics` when the `[metrics]` extra is i
 |---|---|---|
 | `SAR_AUDIT_VERIFY_ENABLED` | `true` | Scheduled re-verification of the SHA-256 audit hash chain on the FastAPI lifespan; emits `audit_chain_valid` (1/0) + `audit_chain_verifications_total`. Local-only read; safe everywhere. ADR-032. |
 | `SAR_AUDIT_VERIFY_INTERVAL_HOURS` | `6` | How often the audit-chain verification job runs (also once at boot). |
+| `SAR_AUDIT_HMAC_KEY` | _(unset)_ | When set, the audit hash chain uses HMAC-SHA256 keyed by this secret (tamper-**resistant**) instead of plain SHA-256 (tamper-**evident**). Keep the key off the audit host's filesystem. ADR-037. |
 
 ## BYOK demo mode
 
@@ -182,7 +184,8 @@ Prometheus metrics are exposed at `GET /metrics` when the `[metrics]` extra is i
 | Variable | Default | Prod (HF Space) | Purpose |
 |---|---|---|---|
 | `SAR_BYOK_MODE` | `false` | `true` | Master gate: per-request keys, session collections, cost-cut toggles, Phoenix off. |
-| `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR` | `3` | `10` | Per-IP throttle on the owner key. Visitor BYOK keys bypass it. **Canonical name — `SAR_BYOK_OWNER_QUOTA` is _not_ read.** |
+| `SAR_BYOK_OWNER_KEY_QUOTA_PER_HOUR` | `3` | `10` | Per-IP throttle on the owner key. Visitor BYOK keys that are *usable* (`ByokCreds.byok_active()`) bypass it. **Canonical name — `SAR_BYOK_OWNER_QUOTA` is _not_ read.** ADR-036. |
+| `SAR_BYOK_XFF_TRUSTED_HOPS` | `0` | `1` | Number of trusted appending reverse proxies in front of the app. The owner-key throttle resolves the client IP `N` hops from the right of `X-Forwarded-For` (spoof-resistant) instead of the attacker-appendable leftmost token. Set to 1 on HF Spaces. ADR-034/036. |
 | `SAR_SESSION_COLLECTION_TTL_HOURS` | `24` | `24` | Auto-purge cutoff for `documents_sess_<sid>` collections. **Canonical name — `SAR_SESSION_TTL_HOURS` is _not_ read.** |
 | `SAR_CORS_ALLOW_ORIGINS` | `[]` | Vercel allowlist | JSON array of allowed origins. Empty = no CORS middleware mounted. |
 | `SAR_ALLOW_CLOUD_FOR_HIGH` | `false` | `true` | Allow HIGH-sensitivity content on cloud. **Breaks the "HIGH stays local" guarantee** — only `true` because the HF Space has no Ollama. See the privacy doc. |

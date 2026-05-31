@@ -2,7 +2,7 @@
 
 > **🚀 Live demo:** [secureagentrag-web.vercel.app](https://secureagentrag-web.vercel.app) · **API:** [`LeomordKaly-secureagentrag-api.hf.space`](https://LeomordKaly-secureagentrag-api.hf.space/healthz) · **Cost:** $0/mo · **Egypt-tested · no credit card · no cold-start delay**
 >
-> ⚙️ **Production launch shipped + merged to `main`** (2026-05-28, tagged **`v1.0.0-launch`**, CI green). Public BYOK demo on Next.js 16 + Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier. SSE streaming, session-scoped uploads (dual-collection RRF), persona presets, X-Forwarded-For throttle, audit export, in-chat knowledge-base browser, Markdown answer rendering, 50%+ Groq RPM cut. **656 unit tests + 2 live-Qdrant integration tests**, **33 ADRs**. Post-launch hardening added Prometheus/Grafana observability (ADR-031), fail-closed auth + scheduled audit-chain verify + frontend security headers (ADR-032), batched faithfulness + a real-Qdrant CI job + Node-24 actions + selective guardrails (ADR-033), and a streaming rate-limit fix. 101-second demo video at the top of this README. See [`DECISIONS.md`](./DECISIONS.md) for all 33 ADRs.
+> ⚙️ **Production launch shipped + merged to `main`** (2026-05-28, tagged **`v1.0.0-launch`**, CI green). Public BYOK demo on Next.js 16 + Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier. SSE streaming, session-scoped uploads (dual-collection RRF), persona presets, X-Forwarded-For throttle, audit export, in-chat knowledge-base browser, Markdown answer rendering, 50%+ Groq RPM cut. **704 unit tests + 2 live-Qdrant integration tests**, **39 ADRs**. Post-launch hardening added Prometheus/Grafana observability (ADR-031), fail-closed auth + scheduled audit-chain verify + frontend security headers (ADR-032), batched faithfulness + a real-Qdrant CI job + Node-24 actions + selective guardrails (ADR-033), and a streaming rate-limit fix. 101-second demo video at the top of this README. See [`DECISIONS.md`](./DECISIONS.md) for all 39 ADRs.
 
 ## 🎬 Demo video (101s)
 
@@ -687,7 +687,7 @@ Key design choices are documented in [DECISIONS.md](DECISIONS.md). Highlights:
 
 ## Status
 
-Production-ready and **live**. The public BYOK demo runs at $0/month on Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier; **694 unit tests + a live-Qdrant integration job** pass in CI; **36 ADRs** document every decision in [DECISIONS.md](DECISIONS.md). Tagged [`v1.0.0-launch`](https://github.com/moazmo/secureagentrag/releases/tag/v1.0.0-launch), hardened since with post-launch waves (observability, security, coverage, rate-limit) and a full-repo review remediation that wired BYOK so a visitor's own key actually powers their request. Full feature breadth is in the feature table above and the ADR list below.
+Production-ready and **live**. The public BYOK demo runs at $0/month on Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier; **704 unit tests + a live-Qdrant integration job** pass in CI; **39 ADRs** document every decision in [DECISIONS.md](DECISIONS.md). Tagged [`v1.0.0-launch`](https://github.com/moazmo/secureagentrag/releases/tag/v1.0.0-launch), hardened since with post-launch waves (observability, security, coverage, rate-limit) and a full-repo review remediation that wired BYOK so a visitor's own key actually powers their request. Full feature breadth is in the feature table above and the ADR list below.
 
 ## License
 
