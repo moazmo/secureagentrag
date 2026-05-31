@@ -779,6 +779,45 @@ if _FASTAPI_AVAILABLE:
                 "items": [e.model_dump(mode="json") for e in entries],
             }
 
+        # ── BYOK answer feedback (👍/👎 → hash-chained audit row) ─────────
+        class _ByokFeedbackBody(_ByokBaseModel):
+            """Public-demo feedback payload — a rating on the last answer."""
+
+            rating: str
+            query: str = ""
+            answer_summary: str = ""
+
+        @app.post("/byok/feedback", tags=["byok"])
+        async def byok_feedback_endpoint(
+            request: _FastApiRequest,
+            body: _ByokFeedbackBody,
+            creds: Annotated[ByokCreds, Depends(extract_byok)],
+        ) -> dict:
+            """Record a thumbs-up/down on an answer as a session-scoped audit row.
+
+            The rating lands on the same SHA-256 hash chain as every query, so it
+            is itself tamper-evident and shows up in ``/byok/audit``. No LLM call,
+            no throttle — it is a cheap write.
+            """
+            rating = (body.rating or "").strip().lower()
+            if rating not in ("up", "down"):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail={"reason": "rating must be 'up' or 'down'"},
+                )
+            try:
+                audit_logger.log_feedback(
+                    user_id=f"demo-{creds.session_id}",
+                    org_id=_DEMO_ORG_ID,
+                    rating=rating,
+                    query=body.query,
+                    answer_summary=(body.answer_summary or "")[:200],
+                    persona=creds.demo_persona or "anonymous",
+                )
+            except Exception as exc:  # pragma: no cover -- defensive
+                logger.warning("byok_feedback_persist_failed", error=str(exc))
+            return {"session_id": creds.session_id, "rating": rating, "recorded": True}
+
         # ── BYOK upload endpoints ────────────────────────────────────────
         from fastapi import File, UploadFile
         from qdrant_client.models import FieldCondition, Filter, MatchValue

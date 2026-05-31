@@ -93,12 +93,12 @@ secureagentrag/
 ├── scripts/                # smoke, seed_corpus, interview_demo, quick_bench,
 │                           # cloud_bench, h2_gate, migrate_to_splade,
 │                           # train_reranker, bench_reranker, verify_audit_chain
-├── tests/                  # pytest, 701 unit + 2 live-Qdrant integration (test_qdrant_rbac)
+├── tests/                  # pytest, 702 unit + 2 live-Qdrant integration (test_qdrant_rbac)
 ├── helm/secureagentrag/    # Kubernetes manifests
 ├── deploy/                 # docker-compose auth profile + keycloak-realm.json
 ├── data/agent_evidence/    # 24-scenario gate evidence (results.md, screenshots)
 ├── sample_docs/            # PDF + txt corpus (incl. real NIST AI RMF)
-├── DECISIONS.md            # ADR-001..037
+├── DECISIONS.md            # ADR-001..038
 ├── docker-compose.observability.yml  # Prometheus + Grafana overlay (self-hosted)
 ├── architecture.md         # Mermaid diagrams
 ├── RUNBOOK.md              # ops + troubleshooting
@@ -140,7 +140,7 @@ uv run python -m scripts.cloud_bench          # local + cloud comparison
 
 ## 5. State of the codebase (as of `3ad56bb` on `main`)
 
-- **701 unit tests pass + 2 live-Qdrant integration tests.** 0 failed. Lint + format clean. **CI green on `main`** — now **two jobs**: a unit job (`uv sync --frozen --group dev --extra api` → ruff check + ruff format --check + `pytest -m "not integration"`) and an **integration job** that spins up a `qdrant/qdrant` service container and runs `pytest -m integration` (proves the RBAC filter against a real Qdrant). GitHub Actions on Node 24 (checkout v5 / setup-python v6 / setup-uv v6).
+- **702 unit tests pass + 2 live-Qdrant integration tests.** 0 failed. Lint + format clean. **CI green on `main`** — now **two jobs**: a unit job (`uv sync --frozen --group dev --extra api` → ruff check + ruff format --check + `pytest -m "not integration"`) and an **integration job** that spins up a `qdrant/qdrant` service container and runs `pytest -m integration` (proves the RBAC filter against a real Qdrant). GitHub Actions on Node 24 (checkout v5 / setup-python v6 / setup-uv v6).
 - **~35.5k Python LOC** across 169 files.
 - **34 ADRs** in `DECISIONS.md` (001–024 historical + 025–030 the launch + **031** Prometheus/Grafana metrics + **032** security/reliability hardening + **033** cost/coverage hardening + **034** code-review remediation: Arabic faithfulness split, retry de-nesting, XFF trusted-hops + **035** second-review security remediation: override HIGH-guard, self-query RBAC strip, BYOK SSRF, tenant-collision, schema bounds, frontend link-XSS + session entropy).
 - **Observability:** structlog logs + optional Phoenix tracing + **Prometheus `/metrics` (`utils/metrics.py`) → Grafana dashboard (`deploy/grafana/`, `docker-compose.observability.yml`)**. Metrics are aggregate-only (no prompt/key/user text in labels) so they are BYOK-safe; Phoenix tracing stays hard-disabled under BYOK. The FastAPI lifespan (`interfaces/api.py`) starts a scheduled **audit-chain re-verification** (`utils/audit_verify.py`, emits `audit_chain_valid`) and wires the BYOK session-purge job.

@@ -88,3 +88,19 @@ def test_compute_hash_uses_hmac_when_key_set() -> None:
     assert keyed == keyed_again
     with patch.object(_settings, "audit_hmac_key", "different-key"):
         assert entry.compute_hash() != keyed
+
+
+def test_log_feedback_writes_chained_feedback_entry(tmp_path) -> None:
+    """Answer feedback lands on the same tamper-evident chain as queries."""
+    from datetime import date
+
+    from utils.audit import AuditLogger
+
+    al = AuditLogger(log_dir=str(tmp_path))
+    al.log_feedback(user_id="demo-x", org_id="demo", rating="up", query="q1")
+    res = al.verify_chain()
+    assert res["valid"] is True
+    assert res["checked"] == 1
+    entries = al.get_entries(start_date=date.today(), end_date=date.today())
+    assert entries[0].action == "feedback"
+    assert entries[0].details["rating"] == "up"

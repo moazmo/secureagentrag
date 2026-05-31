@@ -261,6 +261,43 @@ class AuditLogger:
         )
         return entry
 
+    def log_feedback(
+        self,
+        *,
+        user_id: str,
+        org_id: str = "",
+        rating: str,
+        query: str = "",
+        **kwargs: Any,
+    ) -> AuditEntry:
+        """Record a user thumbs-up/down on an answer.
+
+        Lands on the same SHA-256 hash chain as every other event (PII-redacted
+        before persistence), so feedback is itself tamper-evident and exportable
+        via ``/byok/audit``. ``rating`` is normalised to ``up`` / ``down``.
+
+        Args:
+            user_id: Identifier of the user giving feedback.
+            org_id: Organization identifier.
+            rating: ``up`` or ``down``.
+            query: The question the rated answer responded to.
+            **kwargs: Extra metadata (e.g. answer_summary).
+
+        Returns:
+            The persisted AuditEntry.
+        """
+        entry = AuditEntry(
+            action="feedback",
+            user_id=user_id,
+            org_id=org_id,
+            details={"rating": rating, "query": query},
+            status="success",
+            metadata=kwargs,
+        )
+        self._persist(entry)
+        _audit_log.info("feedback_recorded", user_id=user_id, rating=rating)
+        return entry
+
     def log_security_event(
         self,
         *,

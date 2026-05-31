@@ -1775,3 +1775,28 @@ today).
 
 **Acceptance:** +5 tests (sentinel id/write/purge, audit HMAC, contextual
 sensitivity). **701 unit pass**, ruff + format clean.
+
+---
+
+## ADR-038: Demo engagement features — guided tour + answer feedback (2026-05-31)
+
+**Status:** Accepted. **Type:** product (no security impact).
+
+From `private/features-2026-05-31.md` Tier 1 — make the live demo prove its four
+hero stories and capture quality signal, both at $0.
+
+- **Guided tour (frontend only).** A one-time, dismissible `TourCard` on `/chat`
+  walks a first-time visitor through the four differentiators in ~60s, each step
+  a single click: RBAC (open the per-persona doc list), sensitivity routing (run a
+  salary question → watch the `sensitivity:` badge), faithfulness (run a grounded
+  answer → `faith %`), audit chain (open the exportable JSONL trail). Suppressed
+  when arriving via a share link; dismissal persists in `localStorage`.
+- **Answer feedback 👍/👎.** New `POST /byok/feedback` → `AuditLogger.log_feedback`
+  appends an `action="feedback"` row to the **same SHA-256 audit hash chain**
+  (session-scoped, PII-redacted), so feedback is itself tamper-evident and shows
+  in `/byok/audit`. No LLM call, no throttle. Frontend thumbs under each answer
+  (optimistic, Edge proxy at `/api/feedback`). Demonstrates the audit system
+  doing double duty as a feedback store.
+
+**Acceptance:** +1 backend test (feedback row lands on a valid chain); **702 unit
+pass**, ruff + format clean; frontend `npm run build` + `lint` green.
