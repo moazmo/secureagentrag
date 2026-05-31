@@ -134,7 +134,26 @@ def issue_token(
     if settings.jwt_audience:
         payload["aud"] = settings.jwt_audience
     if extra_claims:
-        payload.update(extra_claims)
+        # Never let caller-supplied extra claims overwrite the security-relevant
+        # registered claims (expiry, subject, token id, issuer, audience, etc.).
+        # Otherwise a caller could mint a non-expiring or identity-spoofing token.
+        _reserved = {
+            "sub",
+            "user_id",
+            "org_id",
+            "roles",
+            "clearance_level",
+            "iat",
+            "exp",
+            "jti",
+            "iss",
+            "aud",
+        }
+        safe_extra = {k: v for k, v in extra_claims.items() if k not in _reserved}
+        dropped = set(extra_claims) - set(safe_extra)
+        if dropped:
+            logger.warning("jwt_extra_claims_dropped_reserved", dropped=sorted(dropped))
+        payload.update(safe_extra)
 
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     logger.info(

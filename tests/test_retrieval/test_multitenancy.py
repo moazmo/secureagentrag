@@ -21,11 +21,26 @@ def test_collection_name_multi_tenant_branches_per_org() -> None:
 
 def test_collection_name_sanitises_org_id() -> None:
     with patch.object(settings, "multi_tenant_collections", True):
-        # Punctuation / spaces get replaced with underscores so the collection
-        # name is always a valid Qdrant identifier.
-        assert get_collection_name("acme.corp") == f"{settings.qdrant_collection}_acme_corp"
-        assert get_collection_name("acme corp") == f"{settings.qdrant_collection}_acme_corp"
-        assert get_collection_name("acme/corp") == f"{settings.qdrant_collection}_acme_corp"
+        # Punctuation / spaces still yield a valid Qdrant identifier (alnum +
+        # underscore), now with a short disambiguating hash because the mapping
+        # is lossy.
+        for org in ("acme.corp", "acme corp", "acme/corp"):
+            name = get_collection_name(org)
+            assert name.startswith(f"{settings.qdrant_collection}_acme_corp_")
+            assert all(c.isalnum() or c == "_" for c in name)
+
+
+def test_collection_name_no_collision_across_distinct_orgs() -> None:
+    """H8: org ids that sanitise to the same string must NOT share a collection."""
+    with patch.object(settings, "multi_tenant_collections", True):
+        a = get_collection_name("acme-corp")
+        b = get_collection_name("acme_corp")
+        c = get_collection_name("acme.corp")
+        assert a != b  # used to both be documents_acme_corp
+        assert a != c
+        assert b != c
+        # Deterministic across calls.
+        assert get_collection_name("acme-corp") == a
 
 
 def test_collection_name_empty_org_returns_default() -> None:
@@ -41,27 +56,26 @@ def test_collection_name_byok_session_overrides_org() -> None:
         patch.object(settings, "multi_tenant_collections", True),
     ):
         # session_id present → session collection regardless of org_id
-        assert (
-            get_collection_name("acme_corp", session_id="abc-123")
-            == f"{settings.qdrant_collection}_sess_abc_123"
-        )
-        # session_id absent → falls back to multi-tenant routing
+        name = get_collection_name("acme_corp", session_id="abc-123")
+        assert name.startswith(f"{settings.qdrant_collection}_sess_abc_123_")
+        # session_id absent → falls back to multi-tenant routing (acme_corp is
+        # already collection-safe, so no hash suffix).
         assert get_collection_name("acme_corp") == f"{settings.qdrant_collection}_acme_corp"
 
 
 def test_collection_name_byok_session_sanitises_id() -> None:
     """Session UUIDs from clients can contain dashes; collection-safe sanitise."""
     with patch.object(settings, "byok_mode", True):
-        # standard UUID4 format
-        assert (
-            get_collection_name(session_id="550e8400-e29b-41d4-a716-446655440000")
-            == f"{settings.qdrant_collection}_sess_550e8400_e29b_41d4_a716_446655440000"
+        # standard UUID4 format → collection-safe id + disambiguating hash
+        name = get_collection_name(session_id="550e8400-e29b-41d4-a716-446655440000")
+        assert name.startswith(
+            f"{settings.qdrant_collection}_sess_550e8400_e29b_41d4_a716_446655440000_"
         )
-        # punctuation gets replaced
-        assert (
-            get_collection_name(session_id="sess.with/punct")
-            == f"{settings.qdrant_collection}_sess_sess_with_punct"
-        )
+        assert all(c.isalnum() or c == "_" for c in name)
+        # distinct session ids never collide onto the same collection
+        n1 = get_collection_name(session_id="sess-a")
+        n2 = get_collection_name(session_id="sess_a")
+        assert n1 != n2
 
 
 def test_collection_name_byok_session_ignored_when_mode_off() -> None:

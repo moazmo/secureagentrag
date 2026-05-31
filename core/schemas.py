@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class CitationModel(BaseModel):
@@ -39,7 +39,10 @@ class QueryRequest(BaseModel):
     user_id: str = Field(min_length=1)
     org_id: str = ""
     roles: list[str] = Field(default_factory=lambda: ["viewer"])
-    clearance_level: int = 1
+    # Clearance is a 1..3 scale (low/medium/high). Bound it so a caller can't
+    # pass an arbitrarily high integer to over-clear themselves past the RBAC
+    # sensitivity filter.
+    clearance_level: int = Field(default=1, ge=1, le=3)
     prefer_cloud: bool = False
     override_provider: str = ""
 
@@ -81,7 +84,11 @@ class QueryResponse(BaseModel):
             provenance=ProvenanceModel(
                 provider=state.get("synth_provider", ""),
                 model=state.get("synth_model", ""),
-                forced_local=False,
+                # Report a real value instead of a hardcoded False: if the
+                # synthesizer ran on local Ollama, the answer was produced
+                # locally. (HIGH-sensitivity content is forced here on
+                # self-hosted deploys.)
+                forced_local=(state.get("synth_provider", "") == "ollama"),
                 latency_ms=state.get("synth_latency_ms", 0.0),
                 usage=state.get("synth_usage", {}),
             ),
@@ -98,6 +105,16 @@ class IngestRequestModel(BaseModel):
     org_id: str = ""
     roles: list[str] = Field(default_factory=lambda: ["viewer"])
     sensitivity_level: str = "low"
+
+    @field_validator("file_path")
+    @classmethod
+    def _no_path_traversal(cls, v: str) -> str:
+        """Reject directory-traversal sequences and null bytes."""
+        if not v or not v.strip():
+            raise ValueError("file_path must not be empty")
+        if ".." in v or "\x00" in v:
+            raise ValueError("file_path must not contain '..' or null bytes")
+        return v
 
 
 class IngestResponseModel(BaseModel):

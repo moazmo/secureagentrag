@@ -129,11 +129,11 @@ def build_qdrant_filter_conditions(filters: dict[str, Any]) -> list[dict[str, An
     # Access-control fields are never honoured from self-query output, even if a
     # jailbroken model emits them — they belong to the authenticated UserContext
     # and the RBAC filter. Defence in depth on top of the prompt restriction.
-    _FORBIDDEN = {"org_id", "roles", "sensitivity_level", "sensitivity_level_int", "clearance"}
+    forbidden = {"org_id", "roles", "sensitivity_level", "sensitivity_level_int", "clearance"}
 
     conditions: list[dict[str, Any]] = []
     for key, value in filters.items():
-        if key in _FORBIDDEN:
+        if key in forbidden:
             logger.warning("self_query_dropped_forbidden_field", field=key)
             continue
         if key == "source_file":

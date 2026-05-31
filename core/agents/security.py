@@ -40,11 +40,18 @@ def _check_query_safety(query: str, user_context: dict) -> tuple[bool, str]:
             # Users with high clearance can query sensitive topics
             clearance = user_context.get("clearance_level", 1)
             if clearance < sensitivity_to_int(SensitivityLevel.HIGH):
+                # Do NOT echo the matched regex back to the caller — that hands a
+                # probing attacker the exact pattern to evade. Log it for audit;
+                # return a generic refusal.
+                logger.warning(
+                    "security_sensitive_pattern_block",
+                    pattern=pattern.pattern,
+                    clearance=clearance,
+                )
                 return (
                     False,
-                    f"Query contains sensitive content matching pattern "
-                    f"'{pattern.pattern}'. Your clearance level ({clearance}) "
-                    f"is insufficient for this type of query.",
+                    f"Query contains sensitive content that requires a higher "
+                    f"clearance level than yours ({clearance}).",
                 )
 
     # Validate user has required fields
