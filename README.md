@@ -679,12 +679,15 @@ Key design choices are documented in [DECISIONS.md](DECISIONS.md). Highlights:
 | ADR-031 | Prometheus/Grafana metrics layer | Aggregate-only `/metrics` (BYOK-safe) → Grafana dashboard; complements Phoenix tracing |
 | ADR-032 | Security & reliability hardening | Auth fails closed; OCR off the event loop; scheduled audit-chain verify; frontend security headers |
 | ADR-033 | Cost & coverage hardening | Batched NLI faithfulness; real-Qdrant CI job; Node-24 actions; selective guardrail escalation |
+| ADR-034 | First-review remediation | Arabic-aware faithfulness split; de-nested cloud retry; XFF trusted-hops setting |
+| ADR-035 | Second-review remediation | Override HIGH-guard; self-query RBAC strip; BYOK SSRF guard; tenant-collision hash; schema bounds; frontend link-XSS + session entropy |
+| ADR-036 | BYOK wired for real + throttle-bypass fix | Visitor key/provider now powers inference via the `ByokRuntime` ContextVar + `InferenceRouter._client_for`; `byok_active()` gates the throttle so a key-without-provider can no longer bypass it; `SAR_BYOK_XFF_TRUSTED_HOPS=1` on the Space |
 
 ---
 
 ## Status
 
-Production-ready and **live**. The public BYOK demo runs at $0/month on Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier; **656 unit tests + a live-Qdrant integration job** pass in CI; **33 ADRs** document every decision in [DECISIONS.md](DECISIONS.md). Tagged [`v1.0.0-launch`](https://github.com/moazmo/secureagentrag/releases/tag/v1.0.0-launch), hardened since with five post-launch waves (observability, security, coverage, rate-limit). Full feature breadth is in the feature table above and the ADR list below.
+Production-ready and **live**. The public BYOK demo runs at $0/month on Vercel + Hugging Face Spaces + Qdrant Cloud + Groq Free Tier; **694 unit tests + a live-Qdrant integration job** pass in CI; **36 ADRs** document every decision in [DECISIONS.md](DECISIONS.md). Tagged [`v1.0.0-launch`](https://github.com/moazmo/secureagentrag/releases/tag/v1.0.0-launch), hardened since with post-launch waves (observability, security, coverage, rate-limit) and a full-repo review remediation that wired BYOK so a visitor's own key actually powers their request. Full feature breadth is in the feature table above and the ADR list below.
 
 ## License
 

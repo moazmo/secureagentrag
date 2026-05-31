@@ -52,7 +52,7 @@ Runs in ~20 seconds, no external services needed.
 uv run pytest -q
 ```
 
-Expected: **656 passed** (unit). CI runs two jobs: a unit job (`--extra api`, `-m "not integration"`) so the FastAPI/BYOK surface is exercised rather than skipped, plus an **integration job** that stands up a `qdrant/qdrant` service container and runs `pytest -m integration` (the live-Qdrant RBAC test). Run that locally with `SAR_QDRANT_URL=http://localhost:6333 uv run pytest -m integration`. Use `--maxfail=1 -x` to bail on first fail.
+Expected: **694 passed** (unit). CI runs two jobs: a unit job (`--extra api`, `-m "not integration"`) so the FastAPI/BYOK surface is exercised rather than skipped, plus an **integration job** that stands up a `qdrant/qdrant` service container and runs `pytest -m integration` (the live-Qdrant RBAC test). Run that locally with `SAR_QDRANT_URL=http://localhost:6333 uv run pytest -m integration`. Use `--maxfail=1 -x` to bail on first fail.
 
 This is what CI runs on every push. Use it after you change code.
 
