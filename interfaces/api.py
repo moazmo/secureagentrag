@@ -417,8 +417,9 @@ if _FASTAPI_AVAILABLE:
         async def byok_corpus() -> dict:
             """Summarise the base demo corpus -- source files + metadata.
 
-            Scrolls the root tenant Qdrant collection (the 10 hand-curated
-            demo docs) and groups points by ``source_file``. Returns one
+            Scrolls the root tenant Qdrant collection (the hand-curated demo
+            docs — English RBAC + Arabic Egypt) and groups points by
+            ``source_file``. Returns one
             row per file with the chunk count, sensitivity label, and
             roles -- never the chunk text. Visitor uploads under
             ``documents_sess_<sid>`` are NOT included (those live in the

@@ -209,6 +209,45 @@ def test_byok_stats_returns_eval_and_counts(byok_app) -> None:
     assert "faithfulness" in body["eval"]
 
 
+def test_byok_stats_counting_excludes_uploads(byok_app) -> None:
+    """The live counters count answered questions only, and sum documents_used.
+
+    Seeds one successful query row (documents_used=3) and one upload row
+    (action_hint="upload") on the shared audit chain, then asserts the delta:
+    +1 question, +3 docs grounded — the upload row must NOT inflate either
+    (ADR-040 F-batch / G4).
+    """
+    from utils.audit import audit_logger
+
+    client = byok_app[0]
+    r0 = client.get("/byok/stats").json()
+    q0, d0 = r0["queries_answered"], r0["docs_grounded"]
+
+    audit_logger.log_query(
+        user_id="demo-stats-test",
+        org_id="demo",
+        query="counted question",
+        response_summary="ok",
+        status="success",
+        documents_used=3,
+    )
+    # Upload rows also use action="query" but carry action_hint="upload";
+    # the endpoint must skip them entirely.
+    audit_logger.log_query(
+        user_id="demo-stats-test",
+        org_id="demo",
+        query="[upload] file.txt",
+        response_summary="ingested",
+        status="success",
+        action_hint="upload",
+        documents_used=5,
+    )
+
+    r1 = client.get("/byok/stats").json()
+    assert r1["queries_answered"] == q0 + 1
+    assert r1["docs_grounded"] == d0 + 3
+
+
 def test_cors_middleware_allowlist_enforced(byok_app) -> None:
     """Origin in allowlist gets CORS headers; foreign origin does NOT."""
     client, _ = byok_app
