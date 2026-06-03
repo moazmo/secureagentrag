@@ -1191,6 +1191,156 @@ if _FASTAPI_AVAILABLE:
                 "deleted_chunks": deleted,
             }
 
+        # ── BYOK extraction mode (doc -> structured JSON) ────────────────
+        # The platform's second face next to RAG Q&A: upload a document + a
+        # field schema, get back one validated JSON object. No retrieval, no
+        # vector DB — parse -> one json_mode LLM call -> validate. Reuses the
+        # inference router (visitor's BYOK key powers it; sensitivity routing
+        # applies) and lands on the same audit chain. See ADR-041 / Tier X.
+        from fastapi import Form
+
+        @app.post("/byok/extract", tags=["byok"])
+        async def byok_extract(
+            request: _FastApiRequest,
+            file: Annotated[UploadFile, File(...)],
+            fields: Annotated[str, Form(...)],
+            creds: Annotated[ByokCreds, Depends(extract_byok)],
+        ) -> dict:
+            """Extract a caller-defined field schema from an uploaded document.
+
+            ``fields`` is a JSON string: ``[{"name","type","description"}, ...]``.
+            Returns ``{fields: {...}, model, provider, latency_ms}``. Same
+            throttle / BYOK-runtime contract as ``/byok/chat``.
+            """
+            from core.extraction import extract_fields, normalise_fields
+
+            # Parse + validate the schema first (cheap, fail fast).
+            try:
+                raw_fields = json.loads(fields)
+                if not isinstance(raw_fields, list):
+                    raise ValueError("fields must be a JSON array")
+                schema = normalise_fields(raw_fields)
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail={"reason": "bad_schema", "error": str(exc)},
+                ) from exc
+
+            # Throttle owner-key fallback exactly like chat.
+            if not creds.byok_active():
+                throttle = get_owner_key_throttle()
+                ok, meta = throttle.allow(client_ip_from_request(request))
+                if not ok:
+                    raise HTTPException(
+                        status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail={
+                            "reason": meta["reason"],
+                            "retry_after_seconds": meta["retry_after"],
+                            "hint": (
+                                "Owner-key fallback exhausted for this IP. Paste "
+                                "your own LLM key to continue — never stored."
+                            ),
+                        },
+                    )
+
+            # Validate ext + size (mirror the upload caps).
+            filename = file.filename or "upload"
+            ext = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
+            allowed = {e.lower() for e in settings.byok_upload_allowed_extensions}
+            if ext not in allowed:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail={"reason": "unsupported_extension", "allowed": sorted(allowed)},
+                )
+            max_bytes = int(settings.byok_upload_max_bytes)
+            buf = bytearray()
+            while True:
+                chunk = await file.read(64 * 1024)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                if len(buf) > max_bytes:
+                    raise HTTPException(
+                        status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail={"reason": "file_too_large", "limit_bytes": max_bytes},
+                    )
+            if not buf:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"reason": "empty_file"})
+
+            # Spool + parse to text via the existing loaders.
+            import os as _os
+            import tempfile as _tempfile
+
+            from ingestion.loaders import load_document
+
+            safe_name = (
+                "".join(c if (c.isalnum() or c in "._-") else "_" for c in filename) or "upload"
+            )
+            tmp_dir = _tempfile.mkdtemp(prefix=f"byok_extract_{creds.session_id}_")
+            tmp_path = _os.path.join(tmp_dir, safe_name)
+            _t0 = __import__("time").perf_counter()
+            try:
+                with open(tmp_path, "wb") as fh:
+                    fh.write(bytes(buf))
+                try:
+                    docs = await asyncio.to_thread(load_document, tmp_path)
+                except Exception as exc:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={"reason": "parse_failed", "error": str(exc)},
+                    ) from exc
+                text = "\n\n".join(d.text for d in docs if d.text).strip()
+                if not text:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "reason": "no_text",
+                            "hint": "No extractable text (scanned image PDFs need OCR).",
+                        },
+                    )
+
+                _byok_tok = set_byok_runtime(_byok_runtime_for(creds))
+                try:
+                    result = await extract_fields(
+                        text, schema, prefer_cloud=True, sensitivity_level="low"
+                    )
+                finally:
+                    reset_byok_runtime(_byok_tok)
+            finally:
+                try:
+                    _os.remove(tmp_path)
+                    _os.rmdir(tmp_dir)
+                except OSError:
+                    pass
+
+            elapsed_ms = (__import__("time").perf_counter() - _t0) * 1000
+            try:
+                audit_logger.log_query(
+                    user_id=f"demo-{creds.session_id}",
+                    org_id=_DEMO_ORG_ID,
+                    query=f"[extract] {safe_name} ({len(schema)} fields)",
+                    response_summary=f"extracted {len(result['fields'])} fields",
+                    sensitivity="low",
+                    status="success",
+                    latency_ms=elapsed_ms,
+                    action_hint="extract",
+                    byok_used=creds.has_user_key(),
+                    synth_provider=result["provider"],
+                    synth_model=result["model"],
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("byok_extract_audit_failed", error=str(exc))
+
+            return {
+                "session_id": creds.session_id,
+                "filename": safe_name,
+                "byok_used": creds.has_user_key(),
+                "fields": result["fields"],
+                "provider": result["provider"],
+                "model": result["model"],
+                "latency_ms": elapsed_ms,
+            }
+
     @app.post("/query", response_model=QueryResponse, tags=["rag"])
     async def query_endpoint(
         body: QueryRequest,

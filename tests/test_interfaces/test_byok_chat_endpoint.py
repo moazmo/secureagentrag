@@ -248,6 +248,51 @@ def test_byok_stats_counting_excludes_uploads(byok_app) -> None:
     assert r1["docs_grounded"] == d0 + 3
 
 
+def test_byok_extract_returns_fields(byok_app) -> None:
+    """/byok/extract parses the doc + schema and returns a validated JSON object."""
+    import json as _json
+
+    client, _ = byok_app
+    fake = {
+        "fields": {"seller": "ACME", "total": 100.0},
+        "model": "llama-3.1-8b-instant",
+        "provider": "groq",
+        "latency_ms": 12.0,
+        "raw": "{}",
+    }
+    with patch("core.extraction.extract_fields", new=AsyncMock(return_value=fake)):
+        r = client.post(
+            "/byok/extract",
+            files={"file": ("invoice.txt", b"Seller: ACME\nTotal: 100", "text/plain")},
+            data={
+                "fields": _json.dumps(
+                    [
+                        {"name": "seller", "type": "string", "description": "vendor"},
+                        {"name": "total", "type": "number", "description": "grand total"},
+                    ]
+                )
+            },
+            headers={"X-User-LLM-Key": "sk-x", "X-User-Provider": "groq"},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["fields"]["seller"] == "ACME"
+    assert body["fields"]["total"] == 100.0
+    assert body["byok_used"] is True
+
+
+def test_byok_extract_rejects_bad_schema(byok_app) -> None:
+    """A non-array / unusable schema fails fast with 400."""
+    client, _ = byok_app
+    r = client.post(
+        "/byok/extract",
+        files={"file": ("a.txt", b"hello", "text/plain")},
+        data={"fields": "not-json"},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["reason"] == "bad_schema"
+
+
 def test_cors_middleware_allowlist_enforced(byok_app) -> None:
     """Origin in allowlist gets CORS headers; foreign origin does NOT."""
     client, _ = byok_app
