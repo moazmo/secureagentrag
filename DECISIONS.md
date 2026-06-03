@@ -1884,3 +1884,50 @@ of them and ships the next $0 feature slate from
 **Acceptance:** +2 backend tests (`/byok/stats` shape; `SAR_DISABLE_DEV_TOKEN`
 → 404); **706 unit pass**, ruff + format clean; frontend `npm run build` + `lint`
 green.
+
+---
+
+## ADR-041: Extraction mode + Tier H fixes + WhatsApp/PWA (2026-06-03)
+
+**Status:** Accepted. **Type:** product + review remediation.
+
+Builds the agreed backlog from `private/review-2026-06-01.md` +
+`features-2026-06-01.md`. Shipped + live-verified (HF Space + Vercel).
+
+**Tier H — review nits (G1–G6):**
+- G1 `/corpus` page reports the real document count (was hardcoded "10"; now 18).
+- G2 each corpus row + the in-chat KB panel carry a "💬 ask this" deep-link.
+- G3 `LiveStats` hides the eval card when `/byok/stats` returns an empty eval
+  block (forks without `baseline.json`) instead of a hollow card.
+- G4 `/byok/stats` counting unit test (success row counted, upload row excluded,
+  `documents_used` summed).
+- G6 dropped the stale "10 demo docs" comment in `byok_corpus`.
+
+**Tier X — extraction mode (the platform's second face):**
+- `core/extraction.py` — framework-free schema normalise + strict JSON-only
+  prompt + robust parse (strips ``` fences / `<think>` blocks / surrounding
+  prose, fills missing keys with null, coerces number/integer/boolean). 9 unit
+  tests.
+- `POST /byok/extract` — upload a doc + a field schema, get one validated JSON
+  object. No retrieval: parse (existing loaders) → one `json_mode` LLM call
+  (existing inference router, so BYOK key powers it + sensitivity routing
+  applies) → validate. ext/size caps, throttle gate, BYOK-runtime bind, audit
+  row `action_hint="extract"`. +2 endpoint tests.
+- Frontend `/extract` page (schema builder + Egypt presets فاتورة / عقد إيجار /
+  invoice-EN, RTL-aware, copy-JSON) + `/api/extract` Edge proxy (multipart +
+  BYOK headers, `duplex: half`). Landing CTA + sitemap entry.
+- **Live-verified:** English invoice → `{seller, total:1150.0, vat:150.0}`;
+  Arabic عقد → `{landlord:"أحمد علي", monthly_rent:5000.0, term_months:12}`
+  (Arabic values preserved). ~420 ms via Groq.
+
+**Tier E/O quick wins:**
+- E4 WhatsApp one-tap share (`wa.me`) on every answer.
+- E5/O6 installable PWA (`manifest.webmanifest` + Next 16 viewport theme).
+
+**Positioning:** the project is now a **two-mode platform** — *ask* (RAG Q&A) or
+*extract* (doc → JSON) over the same governed ingestion. Differentiator vs
+Unstract's enterprise tier: privacy routing + audit + RBAC + Arabic, at $0.
+
+**Acceptance:** +12 tests (9 extraction unit + 2 extract endpoint + 1 stats
+counting) → **718 unit pass**; ruff + format clean; web build + lint green; both
+stacks redeployed and live-smoked.
